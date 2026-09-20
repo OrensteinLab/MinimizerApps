@@ -1,0 +1,62 @@
+# GM DNA vs binary LUT on f_vesca across all bins × threads layouts.
+name: sweep_gm_lut_fixed_dataset
+description: f_vesca k=28 gzip — GM-DNA (-ode) vs GM-bin (default); bins 512/1024/1536 x t12/t24; 1 seed
+
+defaults:
+  datasets: f_vesca
+  k: 28
+  input: gzip
+  signature_order: gm
+  signature_len: 9
+  n_seeds: 1
+  force: true
+
+configs:
+  - threads: 12
+    bins: 512
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n512_t12
+  - threads: 12
+    bins: 512
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n512_t12
+  - threads: 24
+    bins: 512
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n512_t24
+  - threads: 24
+    bins: 512
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n512_t24
+  - threads: 12
+    bins: 1024
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n1024_t12
+  - threads: 12
+    bins: 1024
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n1024_t12
+  - threads: 24
+    bins: 1024
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n1024_t24
+  - threads: 24
+    bins: 1024
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n1024_t24
+  - threads: 12
+    bins: 1536
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n1536_t12
+  - threads: 12
+    bins: 1536
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n1536_t12
+  - threads: 24
+    bins: 1536
+    gm_lut_mode: dna
+    run_tag: gm_lut_dna_n1536_t24
+  - threads: 24
+    bins: 1536
+    gm_lut_mode: binary
+    run_tag: gm_lut_binary_n1536_t24

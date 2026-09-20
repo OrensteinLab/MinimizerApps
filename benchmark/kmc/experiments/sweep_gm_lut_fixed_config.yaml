@@ -1,0 +1,20 @@
+# GM DNA vs binary LUT on all paper datasets at a fixed layout (t=24, bins=1024).
+name: sweep_gm_lut_fixed_config
+description: Five paper datasets, k=28 gzip — GM-DNA (-ode) vs GM-bin (default); t=24 bins=1024; 1 seed
+
+defaults:
+  datasets: f_vesca,g_gallus,m_balbisiana,h_sapiens_2,h_sapiens_3
+  k: 28
+  input: gzip
+  signature_order: gm
+  signature_len: 9
+  n_seeds: 1
+  force: true
+  threads: 24
+  bins: 1024
+
+configs:
+  - gm_lut_mode: dna
+    run_tag: gm_lut_dna_n1024_t24
+  - gm_lut_mode: binary
+    run_tag: gm_lut_binary_n1024_t24

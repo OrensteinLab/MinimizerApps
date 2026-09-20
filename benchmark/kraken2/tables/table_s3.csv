@@ -1,0 +1,51 @@
+taxid,scientific_name,domain,superkingdom,phylum,lineage_3,lineage_4,family,genus,species
+930943,Sulfolobus islandicus HVE10/4,prokaryote,Archaea,Crenarchaeota,Thermoprotei,Sulfolobales,Sulfolobaceae,Sulfolobus,Sulfolobus islandicus
+1053692,Methanococcus maripaludis X1,prokaryote,Archaea,Euryarchaeota,Methanococci,Methanococcales,Methanococcaceae,Methanococcus,Methanococcus maripaludis
+573236,Bifidobacterium animalis subsp. lactis V9,prokaryote,Bacteria,Actinobacteria,Actinobacteria,Bifidobacteriales,Bifidobacteriaceae,Bifidobacterium,Bifidobacterium animalis
+862962,Bacteroides fragilis 638R,prokaryote,Bacteria,Bacteroidetes,Bacteroidia,Bacteroidales,Bacteroidaceae,Bacteroides,Bacteroides fragilis
+1218356,Chlamydia psittaci WS/RT/E30,prokaryote,Bacteria,Chlamydiae,Chlamydiia,Chlamydiales,Chlamydiaceae,Chlamydia,Chlamydia psittaci
+300852,Thermus thermophilus HB8,prokaryote,Bacteria,Deinococcus-Thermus,Deinococci,Thermales,Thermaceae,Thermus,Thermus thermophilus
+347495,Bacillus cereus F837/76,prokaryote,Bacteria,Firmicutes,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus cereus
+552536,Listeria monocytogenes HCC23,prokaryote,Bacteria,Firmicutes,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria monocytogenes
+1036673,Paenibacillus mucilaginosus KNP414,prokaryote,Bacteria,Firmicutes,Bacilli,Bacillales,Paenibacillaceae,Paenibacillus,Paenibacillus mucilaginosus
+418127,Staphylococcus aureus subsp. aureus Mu3,prokaryote,Bacteria,Firmicutes,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus aureus
+226185,Enterococcus faecalis V583,prokaryote,Bacteria,Firmicutes,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus faecalis
+998820,Lactobacillus casei BD-II,prokaryote,Bacteria,Firmicutes,Bacilli,Lactobacillales,Lactobacillaceae,Lactobacillus,Lactobacillus casei
+299768,Streptococcus thermophilus CNRZ1066,prokaryote,Bacteria,Firmicutes,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus thermophilus
+536232,Clostridium botulinum A2 str. Kyoto,prokaryote,Bacteria,Firmicutes,Clostridia,Clostridiales,Clostridiaceae,Clostridium,Clostridium botulinum
+440085,Methylobacterium extorquens CM4,prokaryote,Bacteria,Proteobacteria,Alphaproteobacteria,Rhizobiales,Methylobacteriaceae,Methylobacterium,Methylobacterium extorquens
+395492,Rhizobium leguminosarum bv. trifolii WSM2304,prokaryote,Bacteria,Proteobacteria,Alphaproteobacteria,Rhizobiales,Rhizobiaceae,Rhizobium,Rhizobium leguminosarum
+1117943,Sinorhizobium fredii HH103,prokaryote,Bacteria,Proteobacteria,Alphaproteobacteria,Rhizobiales,Rhizobiaceae,Sinorhizobium,Sinorhizobium fredii
+1184253,Anaplasma phagocytophilum str. HZ2,prokaryote,Bacteria,Proteobacteria,Alphaproteobacteria,Rickettsiales,Anaplasmataceae,Anaplasma,Anaplasma phagocytophilum
+449216,Rickettsia prowazekii str. Rp22,prokaryote,Bacteria,Proteobacteria,Alphaproteobacteria,Rickettsiales,Rickettsiaceae,Rickettsia,Rickettsia prowazekii
+568706,Bordetella pertussis 18323,prokaryote,Bacteria,Proteobacteria,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Bordetella,Bordetella pertussis
+122586,Neisseria meningitidis MC58,prokaryote,Bacteria,Proteobacteria,Betaproteobacteria,Neisseriales,Neisseriaceae,Neisseria,Neisseria meningitidis
+573059,Desulfovibrio vulgaris RCH1,prokaryote,Bacteria,Proteobacteria,Deltaproteobacteria,Desulfovibrionales,Desulfovibrionaceae,Desulfovibrio,Desulfovibrio vulgaris
+367737,Arcobacter butzleri RM4018,prokaryote,Bacteria,Proteobacteria,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Arcobacter,Arcobacter butzleri
+354242,Campylobacter jejuni subsp. jejuni 81-176,prokaryote,Bacteria,Proteobacteria,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter jejuni
+402882,Shewanella baltica OS185,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Alteromonadales,Shewanellaceae,Shewanella,Shewanella baltica
+290339,Cronobacter sakazakii ATCC BAA-894,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Cronobacter,Cronobacter sakazakii
+1104326,Enterobacter cloacae subsp. dissolvens SDM,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter cloacae
+373384,Shigella flexneri 5 str. 8401,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella flexneri
+1123863,Pantoea ananatis LMG 5342,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Enterobacterales,Erwiniaceae,Pantoea,Pantoea ananatis
+768492,Serratia plymuthica AS9,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia plymuthica
+434271,Actinobacillus pleuropneumoniae serovar 3 str. JL03,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Actinobacillus,Actinobacillus pleuropneumoniae
+262728,Haemophilus influenzae R2866,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Haemophilus,Haemophilus influenzae
+889738,Acinetobacter baumannii MDR-TJ,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter baumannii
+1042876,Pseudomonas putida S16,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas putida
+441952,Francisella tularensis subsp. mediasiatica FSC147,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Thiotrichales,Francisellaceae,Francisella,Francisella tularensis
+990315,Xanthomonas campestris pv. raphani 756C,prokaryote,Bacteria,Proteobacteria,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Xanthomonas,Xanthomonas campestris
+1133568,Brachyspira pilosicoli B2904,prokaryote,Bacteria,Spirochaetes,Spirochaetia,Brachyspirales,Brachyspiraceae,Brachyspira,Brachyspira pilosicoli
+1328311,Borrelia burgdorferi CA382,prokaryote,Bacteria,Spirochaetes,Spirochaetia,Spirochaetales,Borreliaceae,Borreliella,Borreliella burgdorferi
+243276,Treponema pallidum subsp. pallidum str. Nichols,prokaryote,Bacteria,Spirochaetes,Spirochaetia,Spirochaetales,Spirochaetaceae,Treponema,Treponema pallidum
+1159202,Mycoplasma gallisepticum NC06_2006.080-5-2P,prokaryote,Bacteria,Tenericutes,Mollicutes,Mycoplasmatales,Mycoplasmataceae,Mycoplasma,Mycoplasma gallisepticum
+1327964,Pseudomonas phage PAK_P5,virus,Viruses,n/a,n/a,Caudovirales,Myoviridae,Kpp10virus,Pseudomonas virus PAKP3
+1089136,Mycobacterium phage JacAttac,virus,Viruses,n/a,n/a,Caudovirales,Siphoviridae,Pg1virus,Mycobacterium virus Pg1
+198503,Simian adenovirus 21,virus,Viruses,n/a,n/a,n/a,Adenoviridae,Mastadenovirus,Human mastadenovirus B
+11053,Dengue virus 1,virus,Viruses,n/a,n/a,n/a,Flaviviridae,Flavivirus,Dengue virus
+1544901,Hepatitis C virus genotype 7,virus,Viruses,n/a,n/a,n/a,Flaviviridae,Hepacivirus,Hepacivirus C
+915425,Human papillomavirus type 101,virus,Viruses,n/a,n/a,n/a,Papillomaviridae,Gammapapillomavirus,Gammapapillomavirus 6
+37138,Galleria mellonella densovirus,virus,Viruses,n/a,n/a,n/a,Parvoviridae,Ambidensovirus,Lepidopteran ambidensovirus 1
+10804,Adeno-associated virus - 2,virus,Viruses,n/a,n/a,n/a,Parvoviridae,Dependoparvovirus,Adeno-associated dependoparvovirus A
+11801,Moloney murine leukemia virus,virus,Viruses,n/a,n/a,n/a,Retroviridae,Gammaretrovirus,Murine leukemia virus
+1136133,Porcine kobuvirus SH-W-CHN/2010/China,virus,Viruses,n/a,n/a,Picornavirales,Picornaviridae,Kobuvirus,Aichivirus C
