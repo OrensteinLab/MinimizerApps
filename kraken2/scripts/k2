@@ -7,6 +7,7 @@ import concurrent.futures
 import collections
 import csv
 import ctypes
+import fcntl
 import ftplib
 import functools
 import glob
@@ -28,6 +29,7 @@ import random
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tarfile
@@ -39,6 +41,7 @@ import urllib
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 
@@ -86,6 +89,44 @@ WRAPPER_ARGS_TO_BIN_ARGS = {
     "use_daemon": "-D",
     "cht_cell_size": "-C",
     "dump_taxon_counters": "-d"
+}
+
+# SketchingScheme / Order (must match src/sketching_schemes.h + kraken2_data.h)
+SKETCHING_MINIMIZER = 0
+SKETCHING_MOD = 1
+ORDER_RANDOM_XOR = 0  # was ORDER_RANDOM; value 0 kept for DB compatibility
+ORDER_GM = 1
+ORDER_RANDOM_PCG = 2
+KRAKEN2_DB_VERSION_ORIGINAL = 0
+KRAKEN2_DB_VERSION = 1
+INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
+INDEX_OPTIONS_EXT_FMT = "<BBHI4xQ"
+SKETCHING_SCHEME_NAMES = {
+    SKETCHING_MINIMIZER: "Minimizer",
+    SKETCHING_MOD: "Mod",
+}
+ORDER_NAMES = {
+    ORDER_RANDOM_XOR: "RandomXor",
+    ORDER_GM: "GreedyMini",
+    ORDER_RANDOM_PCG: "RandomPcg",
+}
+# CLI aliases → canonical display name (matches parse_order in sketching_schemes.h)
+ORDER_ALIASES = {
+    "random": "RandomXor",
+    "randomxor": "RandomXor",
+    "random_xor": "RandomXor",
+    "xor": "RandomXor",
+    "greedymini": "GreedyMini",
+    "gm": "GreedyMini",
+    "randompcg": "RandomPcg",
+    "random_pcg": "RandomPcg",
+    "pcg": "RandomPcg",
+}
+GM_ALPHABET_BINARY = 0
+GM_ALPHABET_DNA = 1
+GM_ALPHABET_NAMES = {
+    GM_ALPHABET_BINARY: "binary",
+    GM_ALPHABET_DNA: "dna",
 }
 
 
@@ -571,6 +612,177 @@ def wrapper_args_to_binary_args(opts, argv, binary_args):
             argv.extend([WRAPPER_ARGS_TO_BIN_ARGS[k], str(v)])
 
 
+def read_index_options(opts_pathname):
+    with open(opts_pathname, "rb") as in_file:
+        data = in_file.read()
+    base_size = struct.calcsize(INDEX_OPTIONS_BASE_FMT)
+    ext_size = struct.calcsize(INDEX_OPTIONS_EXT_FMT)
+    if len(data) < base_size:
+        return None
+    (
+        k,
+        l,
+        spaced_seed_mask,
+        toggle_mask,
+        dna_db,
+        minimum_acceptable_hash_value,
+        revcom_version,
+        db_version,
+        db_type,
+    ) = struct.unpack(INDEX_OPTIONS_BASE_FMT, data[:base_size])
+    if db_version > KRAKEN2_DB_VERSION:
+        return None
+    result = {
+        "k": k,
+        "l": l,
+        "db_version": db_version,
+        "sketching_scheme": SKETCHING_MINIMIZER,
+        "order": ORDER_RANDOM_XOR,
+        "gm_alphabet": GM_ALPHABET_BINARY,
+        "gm_k": 0,
+        "gm_num_entries": 0,
+    }
+    if db_version >= KRAKEN2_DB_VERSION:
+        if len(data) < base_size + ext_size:
+            return None
+        sketching_scheme, gm_alphabet, gm_k, reserved, gm_num_entries = struct.unpack(
+            INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
+        )
+        result["sketching_scheme"] = sketching_scheme
+        result["order"] = reserved & 0xFF
+        result["gm_alphabet"] = gm_alphabet
+        result["gm_k"] = gm_k
+        result["gm_num_entries"] = gm_num_entries
+    return result
+
+
+def database_requires_gm_k2d(opts_pathname):
+    opts = read_index_options(opts_pathname)
+    if opts is None:
+        return False
+    return opts["order"] == ORDER_GM and opts["gm_num_entries"] > 0
+
+
+def normalize_order_name(order):
+    """Map CLI aliases (e.g. Random) to canonical names (RandomXor)."""
+    if not order:
+        return "RandomXor"
+    key = order.lower().replace("-", "_")
+    return ORDER_ALIASES.get(key, order)
+
+
+def sketching_order_from_args(args):
+    sketching = getattr(args, "sketching_scheme", None) or "Minimizer"
+    order = normalize_order_name(getattr(args, "order", None) or "RandomXor")
+    return sketching, order
+
+
+def sketching_order_build_key(args):
+    sketching, order = sketching_order_from_args(args)
+    parts = [sketching, order]
+    if order == "GreedyMini":
+        alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
+        parts.append(alphabet)
+        gm_file = getattr(args, "greedy_mini_file", None)
+        if gm_file:
+            parts.append(os.path.basename(gm_file))
+            if os.path.isfile(gm_file):
+                stat = os.stat(gm_file)
+                parts.append("{}:{}".format(stat.st_size, int(stat.st_mtime)))
+    return ":".join(parts)
+
+
+def index_sketching_order_key(opts_pathname):
+    opts = read_index_options(opts_pathname)
+    if opts is None:
+        return None
+    sk = SKETCHING_SCHEME_NAMES.get(opts["sketching_scheme"], "Minimizer")
+    od = ORDER_NAMES.get(opts["order"], "RandomXor")
+    parts = [sk, od]
+    if od == "GreedyMini":
+        parts.append(GM_ALPHABET_NAMES.get(opts.get("gm_alphabet", 0), "binary"))
+        parts.append("gm{}".format(opts["gm_num_entries"]))
+    return ":".join(parts)
+
+
+def validate_minimizer_build_args(args):
+    sketching, order = sketching_order_from_args(args)
+    alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
+    if alphabet not in ("binary", "dna"):
+        LOG.error("--gm-alphabet must be 'binary' or 'dna'\n")
+        sys.exit(1)
+    if sketching == "Mod" and order == "GreedyMini" and alphabet != "binary":
+        LOG.error("MOD+GM requires --gm-alphabet binary (e.g. w5_k6_canonical.gm)\n")
+        sys.exit(1)
+    if order != "GreedyMini":
+        return
+    gm_file = getattr(args, "greedy_mini_file", None)
+    if not gm_file:
+        LOG.error(
+            "--greedy-mini-file is required when --order GreedyMini\n"
+        )
+        sys.exit(1)
+    if not os.path.isfile(gm_file):
+        LOG.error("GreedyMini rank file not found: {:s}\n".format(gm_file))
+        sys.exit(1)
+
+
+def add_sketching_args(args, argv, binary_args):
+    """Pass -s/-O/-G/-a/-T for sketching + order."""
+    sketching, order = sketching_order_from_args(args)
+    if "-s" in binary_args and sketching != "Minimizer":
+        argv.extend(["-s", sketching])
+    if "-O" in binary_args and order != "RandomXor":
+        argv.extend(["-O", order])
+    if "-G" in binary_args and order == "GreedyMini":
+        gm_file = getattr(args, "greedy_mini_file", None)
+        if gm_file:
+            argv.extend(["-G", gm_file])
+    alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
+    if "-a" in binary_args and order == "GreedyMini" and alphabet != "binary":
+        argv.extend(["-a", alphabet])
+    toggle = getattr(args, "toggle_mask", None)
+    if toggle and "-T" in binary_args:
+        argv.extend(["-T", str(toggle)])
+
+
+def database_build_complete(args):
+    if not all(os.path.isfile(f) for f in ("hash.k2d", "taxo.k2d", "opts.k2d")):
+        return False
+
+    requested = sketching_order_build_key(args)
+    stored = index_sketching_order_key("opts.k2d")
+    _, order = sketching_order_from_args(args)
+
+    if order == "GreedyMini":
+        if not os.path.isfile("gm.k2d"):
+            return False
+        if stored is None or ":GreedyMini:" not in (":" + stored + ":"):
+            # stored like Minimizer:GreedyMini:binary:gmN
+            if stored is None or "GreedyMini" not in stored:
+                return False
+        opts = read_index_options("opts.k2d")
+        gm_file = getattr(args, "greedy_mini_file", None)
+        if opts and gm_file and os.path.isfile(gm_file):
+            with open(gm_file, "rb") as gm_in:
+                (table_size,) = struct.unpack("<Q", gm_in.read(8))
+            if opts["gm_num_entries"] != table_size:
+                return False
+        else:
+            return False
+        # Also require sketching prefix match
+        req_prefix = ":".join(requested.split(":")[:2])
+        sto_prefix = ":".join(stored.split(":")[:2]) if stored else ""
+        if req_prefix != sto_prefix:
+            return False
+    elif stored != requested:
+        return False
+
+    if database_requires_gm_k2d("opts.k2d") and not os.path.isfile("gm.k2d"):
+        return False
+    return True
+
+
 def find_kraken2_binary(name):
     # search the OS PATH
     if "PATH" in os.environ:
@@ -617,6 +829,10 @@ def find_database(database_name):
     if database_path:
         for db_file in ["taxo.k2d", "hash.k2d", "opts.k2d"]:
             if not os.path.exists(os.path.join(database_path, db_file)):
+                return None
+        opts_path = os.path.join(database_path, "opts.k2d")
+        if database_requires_gm_k2d(opts_path):
+            if not os.path.exists(os.path.join(database_path, "gm.k2d")):
                 return None
     return database_path
 
@@ -2743,23 +2959,369 @@ def write_to_fifo(filenames, fifo1=None, fifo2=None):
                     file1.write(seq)
 
 
-def check_seqidmap():
-    LOG.info(
-        "Checking if there are invalid taxids in seqid2taxid.map. "
-        "These taxids will be logged if found and removed from the file\n"
-    )
+def _taxonomy_nodes_path(taxonomy_dir="taxonomy"):
+    return os.path.join(taxonomy_dir, "nodes.dmp")
+
+
+def _taxonomy_names_path(taxonomy_dir="taxonomy"):
+    return os.path.join(taxonomy_dir, "names.dmp")
+
+
+def load_taxonomy_nodes(taxonomy_dir="taxonomy"):
+    """Return taxid -> parent_taxid from nodes.dmp."""
     taxonomy_nodes = {}
-    merged_nodes = {}
-    with open(os.path.join("taxonomy", "nodes.dmp"), "r") as fin:
+    nodes_path = _taxonomy_nodes_path(taxonomy_dir)
+    with open(nodes_path, "r") as fin:
         for entry in fin:
             taxid, parent_taxid = entry.split("\t|")[:2]
             taxonomy_nodes[taxid.strip()] = parent_taxid.strip()
+    return taxonomy_nodes
 
-    if os.path.exists(os.path.join("taxonomy", "merged.dmp")):
-        with open(os.path.join("taxonomy", "merged.dmp"), "r") as fin:
-            for entry in fin:
-                old_taxid, new_taxid = entry.split("\t|")[:2]
-                merged_nodes[old_taxid.strip()] = new_taxid.strip()
+
+def load_merged_taxids(taxonomy_dir="taxonomy"):
+    merged_nodes = {}
+    merged_path = os.path.join(taxonomy_dir, "merged.dmp")
+    if not os.path.exists(merged_path):
+        return merged_nodes
+    with open(merged_path, "r") as fin:
+        for entry in fin:
+            old_taxid, new_taxid = entry.split("\t|")[:2]
+            merged_nodes[old_taxid.strip()] = new_taxid.strip()
+    return merged_nodes
+
+
+def parent_node_fields(taxonomy_dir, parent_taxid):
+    """Return (division_id, genetic_code_id, mito_genetic_code_id) from parent."""
+    defaults = ("0", "1", "0")
+    nodes_path = _taxonomy_nodes_path(taxonomy_dir)
+    prefix = parent_taxid + "\t|"
+    with open(nodes_path, "r") as fin:
+        for entry in fin:
+            if not entry.startswith(prefix):
+                continue
+            parts = [p.strip() for p in entry.rstrip("\n").split("\t|\t")]
+            if len(parts) < 9:
+                return defaults
+            return (parts[4], parts[6], parts[8])
+    return defaults
+
+
+def load_node_extra_fields(taxonomy_dir, taxids):
+    """Load division/genetic-code fields for a set of taxids (one pass)."""
+    needed = {str(t) for t in taxids}
+    fields = {}
+    if not needed:
+        return fields
+    defaults = ("0", "1", "0")
+    nodes_path = _taxonomy_nodes_path(taxonomy_dir)
+    with open(nodes_path, "r") as fin:
+        for entry in fin:
+            taxid = entry.split("\t|", 1)[0].strip()
+            if taxid not in needed:
+                continue
+            parts = [p.strip() for p in entry.rstrip("\n").split("\t|\t")]
+            if len(parts) < 9:
+                fields[taxid] = defaults
+            else:
+                fields[taxid] = (parts[4], parts[6], parts[8])
+            if len(fields) == len(needed):
+                break
+    return fields
+
+
+def fetch_taxa_from_eutils(taxids):
+    """
+    Fetch taxonomy records missing from taxdump via NCBI E-utilities.
+
+    Some RefSeq taxids exist in Entrez Taxonomy / accession maps but are
+    absent from the public taxdump.tar.gz (and Datasets Taxonomy API).
+    """
+    results = {}
+    taxid_list = [str(t) for t in taxids if str(t)]
+    if not taxid_list:
+        return results
+
+    for i in range(0, len(taxid_list), 200):
+        batch = taxid_list[i : i + 200]
+        query = urllib.parse.urlencode(
+            {"db": "taxonomy", "id": ",".join(batch), "retmode": "xml"}
+        )
+        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?" + query
+        data = None
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(url, timeout=90) as resp:
+                    data = resp.read()
+                break
+            except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as e:
+                LOG.warning(
+                    "eutils taxonomy fetch failed (attempt {}/5): {}\n".format(
+                        attempt + 1, e
+                    )
+                )
+                time.sleep(1.0 + attempt)
+        if data is None:
+            continue
+
+        try:
+            root = ET.fromstring(data)
+        except ET.ParseError as e:
+            LOG.warning("Failed to parse eutils taxonomy XML: {}\n".format(e))
+            continue
+
+        for taxon in root.findall("Taxon"):
+            taxid_el = taxon.findtext("TaxId")
+            if not taxid_el:
+                continue
+            lineage = []
+            for ancestor in taxon.findall("./LineageEx/Taxon"):
+                aid = ancestor.findtext("TaxId")
+                if aid:
+                    lineage.append(aid.strip())
+            results[taxid_el.strip()] = {
+                "parent": (taxon.findtext("ParentTaxId") or "1").strip(),
+                "rank": (taxon.findtext("Rank") or "no rank").strip(),
+                "name": (taxon.findtext("ScientificName") or taxid_el).strip(),
+                "gc": (taxon.findtext("./GeneticCode/GCId") or "1").strip(),
+                "mgc": (taxon.findtext("./MitoGeneticCode/MGCId") or "0").strip(),
+                "lineage": lineage,
+            }
+        # Be polite to NCBI without an API key (~3 req/s).
+        if i + 200 < len(taxid_list):
+            time.sleep(0.34)
+
+    return results
+
+
+def resolve_inject_parent(info, known_taxids):
+    """Pick a parent that already exists (or will) in the local dump."""
+    parent = info["parent"]
+    if parent in known_taxids:
+        return parent
+    for ancestor in reversed(info.get("lineage", [])):
+        if ancestor in known_taxids:
+            return ancestor
+    return "1"
+
+
+def inject_missing_taxids(missing_taxids, taxonomy_dir="taxonomy"):
+    """
+    Append orphan taxids to nodes.dmp / names.dmp using eutils metadata.
+    Returns the set of taxids successfully added (or already present).
+    """
+    missing_taxids = {str(t) for t in missing_taxids if str(t)}
+    if not missing_taxids:
+        return set()
+
+    lock_path = os.path.join(taxonomy_dir, ".taxid_inject.lock")
+    os.makedirs(taxonomy_dir, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        taxonomy_nodes = load_taxonomy_nodes(taxonomy_dir)
+        still_missing = missing_taxids - set(taxonomy_nodes)
+        if not still_missing:
+            return missing_taxids
+
+        LOG.info(
+            "Fetching {} taxid(s) missing from taxdump via NCBI eutils\n".format(
+                len(still_missing)
+            )
+        )
+
+        pending = set(still_missing)
+        fetched = {}
+        # Also pull missing parents so the tree stays connected.
+        while pending:
+            batch = sorted(pending)
+            pending.clear()
+            info = fetch_taxa_from_eutils(batch)
+            for taxid, data in info.items():
+                fetched[taxid] = data
+                parent = data["parent"]
+                if (
+                    parent not in taxonomy_nodes
+                    and parent not in fetched
+                    and parent not in ("", "0")
+                ):
+                    pending.add(parent)
+            unresolved = [t for t in batch if t not in info]
+            if unresolved:
+                LOG.warning(
+                    "eutils returned no record for taxid(s): {}\n".format(
+                        ", ".join(unresolved[:20])
+                        + ("..." if len(unresolved) > 20 else "")
+                    )
+                )
+
+        known = set(taxonomy_nodes) | set(fetched)
+        for taxid, data in fetched.items():
+            data["inject_parent"] = resolve_inject_parent(data, known - {taxid})
+
+        remaining = dict(fetched)
+        emit_order = []
+        emitted = set()
+        while remaining:
+            progressed = False
+            for taxid in sorted(remaining):
+                parent = remaining[taxid]["inject_parent"]
+                if parent in taxonomy_nodes or parent in emitted:
+                    emit_order.append((taxid, remaining.pop(taxid)))
+                    emitted.add(taxid)
+                    progressed = True
+            if not progressed:
+                for taxid, data in sorted(remaining.items()):
+                    data["inject_parent"] = "1"
+                    emit_order.append((taxid, data))
+                    emitted.add(taxid)
+                remaining.clear()
+
+        if not emit_order:
+            return set(taxonomy_nodes) & missing_taxids
+
+        parent_ids = {data["inject_parent"] for _, data in emit_order}
+        field_cache = load_node_extra_fields(taxonomy_dir, parent_ids)
+        defaults = ("0", "1", "0")
+
+        nodes_path = _taxonomy_nodes_path(taxonomy_dir)
+        names_path = _taxonomy_names_path(taxonomy_dir)
+        appended = []
+        with open(nodes_path, "a") as nodes_out, open(names_path, "a") as names_out:
+            for taxid, data in emit_order:
+                if taxid in taxonomy_nodes:
+                    continue
+                parent = data["inject_parent"]
+                div_id, parent_gc, parent_mgc = field_cache.get(parent, defaults)
+                gc = data.get("gc") or parent_gc
+                mgc = data.get("mgc") or parent_mgc
+                rank = data.get("rank") or "no rank"
+                name = data.get("name") or taxid
+                nodes_out.write(
+                    "{0}\t|\t{1}\t|\t{2}\t|\t\t|\t{3}\t|\t1\t|\t{4}\t|\t1\t|\t{5}\t|\t1\t|\t1\t|\t0\t|\t\t|\n".format(
+                        taxid, parent, rank, div_id, gc, mgc
+                    )
+                )
+                names_out.write(
+                    "{0}\t|\t{1}\t|\t\t|\tscientific name\t|\n".format(taxid, name)
+                )
+                taxonomy_nodes[taxid] = parent
+                field_cache[taxid] = (div_id, gc, mgc)
+                appended.append(taxid)
+
+        if appended:
+            LOG.info(
+                "Injected {} orphan taxid(s) into taxonomy dump "
+                "(present in eutils but missing from taxdump)\n".format(len(appended))
+            )
+        return set(taxonomy_nodes) & missing_taxids
+
+
+def collect_library_taxids(db_dir="."):
+    """Collect taxids referenced by library prelim_map*.txt files."""
+    taxids = set()
+    pattern = os.path.join(db_dir, "library", "*", "prelim_map*.txt")
+    for path in glob.glob(pattern):
+        with open(path, "r") as fin:
+            for line in fin:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                # TAXID / ACCNUM lines: col2 is seqid, col3 is taxid
+                taxid = parts[2].strip()
+                if taxid.isdigit():
+                    taxids.add(taxid)
+    return taxids
+
+
+def repair_taxonomy(args):
+    """
+    Inject RefSeq/library taxids that are missing from the local taxdump.
+
+    NCBI's taxdump can lag Entrez Taxonomy; accession maps and assemblies
+    may already reference those taxids. Without injection, k2 drops the
+    sequences during build.
+    """
+    db_dir = get_abs_path(args.db)
+    taxonomy_dir = os.path.join(db_dir, "taxonomy")
+    if not os.path.isdir(taxonomy_dir):
+        LOG.error("Cannot find taxonomy subdirectory in database\n")
+        sys.exit(1)
+    if not os.path.isfile(_taxonomy_nodes_path(taxonomy_dir)):
+        LOG.error("Cannot find nodes.dmp in taxonomy subdirectory\n")
+        sys.exit(1)
+
+    taxonomy_nodes = load_taxonomy_nodes(taxonomy_dir)
+    merged = load_merged_taxids(taxonomy_dir)
+    library_taxids = collect_library_taxids(db_dir)
+    if not library_taxids:
+        LOG.info("No library prelim_map taxids found; nothing to repair\n")
+        return
+
+    missing = set()
+    for taxid in library_taxids:
+        if taxid in taxonomy_nodes:
+            continue
+        if taxid in merged and merged[taxid] in taxonomy_nodes:
+            continue
+        missing.add(taxid)
+
+    if not missing:
+        LOG.info(
+            "All {} library taxid(s) are present in nodes.dmp\n".format(
+                len(library_taxids)
+            )
+        )
+        return
+
+    LOG.info(
+        "Found {} library taxid(s) missing from nodes.dmp; attempting repair\n".format(
+            len(missing)
+        )
+    )
+    injected = inject_missing_taxids(missing, taxonomy_dir=taxonomy_dir)
+    still_missing = missing - injected
+    if still_missing:
+        LOG.warning(
+            "{} taxid(s) could not be repaired and will be dropped at build: {}\n".format(
+                len(still_missing),
+                ", ".join(sorted(still_missing, key=int)[:20])
+                + ("..." if len(still_missing) > 20 else ""),
+            )
+        )
+    else:
+        LOG.info("Taxonomy repair complete; all library taxids are present\n")
+
+
+def check_seqidmap():
+    LOG.info(
+        "Checking if there are invalid taxids in seqid2taxid.map. "
+        "Merged taxids are remapped; taxids missing from taxdump are "
+        "injected via NCBI eutils when possible, otherwise removed\n"
+    )
+    taxonomy_dir = "taxonomy"
+    taxonomy_nodes = load_taxonomy_nodes(taxonomy_dir)
+    merged_nodes = load_merged_taxids(taxonomy_dir)
+
+    # First pass: collect orphans (after merged remap consideration).
+    orphan_taxids = set()
+    with open("seqid2taxid.map", "r") as fin:
+        for line in fin:
+            seqid, taxid = line.split("\t")
+            taxid = taxid.strip()
+            if taxid in taxonomy_nodes:
+                continue
+            if taxid in merged_nodes and merged_nodes[taxid] in taxonomy_nodes:
+                continue
+            if taxid in merged_nodes:
+                # merged target may itself be missing from nodes
+                orphan_taxids.add(merged_nodes[taxid])
+            else:
+                orphan_taxids.add(taxid)
+
+    if orphan_taxids:
+        inject_missing_taxids(orphan_taxids, taxonomy_dir=taxonomy_dir)
+        taxonomy_nodes = load_taxonomy_nodes(taxonomy_dir)
 
     with open("seqid2taxid.map.new", "w") as fout:
         with open("seqid2taxid.map", "r") as fin:
@@ -2770,20 +3332,22 @@ def check_seqidmap():
                     fout.write(line)
                 elif taxid in merged_nodes:
                     new_taxid = merged_nodes[taxid]
-                    LOG.warning(
-                        "The following taxids are no longer in nodes.dmp and need to"
-                        " be remapped according. See merged.dmp for details\n"
-                    )
-                    LOG.warning(
-                        "The taxid, {}, associated with {} has been remapped to {}\n".format(
-                            taxid, seqid, new_taxid
+                    if new_taxid in taxonomy_nodes:
+                        LOG.warning(
+                            "The taxid, {}, associated with {} has been remapped to {}\n".format(
+                                taxid, seqid, new_taxid
+                            )
                         )
-                    )
-                    fout.write("\t".join([seqid, new_taxid]) + "\n")
+                        fout.write("\t".join([seqid, new_taxid]) + "\n")
+                    else:
+                        LOG.warning(
+                            "There is no entry for remapped taxid, '{}', associated with {},"
+                            "in nodes.dmp; sequence dropped\n".format(new_taxid, seqid)
+                        )
                 else:
                     LOG.warning(
                         "There is no entry for taxid, '{}', associated with {},"
-                        "in nodes.dmp. Please contact NCBI about this\n".format(
+                        "in nodes.dmp (eutils injection failed); sequence dropped\n".format(
                             taxid, seqid
                         )
                     )
@@ -2847,6 +3411,7 @@ def build_kraken2_db(args):
     if not os.path.isdir(get_abs_path(args.db)):
         LOG.error('Cannot find Kraken 2 database: "{:s}\n'.format(args.db))
         sys.exit(1)
+    validate_minimizer_build_args(args)
     os.chdir(args.db)
     if not os.path.isdir("taxonomy"):
         LOG.error("Cannot find taxonomy subdirectory in database\n")
@@ -2916,33 +3481,49 @@ def build_kraken2_db(args):
         check_seqidmap()
 
     estimate_capacity_binary = find_kraken2_binary("estimate_capacity")
+    estimate_capacity_options = get_binary_options(estimate_capacity_binary)
     argv = [estimate_capacity_binary, "-S", construct_seed_template(args)]
     if args.protein:
         argv.append("-X")
-    wrapper_args_to_binary_args(
-        args, argv, get_binary_options(estimate_capacity_binary)
-    )
+    wrapper_args_to_binary_args(args, argv, estimate_capacity_options)
+    add_sketching_args(args, argv, estimate_capacity_options)
     fasta_filenames = glob.glob(
         os.path.join("library", os.path.join("*", "*.f[an]a")), recursive=False
     )
     estimate = ""
     total_sequences = 0
+    scheme_key = sketching_order_build_key(args)
     if os.path.exists("estimated_capacity"):
         estimated_capacity_mtime = os.path.getmtime("estimated_capacity")
         seqid_to_taxid_map_mtime = os.path.getmtime("seqid2taxid.map")
         if estimated_capacity_mtime > seqid_to_taxid_map_mtime:
-            LOG.info(
-                "An estimated_capacity file exists and is newer "
-                "than seqid2taxid.map , reading the estimated "
-                "capacity from estimated_capacity file.\n"
-            )
             with open("estimated_capacity", "r") as in_file:
                 lines = in_file.readlines()
-                if len(lines) == 1:
+            cached_scheme = lines[2].strip() if len(lines) >= 3 else None
+            if cached_scheme == scheme_key or (
+                cached_scheme is None and scheme_key in (
+                    "RandomXor", "Minimizer:RandomXor",
+                    "Random", "Minimizer:Random",
+                )
+            ):
+                LOG.info(
+                    "An estimated_capacity file exists and is newer "
+                    "than any of the prelim_map.txt files, reading the estimated "
+                    "capacity from estimated_capacity file.\n"
+                )
+                if len(lines) >= 1:
                     estimate = lines[0].strip()
-                elif len(lines) == 2:
-                    estimate = lines[0].strip()
+                if len(lines) >= 2:
                     total_sequences = int(lines[1].strip())
+            else:
+                if cached_scheme is not None:
+                    LOG.info(
+                        "estimated_capacity is for scheme '{:s}', "
+                        "re-estimating for '{:s}'.\n".format(
+                            cached_scheme, scheme_key
+                        )
+                    )
+                estimate = ""
 
     mapped_sequences = {}
     with open("seqid2taxid.map", "rb") as in_file:
@@ -2967,7 +3548,9 @@ def build_kraken2_db(args):
         estimate = proc.communicate()[0].decode()
         proc.stdin.close()
         with open("estimated_capacity", "w") as out_file:
-            out_file.write(estimate + str(total_sequences) + "\n")
+            out_file.write(estimate.strip() + "\n")
+            out_file.write(str(total_sequences) + "\n")
+            out_file.write(scheme_key + "\n")
 
     required_capacity = (int(estimate.strip()) + 8192) / args.load_factor
     LOG.info(
@@ -2986,11 +3569,12 @@ def build_kraken2_db(args):
                     format_bytes(required_capacity * (args.cht_cell_size / 8)),
                 )
             )
-    if os.path.isfile("hash.k2d"):
-        LOG.info("Hash table already present, skipping build\n")
+    if database_build_complete(args):
+        LOG.info("Database files already present, skipping build\n")
     else:
         LOG.info("Starting database build\n")
         build_db_bin = find_kraken2_binary("build_db")
+        build_db_options = get_binary_options(build_db_bin)
         argv = [
             build_db_bin,
             "-H",
@@ -3010,7 +3594,8 @@ def build_kraken2_db(args):
         ]
         if args.protein:
             argv.append("-X")
-        wrapper_args_to_binary_args(args, argv, get_binary_options(build_db_bin))
+        wrapper_args_to_binary_args(args, argv, build_db_options)
+        add_sketching_args(args, argv, build_db_options)
 
         LOG.info("Running: " + " ".join(argv) + "\n")
         if total_sequences > 0:
@@ -4372,12 +4957,12 @@ def get_library_and_prelim_map_filepaths(db_pathname):
 
 def spawn_estimate_capacity_proc(args):
     estimate_capacity_binary = find_kraken2_binary("estimate_capacity")
+    estimate_capacity_options = get_binary_options(estimate_capacity_binary)
     argv = [estimate_capacity_binary, "-S", construct_seed_template(args)]
     if args.protein:
         argv.append("-X")
-    wrapper_args_to_binary_args(
-        args, argv, get_binary_options(estimate_capacity_binary)
-    )
+    wrapper_args_to_binary_args(args, argv, estimate_capacity_options)
+    add_sketching_args(args, argv, estimate_capacity_options)
 
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     return proc
@@ -4546,6 +5131,15 @@ def make_build_parser(subparsers):
               ignored in comparisons",
     )
     parser.add_argument(
+        "--toggle-mask",
+        type=str,
+        metavar="MASK",
+        default=None,
+        help="Minimizer ordering toggle mask (build_db -T). "
+             "Binary bitstring (strtoull base 2). Used as the random-order "
+             "seed for Random / within-tier tiebreaks.",
+    )
+    parser.add_argument(
         "--threads",
         type=int,
         metavar="INT",
@@ -4614,6 +5208,41 @@ def make_build_parser(subparsers):
         help="Bit storage requested for taxid",
     )
     parser.add_argument(
+        "--sketching-scheme",
+        type=str,
+        metavar="SCHEME",
+        default="Minimizer",
+        choices=["Minimizer", "Mod"],
+        help="Sketching rule (default: Minimizer). Choices: Minimizer, Mod",
+    )
+    parser.add_argument(
+        "--order",
+        type=str,
+        metavar="ORDER",
+        default="RandomXor",
+        choices=["RandomXor", "Random", "GreedyMini", "RandomPcg"],
+        help="Substring order O_ℓ / O_t (default: RandomXor). Choices: "
+             "RandomXor (alias: Random), GreedyMini, RandomPcg",
+    )
+    parser.add_argument(
+        "--greedy-mini-file",
+        type=str,
+        metavar="FILENAME",
+        default=None,
+        help="Path to GreedyMini rank file (.gm); "
+             "required when --order GreedyMini",
+    )
+    parser.add_argument(
+        "--gm-alphabet",
+        type=str,
+        metavar="ALPHABET",
+        default="binary",
+        choices=["binary", "dna"],
+        help="GreedyMini table alphabet (default: binary). "
+             "Use 'dna' for DNA-native UHS tables (4^k entries; "
+             "key = first gm_k bases, tiebreaker = remaining bases).",
+    )
+    parser.add_argument(
         "--log",
         type=str,
         metavar="FILENAME",
@@ -4652,6 +5281,27 @@ def make_download_taxonomy_parser(subparsers):
         "--skip-maps",
         action="store_true",
         help="Avoids downloading accession number to taxid maps",
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+        metavar="FILENAME",
+        default=None,
+        help="Specify a log filename (default: stderr)",
+    )
+
+
+def make_repair_taxonomy_parser(subparsers):
+    parser = subparsers.add_parser(
+        "repair-taxonomy",
+        help="Inject library taxids missing from NCBI taxdump into nodes.dmp",
+    )
+    parser.add_argument(
+        "--db",
+        type=str,
+        metavar="PATHNAME",
+        required=True,
+        help="Pathname to Kraken2 database",
     )
     parser.add_argument(
         "--log",
@@ -5231,6 +5881,7 @@ def make_cmdline_parser():
     make_add_to_library_parser(subparsers)
     make_download_library_parser(subparsers)
     make_download_taxonomy_parser(subparsers)
+    make_repair_taxonomy_parser(subparsers)
     make_build_parser(subparsers)
     make_classify_parser(subparsers)
     make_inspect_parser(subparsers)
@@ -5342,6 +5993,8 @@ def k2_main():
         args.db = os.path.abspath(args.db)
     if task == "download-taxonomy":
         download_taxonomy(args)
+    elif task == "repair-taxonomy":
+        repair_taxonomy(args)
     elif task == "classify":
         if len(args.db) == 1 and not find_database(args.db[0]):
             partitions = find_partitioned_databases(args.db[0])

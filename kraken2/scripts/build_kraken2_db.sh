@@ -98,7 +98,29 @@ fi
 echo "Estimating required capacity (step 2)..."
 
 step_time=$(get_current_time)
-estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG )
+KRAKEN2_SCHEME_FLAGS=""
+if [ -n "${KRAKEN2_SKETCHING_SCHEME:-}" ] && [ "${KRAKEN2_SKETCHING_SCHEME}" != "Minimizer" ]
+then
+  KRAKEN2_SCHEME_FLAGS="-s ${KRAKEN2_SKETCHING_SCHEME}"
+fi
+# Default order is RandomXor (legacy alias: Random); only pass -O when non-default.
+_order="${KRAKEN2_ORDER:-RandomXor}"
+if [ -n "${KRAKEN2_ORDER:-}" ] && \
+   [ "${KRAKEN2_ORDER}" != "RandomXor" ] && [ "${KRAKEN2_ORDER}" != "Random" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -O ${KRAKEN2_ORDER}"
+fi
+if [ "${_order}" = "GreedyMini" ] && [ -n "${KRAKEN2_GREEDY_MINI_FILE:-}" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -G $KRAKEN2_GREEDY_MINI_FILE"
+fi
+if [ "${_order}" = "GreedyMini" ] && \
+   [ -n "${KRAKEN2_GM_ALPHABET:-}" ] && [ "${KRAKEN2_GM_ALPHABET}" != "binary" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -a $KRAKEN2_GM_ALPHABET"
+fi
+
+estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG $KRAKEN2_SCHEME_FLAGS)
 # Slight upward adjustment of distinct minimizer estimate to protect
 # against crash w/ small reference sets
 estimate=$(( estimate + 8192 ))
@@ -135,7 +157,7 @@ else
     build_db -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE $KRAKEN2XFLAG \
              -H hash.k2d.tmp -t taxo.k2d.tmp -o opts.k2d.tmp -n taxonomy/ -m $seqid2taxid_map_file \
              -c $required_capacity -p $KRAKEN2_THREAD_CT $max_db_flag -B $KRAKEN2_BLOCK_SIZE -b $KRAKEN2_SUBBLOCK_SIZE \
-             -r $KRAKEN2_MIN_TAXID_BITS $fast_build_flag
+             -r $KRAKEN2_MIN_TAXID_BITS $fast_build_flag $KRAKEN2_SCHEME_FLAGS
   finalize_file taxo.k2d
   finalize_file opts.k2d
   finalize_file hash.k2d

@@ -10,6 +10,7 @@
 #include "mmscanner.h"
 #include "compact_hash.h"
 #include "kraken2_data.h"
+#include "sketching_schemes.h"
 #include "utilities.h"
 
 using std::string;
@@ -50,7 +51,46 @@ int main(int argc, char **argv) {
   opts.min_clear_hash_value = 0;
   opts.maximum_capacity = 0;
   opts.deterministic_build = true;
+  opts.sketching_scheme = SketchingScheme::MINIMIZER;
+  opts.order = Order::RANDOM_XOR;
+  opts.gm_alphabet = GmAlphabet::BINARY;
   ParseCommandLine(argc, argv, opts);
+
+  // Load GreedyMini rank table once (cached); embed as gm.k2d for classify.
+  int gm_k = 0;
+  if (opts.order == Order::GM) {
+    if (opts.greedy_mini_filename.empty())
+      errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
+    try {
+      opts.gm_table = MinimizerScanner::shared_gm_table(
+          opts.greedy_mini_filename, opts.gm_alphabet);
+    } catch (const std::exception &ex) {
+      errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
+    }
+    if (!opts.gm_table || opts.gm_table->empty())
+      errx(EX_NOINPUT, "failed to load GreedyMini file: %s",
+           opts.greedy_mini_filename.c_str());
+    gm_k = opts.gm_table->gm_k();
+    if (opts.sketching_scheme == SketchingScheme::MOD) {
+      if (opts.gm_table->alphabet() != GmAlphabet::BINARY)
+        errx(EX_DATAERR, "MOD+GM requires BINARY alphabet table (e.g. w5_k6_canonical)");
+      const int t = ModSampler::kDefaultR +
+                    (((int)opts.l - ModSampler::kDefaultR) %
+                     ((int)opts.k - (int)opts.l + 1));
+      if (gm_k != t)
+        errx(EX_DATAERR, "MOD+GM table gm_k=%d must equal t=%d", gm_k, t);
+    } else if (gm_k > (int)opts.l) {
+      errx(EX_DATAERR, "GreedyMini k_gm=%d exceeds minimizer l=%d", gm_k,
+           (int)opts.l);
+    }
+    std::cerr << "Loaded GreedyMini rank table: alphabet="
+              << gm_alphabet_name(opts.gm_alphabet)
+              << ", k_gm=" << gm_k
+              << ", UHS=" << opts.gm_table->uhs_size()
+              << "/" << opts.gm_table->size()
+              << "  sketching=" << sketching_scheme_name(opts.sketching_scheme)
+              << " order=" << order_name(opts.order) << std::endl;
+  }
 
   omp_set_num_threads( opts.num_threads );
 
@@ -91,7 +131,7 @@ int main(int argc, char **argv) {
     errx(EX_DATAERR, "Unsupported CHT cell size");
   }
 
-  IndexOptions index_opts;
+  IndexOptions index_opts = {0};
   index_opts.k = opts.k;
   index_opts.l = opts.l;
   index_opts.spaced_seed_mask = opts.spaced_seed_mask;
@@ -99,14 +139,23 @@ int main(int argc, char **argv) {
   index_opts.dna_db = ! opts.input_is_protein;
   index_opts.minimum_acceptable_hash_value = opts.min_clear_hash_value;
   index_opts.revcom_version = CURRENT_REVCOM_VERSION;
-  index_opts.db_version = 0;
   index_opts.db_type = 0;
+  EncodeIndexSchemes(index_opts, opts.sketching_scheme, opts.order);
+  index_opts.gm_alphabet = (uint8_t)opts.gm_alphabet;
+  index_opts.gm_k = (uint16_t)gm_k;
+  index_opts.gm_num_entries = opts.gm_table ? (uint64_t)opts.gm_table->size() : 0;
   ofstream opts_fs(opts.options_filename);
   opts_fs.write((char *) &index_opts, sizeof(index_opts));
   if (! opts_fs.good())
     errx(EX_OSERR, "Unable to write options file %s",
          opts.options_filename.c_str());
   opts_fs.close();
+
+  if (opts.order == Order::GM && opts.gm_table)
+    MinimizerScanner::embed_gm_table(opts.greedy_mini_filename,
+                                     opts.hashtable_filename,
+                                     opts.gm_table);
+
   std::cerr << " complete." << std::endl;
 
   return 0;
@@ -179,7 +228,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:s:S:T:XC:")) != -1) {
+  while ((opt = getopt(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:a:s:O:")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -227,10 +276,11 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         opts.taxonomy_filename = optarg;
         break;
       case 'S' :
-        opts.spaced_seed_mask = strtol(optarg, nullptr, 2);
+        // strtoull: 64-bit masks with MSB set overflow signed strtol → LONG_MAX
+        opts.spaced_seed_mask = strtoull(optarg, nullptr, 2);
         break;
       case 'T' :
-        opts.toggle_mask = strtol(optarg, nullptr, 2);
+        opts.toggle_mask = strtoull(optarg, nullptr, 2);
         break;
       case 'k' :
         sig = atoll(optarg);
@@ -269,6 +319,32 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         if (sig != 32 && sig != 40)
           errx(EX_USAGE, "CHT cell size should be either 32 or 40 bits");
         opts.cht_cell_size = sig;
+        break;
+      case 's': {
+        try {
+          opts.sketching_scheme = parse_sketching_scheme(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      }
+      case 'O': {
+        try {
+          opts.order = parse_order(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      }
+      case 'G':
+        opts.greedy_mini_filename = optarg;
+        break;
+      case 'a':
+        try {
+          opts.gm_alphabet = parse_gm_alphabet(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
         break;
     }
   }
@@ -324,6 +400,10 @@ void usage(int exit_code) {
        << "  -B INT        Read block size\n"
        << "  -b INT        Read subblock size\n"
        << "  -r INT        Bit storage requested for taxid\n"
-       << "  -C INT        CHT cell size (default: 32)" << endl;
+       << "  -C INT        CHT cell size (default: 32)\n"
+       << "  -s STRING     Sketching: Minimizer (default), Mod\n"
+       << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg\n"
+       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order\n"
+       << "  -a STRING     GreedyMini alphabet: binary (default), dna\n";
   exit(exit_code);
 }

@@ -7,6 +7,8 @@
 #include "seqreader.h"
 #include "mmscanner.h"
 
+#include <memory>
+
 using namespace kraken2;
 
 struct Options {
@@ -29,7 +31,22 @@ struct Options {
   uint64_t min_clear_hash_value;
   bool deterministic_build;
   size_t cht_cell_bits;
+  // SketchingScheme × Order
+  SketchingScheme sketching_scheme;
+  Order order;
+  string greedy_mini_filename;
+  GmAlphabet gm_alphabet;
+  std::shared_ptr<const GreedyMiniTable> gm_table;
 };
+
+inline MinimizerScanner MakeMinimizerScanner(const Options &opts) {
+  return MinimizerScanner(opts.k, opts.l, opts.spaced_seed_mask,
+                          !opts.input_is_protein, opts.toggle_mask,
+                          CURRENT_REVCOM_VERSION,
+                          opts.sketching_scheme, opts.order,
+                          opts.greedy_mini_filename,
+                          opts.gm_table);
+}
 
 vector<string> ExtractNCBISequenceIDs(const string &header);
 template<typename Cell>
@@ -83,8 +100,7 @@ void ProcessSequencesFast(const Options &opts,
 #pragma omp parallel
   {
     Sequence sequence;
-    MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask,
-                             !opts.input_is_protein, opts.toggle_mask);
+    MinimizerScanner scanner = MakeMinimizerScanner(opts);
 
     BatchSequenceReader reader;
 
@@ -217,6 +233,13 @@ template<typename Cell>
 void ProcessSequence(const Options &opts, const string &seq, taxid_t taxid,
     CompactHashTable<Cell> &hash, const Taxonomy &tax)
 {
+  // Mod: precompute stream origins once per sequence.
+  std::vector<uint32_t> mod_origin_at;
+  if (opts.sketching_scheme == SketchingScheme::MOD) {
+    MinimizerScanner origin_sc = MakeMinimizerScanner(opts);
+    origin_sc.ComputeModStreamOrigins(seq, &mod_origin_at);
+  }
+
   const int set_ct = 256;
   omp_lock_t locks[set_ct];
   for (int i = 0; i < set_ct; i++)
@@ -232,16 +255,20 @@ void ProcessSequence(const Options &opts, const string &seq, taxid_t taxid,
     std::set<uint64_t> minimizer_sets[set_ct];
 
     // for each subblock in the block, gather minimizers in parallel
-    #pragma omp parallel for schedule(dynamic)
-    for (size_t i = block_start; i < block_finish; i += opts.subblock_size) {
+    #pragma omp parallel
+    {
+      MinimizerScanner scanner = MakeMinimizerScanner(opts);
+      #pragma omp for schedule(dynamic)
+      for (size_t i = block_start; i < block_finish; i += opts.subblock_size) {
       // subblock: fixed length subsequence of block, handled in parallel,
       //   consecutive subblocks overlap by k-1 characters
-      MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask,
-                               ! opts.input_is_protein, opts.toggle_mask);
       size_t subblock_finish = i + opts.subblock_size + opts.k - 1;
       if (subblock_finish > block_finish)
         subblock_finish = block_finish;
-      scanner.LoadSequence(seq, i, subblock_finish);
+      if (!mod_origin_at.empty())
+        scanner.LoadSequence(seq, i, subblock_finish, (ssize_t)mod_origin_at[i]);
+      else
+        scanner.LoadSequence(seq, i, subblock_finish);
       uint64_t *minimizer_ptr;
       while ((minimizer_ptr = scanner.NextMinimizer())) {
         if (scanner.is_ambiguous())
@@ -255,7 +282,8 @@ void ProcessSequence(const Options &opts, const string &seq, taxid_t taxid,
         minimizer_sets[zone].insert(*minimizer_ptr);
         omp_unset_lock(&locks[zone]);
       }
-    }  // end subblock for loop
+      }  // end subblock for loop
+    }  // end omp parallel
 
     // combine sets into sorted list
     std::vector<uint64_t> minimizer_lists[set_ct];

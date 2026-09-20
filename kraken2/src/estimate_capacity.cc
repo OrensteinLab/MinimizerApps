@@ -7,6 +7,8 @@
 #include "kraken2_headers.h"
 #include "kv_store.h"
 #include "mmscanner.h"
+#include "sketching_schemes.h"
+#include <memory>
 #include "seqreader.h"
 #include "utilities.h"
 #include <ios>
@@ -38,6 +40,11 @@ struct Options {
   size_t block_size;
   uint64_t spaced_seed_mask;
   uint64_t toggle_mask;
+  SketchingScheme sketching_scheme;
+  Order order;
+  std::string greedy_mini_filename;
+  GmAlphabet gm_alphabet;
+  std::shared_ptr<const GreedyMiniTable> gm_table;
 };
 
 void ParseCommandLine(int argc, char **argv, Options &opts);
@@ -57,7 +64,24 @@ int main(int argc, char **argv) {
   opts.spaced_seed_mask = DEFAULT_SPACED_SEED_MASK;
   opts.toggle_mask = DEFAULT_TOGGLE_MASK;
   opts.block_size = DEFAULT_BLOCK_SIZE;
+  opts.sketching_scheme = SketchingScheme::MINIMIZER;
+  opts.order = Order::RANDOM_XOR;
+  opts.gm_alphabet = GmAlphabet::BINARY;
   ParseCommandLine(argc, argv, opts);
+
+  if (opts.order == Order::GM) {
+    if (opts.greedy_mini_filename.empty())
+      errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
+    try {
+      opts.gm_table = MinimizerScanner::shared_gm_table(
+          opts.greedy_mini_filename, opts.gm_alphabet);
+    } catch (const std::exception &ex) {
+      errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
+    }
+    if (!opts.gm_table || opts.gm_table->empty())
+      errx(EX_NOINPUT, "failed to load GreedyMini file: %s",
+           opts.greedy_mini_filename.c_str());
+  }
   omp_set_num_threads(opts.threads);
   ProcessSequences(opts);
   return 0;
@@ -103,7 +127,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:X")) != -1) {
+  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:XG:a:s:O:")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -146,10 +170,35 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         opts.input_is_protein = true;
         break;
       case 'S' :
-        opts.spaced_seed_mask = strtol(optarg, nullptr, 2);
+        // strtoull: 64-bit masks with MSB set overflow signed strtol → LONG_MAX
+        opts.spaced_seed_mask = strtoull(optarg, nullptr, 2);
         break;
       case 'T' :
-        opts.toggle_mask = strtol(optarg, nullptr, 2);
+        opts.toggle_mask = strtoull(optarg, nullptr, 2);
+        break;
+      case 's':
+        try {
+          opts.sketching_scheme = parse_sketching_scheme(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      case 'O':
+        try {
+          opts.order = parse_order(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      case 'G':
+        opts.greedy_mini_filename = optarg;
+        break;
+      case 'a':
+        try {
+          opts.gm_alphabet = parse_gm_alphabet(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
         break;
     }
   }
@@ -178,14 +227,23 @@ void usage(int exit_code) {
        << "  -S BITSTRING  Spaced seed mask" << endl
        << "  -T BITSTRING  Minimizer ordering toggle mask" << endl
        << "  -B INT        Read block size" << endl
-       << "  -p INT        Number of threads" << endl;
+       << "  -p INT        Number of threads" << endl
+       << "  -s STRING     Sketching: Minimizer (default), Mod" << endl
+       << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg" << endl
+       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order" << endl
+       << "  -a STRING     GreedyMini alphabet: binary (default), dna" << endl;
   exit(exit_code);
 }
 
 void ProcessSequence(string &seq, Options &opts,
     vector<unordered_set<uint64_t>> &sets)
 {
-  MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask, ! opts.input_is_protein, opts.toggle_mask);
+  MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask,
+                           ! opts.input_is_protein, opts.toggle_mask,
+                           CURRENT_REVCOM_VERSION,
+                           opts.sketching_scheme, opts.order,
+                           opts.greedy_mini_filename,
+                           opts.gm_table);
   // Add terminator for protein sequences if not already there
   if (opts.input_is_protein && seq.back() != '*')
     seq.push_back('*');
@@ -196,7 +254,6 @@ void ProcessSequence(string &seq, Options &opts,
       continue;
     uint64_t hash_code = MurmurHash3(*minimizer_ptr);
     if ((hash_code & RANGE_MASK) < opts.n) {
-      // #pragma omp critical(set_insert)
       sets[hash_code & RANGE_MASK].insert(*minimizer_ptr);
     }
   }

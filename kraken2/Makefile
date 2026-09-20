@@ -1,4 +1,4 @@
-.PHONY: all install clean
+.PHONY: all install clean test
 
 SCRIPTS = scripts/*.sh \
 	scripts/*.pl \
@@ -18,3 +18,6 @@ install:
 	mkdir -p "$(KRAKEN2_DIR)" && \
 	cp $(SCRIPTS) "$(KRAKEN2_DIR)" && \
 	cd src && $(MAKE) install KRAKEN2_DIR="$(KRAKEN2_DIR)"
+
+test:
+	$(MAKE) -C src test

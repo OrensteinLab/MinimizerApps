@@ -15,6 +15,8 @@
 #include "mmscanner.h"
 #include "compact_hash.h"
 #include "kraken2_data.h"
+#include "sketching_schemes.h"
+#include <memory>
 #include "aa_translate.h"
 #include "reports.h"
 #include "utilities.h"
@@ -50,6 +52,7 @@ struct IndexData {
   IndexOptions options;
   Taxonomy *taxonomy;
   KeyValueStore *cht;
+  std::shared_ptr<const GreedyMiniTable> gm_table;
 
   ~IndexData() {
     if (taxonomy) {
@@ -123,6 +126,19 @@ struct ClassificationStats {
   uint64_t total_sequences;
   uint64_t total_bases;
   uint64_t total_classified;
+#ifdef KRAKEN2_MINIMIZER_PROF
+  // Per-thread times are summed (can exceed wall with OpenMP).
+  uint64_t nextmin_ns;     // NextMinimizer() only (within scan)
+  uint64_t nextmin_calls;  // non-null NextMinimizer returns
+  uint64_t scan_ns;        // phase 1: scan + token stream
+  uint64_t lookup_ns;      // phase 2: GetBatch hash lookups
+  uint64_t resolve_ns;     // phase 3: token replay + ResolveTree
+  uint64_t tok_lookup;     // TOK_LOOKUP count (= distinct lookups)
+  uint64_t tok_repeat;     // TOK_REPEAT count (same minimizer as previous)
+  uint64_t tok_skip;       // TOK_SKIP (clear-hash filtered)
+  uint64_t uhs;            // GM Rank: finite pack (toggle/tb path used)
+  uint64_t non_uhs;        // GM Rank: ∞ early-out (toggle unused)
+#endif
 };
 
 struct OutputStreamData {
@@ -150,7 +166,8 @@ void usage(int exit_code=EX_USAGE);
 void ProcessFiles(const char *filename1, const char *filename2,
     KeyValueStore *hash, Taxonomy &tax,
     IndexOptions &idx_opts, Options &opts, ClassificationStats &stats,
-    OutputStreamData &outputs, taxon_counters_t &total_taxon_counters);
+    OutputStreamData &outputs, taxon_counters_t &total_taxon_counters,
+    std::shared_ptr<const GreedyMiniTable> gm_table = nullptr);
 taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
     KeyValueStore *hash, Taxonomy &tax, IndexOptions &idx_opts,
     Options &opts, ClassificationStats &stats, MinimizerScanner &scanner,
@@ -162,6 +179,9 @@ taxid_t ResolveTree(taxon_counts_t &hit_counts,
     Taxonomy &tax, size_t total_minimizers, Options &opts);
 void ReportStats(struct timeval time1, struct timeval time2,
     ClassificationStats &stats);
+#ifdef KRAKEN2_MINIMIZER_PROF
+void ReportClassifyPhaseTiming(const ClassificationStats &stats);
+#endif
 void InitializeOutputs(Options &opts, OutputStreamData &outputs, SequenceFormat format);
 void MaskLowQualityBases(Sequence &dna, int minimum_quality_score);
 
@@ -280,11 +300,34 @@ IndexData *load_index(Options &opts) {
   if (stat(opts.options_filename.c_str(), &sb) < 0)
     errx(EX_OSERR, "unable to get filesize of %s", opts.options_filename.c_str());
   auto opts_filesize = sb.st_size;
-  idx_opt_fs.read((char *) &idx_opts, opts_filesize);
+  size_t read_size = std::min((size_t)opts_filesize, sizeof(IndexOptions));
+  idx_opt_fs.read((char *) &idx_opts, read_size);
+  if (idx_opts.db_version > KRAKEN2_DB_VERSION)
+    errx(EX_DATAERR, "unsupported opts.k2d db_version %d (supported: 0–%d)",
+         idx_opts.db_version, KRAKEN2_DB_VERSION);
+  if (idx_opts.db_version >= KRAKEN2_DB_VERSION &&
+      read_size < sizeof(IndexOptions))
+    errx(EX_DATAERR, "opts.k2d truncated for db_version %d (%zu bytes)",
+         idx_opts.db_version, read_size);
   opts.use_translated_search = ! idx_opts.dna_db;
 
   IndexData *index_data = new IndexData();
   index_data->options = idx_opts;
+
+  SketchingScheme sketching;
+  Order order;
+  DecodeIndexSchemes(idx_opts, sketching, order);
+
+  if (order == Order::GM && idx_opts.gm_num_entries > 0) {
+    // gm_alphabet: 0 = binary, 1 = dna
+    const GmAlphabet alphabet = (GmAlphabet)idx_opts.gm_alphabet;
+    const string gm_path =
+        MinimizerScanner::gm_k2d_path(opts.index_filename);
+    index_data->gm_table = MinimizerScanner::shared_gm_table(gm_path, alphabet);
+    if (!index_data->gm_table)
+      errx(EX_NOINPUT, "GreedyMini rank table not found at %s", gm_path.c_str());
+  }
+
   index_data->taxonomy = new Taxonomy(opts.taxonomy_filename, opts.use_memory_mapping);
 
   KeyValueStore *cht;
@@ -311,10 +354,11 @@ void classify(Options &opts, IndexData *index_data) {
   IndexOptions idx_opts = index_data->options;
   Taxonomy &taxonomy = *(index_data->taxonomy);
   KeyValueStore *hash_ptr = index_data->cht;
+  const auto &gm_table = index_data->gm_table;
 
   omp_set_num_threads(opts.num_threads);
 
-  ClassificationStats stats = {0, 0, 0};
+  ClassificationStats stats = {};
 
   OutputStreamData outputs = { false, false, nullptr, nullptr, nullptr, nullptr, &std::cout };
   if (opts.use_translated_search) {
@@ -326,7 +370,7 @@ void classify(Options &opts, IndexData *index_data) {
   if (opts.filenames.empty()) {
     if (opts.paired_end_processing && ! opts.single_file_pairs)
       errx(EX_USAGE, "paired end processing used with no files specified");
-    ProcessFiles(nullptr, nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters);
+    ProcessFiles(nullptr, nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters, gm_table);
   }
   else {
     for (size_t i = 0; i < opts.filenames.size(); i++) {
@@ -334,10 +378,10 @@ void classify(Options &opts, IndexData *index_data) {
         if (i + 1 == opts.filenames.size()) {
           errx(EX_USAGE, "paired end processing used with unpaired file");
         }
-        ProcessFiles(opts.filenames[i], opts.filenames[i+1], hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters);
+        ProcessFiles(opts.filenames[i], opts.filenames[i+1], hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters, gm_table);
         i += 1;
       } else {
-        ProcessFiles(opts.filenames[i], nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters);
+        ProcessFiles(opts.filenames[i], nullptr, hash_ptr, taxonomy, idx_opts, opts, stats, outputs, taxon_counters, gm_table);
       }
     }
   }
@@ -346,6 +390,9 @@ void classify(Options &opts, IndexData *index_data) {
   // delete hash_ptr;
 
   ReportStats(tv1, tv2, stats);
+#ifdef KRAKEN2_MINIMIZER_PROF
+  ReportClassifyPhaseTiming(stats);
+#endif
   if (!opts.taxon_counters_dump_filename.empty()) {
     dumpTaxonCounters(opts.taxon_counters_dump_filename, taxon_counters, taxonomy);
   }
@@ -487,11 +534,112 @@ void ReportStats(struct timeval time1, struct timeval time2,
           total_unclassified * 100.0 / stats.total_sequences);
 }
 
+#ifdef KRAKEN2_MINIMIZER_PROF
+void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
+  const double nextmin_s = stats.nextmin_ns / 1e9;
+  const double scan_s = stats.scan_ns / 1e9;
+  const double lookup_s = stats.lookup_ns / 1e9;
+  const double resolve_s = stats.resolve_ns / 1e9;
+  const double ns_per_call =
+      stats.nextmin_calls ? (double)stats.nextmin_ns / (double)stats.nextmin_calls
+                          : 0.0;
+  const double mbp = stats.total_bases / 1.0e6;
+  const double calls_per_mbp =
+      mbp > 0 ? (double)stats.nextmin_calls / mbp : 0.0;
+  const double lookups_per_mbp =
+      mbp > 0 ? (double)stats.tok_lookup / mbp : 0.0;
+  const double repeats_per_mbp =
+      mbp > 0 ? (double)stats.tok_repeat / mbp : 0.0;
+  const uint64_t dens_denom = stats.tok_lookup + stats.tok_repeat;
+  const double lookup_frac =
+      dens_denom ? 100.0 * (double)stats.tok_lookup / (double)dens_denom : 0.0;
+  const uint64_t uhs_denom = stats.uhs + stats.non_uhs;
+  const double uhs_frac =
+      uhs_denom ? 100.0 * (double)stats.uhs / (double)uhs_denom : 0.0;
+  const double non_uhs_frac =
+      uhs_denom ? 100.0 * (double)stats.non_uhs / (double)uhs_denom : 0.0;
+
+  fprintf(stderr,
+          "NEXTMIN_TIMING nextmin_s=%.9f calls=%llu ns_per_call=%.3f "
+          "calls_per_Mbp=%.3f bases=%llu sequences=%llu "
+          "uhs=%llu non_uhs=%llu uhs_frac_pct=%.3f non_uhs_frac_pct=%.3f\n",
+          nextmin_s,
+          (unsigned long long)stats.nextmin_calls,
+          ns_per_call,
+          calls_per_mbp,
+          (unsigned long long)stats.total_bases,
+          (unsigned long long)stats.total_sequences,
+          (unsigned long long)stats.uhs,
+          (unsigned long long)stats.non_uhs,
+          uhs_frac,
+          non_uhs_frac);
+  fprintf(stderr,
+          "PHASE_TIMING scan_s=%.9f lookup_s=%.9f resolve_s=%.9f "
+          "lookups=%llu repeats=%llu skips=%llu "
+          "lookups_per_Mbp=%.3f repeats_per_Mbp=%.3f lookup_frac_pct=%.3f\n",
+          scan_s, lookup_s, resolve_s,
+          (unsigned long long)stats.tok_lookup,
+          (unsigned long long)stats.tok_repeat,
+          (unsigned long long)stats.tok_skip,
+          lookups_per_mbp, repeats_per_mbp, lookup_frac);
+
+  const char *path = getenv("KRAKEN2_MINIMIZER_PROF");
+  if (path == nullptr || path[0] == '\0')
+    return;
+  FILE *fp = fopen(path, "w");
+  if (!fp) {
+    warn("could not write minimizer profile file %s", path);
+    return;
+  }
+  fprintf(fp,
+          "nextmin_s=%.9f\n"
+          "calls=%llu\n"
+          "ns_per_call=%.3f\n"
+          "calls_per_Mbp=%.3f\n"
+          "scan_s=%.9f\n"
+          "lookup_s=%.9f\n"
+          "resolve_s=%.9f\n"
+          "lookups=%llu\n"
+          "repeats=%llu\n"
+          "skips=%llu\n"
+          "lookups_per_Mbp=%.3f\n"
+          "repeats_per_Mbp=%.3f\n"
+          "lookup_frac_pct=%.3f\n"
+          "uhs=%llu\n"
+          "non_uhs=%llu\n"
+          "uhs_frac_pct=%.3f\n"
+          "non_uhs_frac_pct=%.3f\n"
+          "bases=%llu\n"
+          "sequences=%llu\n",
+          nextmin_s,
+          (unsigned long long)stats.nextmin_calls,
+          ns_per_call,
+          calls_per_mbp,
+          scan_s,
+          lookup_s,
+          resolve_s,
+          (unsigned long long)stats.tok_lookup,
+          (unsigned long long)stats.tok_repeat,
+          (unsigned long long)stats.tok_skip,
+          lookups_per_mbp,
+          repeats_per_mbp,
+          lookup_frac,
+          (unsigned long long)stats.uhs,
+          (unsigned long long)stats.non_uhs,
+          uhs_frac,
+          non_uhs_frac,
+          (unsigned long long)stats.total_bases,
+          (unsigned long long)stats.total_sequences);
+  fclose(fp);
+}
+#endif
+
 void ProcessFiles(const char *filename1, const char *filename2,
     KeyValueStore *hash, Taxonomy &tax,
     IndexOptions &idx_opts, Options &opts, ClassificationStats &stats,
     OutputStreamData &outputs,
-    taxon_counters_t &total_taxon_counters)
+    taxon_counters_t &total_taxon_counters,
+    std::shared_ptr<const GreedyMiniTable> gm_table)
 {
   // The priority queue for output is designed to ensure fragment data
   // is output in the same order it was input
@@ -510,13 +658,19 @@ void ProcessFiles(const char *filename1, const char *filename2,
 
   #pragma omp parallel
   {
+    SketchingScheme sketching;
+    Order order;
+    DecodeIndexSchemes(idx_opts, sketching, order);
     MinimizerScanner scanner(idx_opts.k, idx_opts.l, idx_opts.spaced_seed_mask,
                              idx_opts.dna_db, idx_opts.toggle_mask,
-                             idx_opts.revcom_version);
+                             idx_opts.revcom_version,
+                             sketching, order,
+                             "",
+                             gm_table);
     vector<taxid_t> taxa;
     taxon_counts_t hit_counts;
     ostringstream kraken_oss, c1_oss, c2_oss, u1_oss, u2_oss;
-    ClassificationStats thread_stats = {0, 0, 0};
+    ClassificationStats thread_stats = {};
     vector<string> translated_frames(6);
     Sequence *seq1 = nullptr, *seq2 = nullptr;
     BatchSequenceReader reader1(r1), reader2(r2);
@@ -528,6 +682,18 @@ void ProcessFiles(const char *filename1, const char *filename2,
       thread_stats.total_sequences = 0;
       thread_stats.total_bases = 0;
       thread_stats.total_classified = 0;
+#ifdef KRAKEN2_MINIMIZER_PROF
+      thread_stats.nextmin_ns = 0;
+      thread_stats.nextmin_calls = 0;
+      thread_stats.scan_ns = 0;
+      thread_stats.lookup_ns = 0;
+      thread_stats.resolve_ns = 0;
+      thread_stats.tok_lookup = 0;
+      thread_stats.tok_repeat = 0;
+      thread_stats.tok_skip = 0;
+      thread_stats.uhs = 0;
+      thread_stats.non_uhs = 0;
+#endif
 
       auto ok_read = false;
 
@@ -633,6 +799,18 @@ void ProcessFiles(const char *filename1, const char *filename2,
         stats.total_bases += thread_stats.total_bases;
         stats.total_sequences += thread_stats.total_sequences;
         stats.total_classified += thread_stats.total_classified;
+#ifdef KRAKEN2_MINIMIZER_PROF
+        stats.nextmin_ns += thread_stats.nextmin_ns;
+        stats.nextmin_calls += thread_stats.nextmin_calls;
+        stats.scan_ns += thread_stats.scan_ns;
+        stats.lookup_ns += thread_stats.lookup_ns;
+        stats.resolve_ns += thread_stats.resolve_ns;
+        stats.tok_lookup += thread_stats.tok_lookup;
+        stats.tok_repeat += thread_stats.tok_repeat;
+        stats.tok_skip += thread_stats.tok_skip;
+        stats.uhs += thread_stats.uhs;
+        stats.non_uhs += thread_stats.non_uhs;
+#endif
 
         if (isatty(fileno(stderr)))
           cerr << "\rProcessed " << stats.total_sequences
@@ -812,6 +990,9 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
   lookup_keys.clear();
   tok_stream.clear();
 
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto scan_t0 = std::chrono::steady_clock::now();
+#endif
   for (int mate_num = 0; mate_num < 2; mate_num++) {
     if (mate_num == 1 && ! opts.paired_end_processing)
       break;
@@ -828,7 +1009,21 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
         scanner.LoadSequence(mate_num == 0 ? dna.seq : dna2.seq);
       }
       uint64_t last_minimizer = UINT64_MAX;
-      while ((minimizer_ptr = scanner.NextMinimizer()) != nullptr) {
+      while (true) {
+#ifdef KRAKEN2_MINIMIZER_PROF
+        const auto t0 = std::chrono::steady_clock::now();
+#endif
+        minimizer_ptr = scanner.NextMinimizer();
+#ifdef KRAKEN2_MINIMIZER_PROF
+        const auto t1 = std::chrono::steady_clock::now();
+        stats.nextmin_ns += (uint64_t)std::chrono::duration_cast<
+            std::chrono::nanoseconds>(t1 - t0).count();
+#endif
+        if (minimizer_ptr == nullptr)
+          break;
+#ifdef KRAKEN2_MINIMIZER_PROF
+        stats.nextmin_calls++;
+#endif
         if (scanner.is_ambiguous()) {
           tok_stream.push_back({TOK_AMBIG, 0});
         }
@@ -838,29 +1033,62 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
             MurmurHash3(*minimizer_ptr) < idx_opts.minimum_acceptable_hash_value;
           if (skip_lookup) {
             tok_stream.push_back({TOK_SKIP, 0});
+#ifdef KRAKEN2_MINIMIZER_PROF
+            stats.tok_skip++;
+#endif
           }
           else {
             tok_stream.push_back({TOK_LOOKUP, (uint32_t) lookup_keys.size()});
             lookup_keys.push_back(*minimizer_ptr);
+#ifdef KRAKEN2_MINIMIZER_PROF
+            stats.tok_lookup++;
+#endif
           }
         } else {
           tok_stream.push_back({TOK_REPEAT, 0});
+#ifdef KRAKEN2_MINIMIZER_PROF
+          stats.tok_repeat++;
+#endif
         }
       }
+#ifdef KRAKEN2_MINIMIZER_PROF
+      if (scanner.has_uhs_stats()) {
+        RankHitStats hs = scanner.GetRankStats();
+        stats.uhs += hs.uhs;
+        stats.non_uhs += hs.non_uhs;
+        scanner.ClearRankStats();
+      }
+#endif
       if (opts.use_translated_search && frame_idx != 5)
         tok_stream.push_back({TOK_BORDER_FRAME, 0});
     }
     if (opts.paired_end_processing && mate_num == 0)
       tok_stream.push_back({TOK_BORDER_MATE, 0});
   }
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto scan_t1 = std::chrono::steady_clock::now();
+  stats.scan_ns += (uint64_t)std::chrono::duration_cast<
+      std::chrono::nanoseconds>(scan_t1 - scan_t0).count();
+#endif
 
   // Phase 2: resolve all distinct minimizers in one prefetched batched pass.
   static thread_local std::vector<hvalue_t> lookup_vals;
   lookup_vals.resize(lookup_keys.size());
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto lookup_t0 = std::chrono::steady_clock::now();
+#endif
   if (! lookup_keys.empty())
     hash->GetBatch(lookup_keys.data(), lookup_vals.data(), lookup_keys.size());
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto lookup_t1 = std::chrono::steady_clock::now();
+  stats.lookup_ns += (uint64_t)std::chrono::duration_cast<
+      std::chrono::nanoseconds>(lookup_t1 - lookup_t0).count();
+#endif
 
   // Phase 3: replay token stream, reproducing the original behavior exactly.
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto resolve_t0 = std::chrono::steady_clock::now();
+#endif
   {
     taxid_t last_taxon = 0;
     for (size_t ti = 0; ti < tok_stream.size(); ti++) {
@@ -918,6 +1146,11 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
   // Void a call made by too few minimizer groups
   if (call && minimizer_hit_groups < opts.minimum_hit_groups)
     call = 0;
+#ifdef KRAKEN2_MINIMIZER_PROF
+  const auto resolve_t1 = std::chrono::steady_clock::now();
+  stats.resolve_ns += (uint64_t)std::chrono::duration_cast<
+      std::chrono::nanoseconds>(resolve_t1 - resolve_t0).count();
+#endif
 
   if (call) {
     stats.total_classified++;

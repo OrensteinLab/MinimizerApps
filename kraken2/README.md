@@ -9,6 +9,21 @@ The second version of the Kraken taxonomic sequence classification system
 Please refer to the Operating Manual (in `docs/MANUAL.html`) for details on
 how to use Kraken 2.
 
+For minimizer / MOD sketching benchmarks and library setup, see
+[`../benchmark/kraken2/README.md`](../benchmark/kraken2/README.md). On a fresh machine, run
+[`../benchmark/kraken2/setup.sh`](../benchmark/kraken2/setup.sh) (host build deps, Miniconda if needed, and a
+conda env with [bioconda `kraken2`](https://anaconda.org/channels/bioconda/packages/kraken2/overview)).
+
+Custom minimizer
+----------------
+
+This fork adds pluggable minimizer orders (`--order`) on top of upstream
+Kraken 2's own default order, including a shared GreedyMini-based
+low-density order also used by this monorepo's
+[KMC fork](../kmc/README.md#custom-minimizer). See
+[`../orders/README.md`](../orders/README.md) for the option/CLI reference
+and shared implementation.
+
 Publications
 ------------
 
