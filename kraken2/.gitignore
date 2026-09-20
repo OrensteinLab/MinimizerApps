@@ -1,0 +1,7 @@
+*.o
+src/build_db
+src/classify
+src/estimate_capacity
+src/dump_table
+src/lookup_accession_numbers
+src/k2mask

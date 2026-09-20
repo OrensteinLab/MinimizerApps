@@ -1,0 +1,304 @@
+/*
+ * Copyright 2013-2023, Derrick Wood <dwood@cs.jhu.edu>
+ *
+ * This file is part of the Kraken 2 taxonomic sequence classification system.
+ */
+#include "reports.h"
+#include "kraken2_data.h"
+#include "omp_hack.h"
+
+using std::vector;
+using std::string;
+using std::ofstream;
+
+namespace kraken2 {
+
+  void dumpTaxonCounters(const std::string &filename, taxon_counters_t &counters, const Taxonomy &tax) {
+  FILE *f;
+
+  uint8_t header[] = {'T', 'C', 0, 0, 1};
+  uint8_t footer[] = {'T', 'C', 'E', 'N', 'D'};
+  f = fopen(filename.c_str(), "w");
+  fwrite(header, 1, sizeof(header) / sizeof(uint8_t), f);
+  size_t num_entries = counters.size();
+  fwrite(&num_entries, sizeof(num_entries), 1, f);
+  for (auto &entry : counters) {
+    taxid_t external_taxid = tax.nodes()[entry.first].external_id;
+    fwrite(&external_taxid, sizeof(external_taxid), 1, f);
+    entry.second.dumpReadCounts(f);
+  }
+  fwrite(footer, 1, sizeof(footer) / sizeof(uint8_t), f);
+  fclose(f);
+}
+
+  void loadTaxonCounters(const std::string &filename, taxon_counters_t &counters, const Taxonomy &tax) {
+  FILE *f;
+  uint8_t header[] = {'T', 'C', 0, 0, 1};
+  uint8_t footer[] = {'T', 'C', 'E', 'N', 'D'};
+
+  uint8_t signature[sizeof(header) / sizeof(uint8_t)] = {0};
+
+  f = fopen(filename.c_str(), "r");
+  fread(signature, 1, sizeof(header) / sizeof(uint8_t), f);
+  if (memcmp(signature, header, sizeof(header))) {
+    errx(1, "Taxon counter header does not match");
+  }
+  size_t num_entries = 0;
+  fread(&num_entries, sizeof(num_entries), 1, f);
+  for (size_t i = 0; i < num_entries; i++) {
+    taxid_t taxid = 0;
+    fread(&taxid, sizeof(taxid), 1, f);
+    counters[tax.GetInternalID(taxid)].loadReadCounts(f);
+  }
+  fread(signature, 1, sizeof(footer) / sizeof(uint8_t), f);
+  if (memcmp(signature, footer, sizeof(footer))) {
+    errx(1, "Taxon counter footer does not match");
+  }
+}
+
+taxon_counts_t GetCladeCounts(Taxonomy &tax, taxon_counts_t &call_counts) {
+  taxon_counts_t clade_counts;
+
+  for (auto &kv_pair : call_counts) {
+    auto taxid = kv_pair.first;
+    auto& count = kv_pair.second;
+
+    while (taxid) {
+      clade_counts[taxid] += count;
+      taxid = tax.nodes()[taxid].parent_id;
+    }
+  }
+
+  return clade_counts;
+}
+
+taxon_counters_t GetCladeCounters(Taxonomy &tax, taxon_counters_t &call_counters) {
+  taxon_counters_t clade_counters;
+  for (auto &kv_pair : call_counters) {
+    auto taxid = kv_pair.first;
+    auto& count = kv_pair.second;
+
+    while (taxid) {
+      clade_counters[taxid] += count;
+      taxid = tax.nodes()[taxid].parent_id;
+    }
+  }
+
+  return clade_counters;
+}
+
+void PrintMpaStyleReportLine(ostream &ofs, uint64_t clade_count, const string &taxonomy_line) {
+  ofs << taxonomy_line << "\t" << clade_count << std::endl;
+}
+
+void MpaReportDFS(taxid_t taxid, ostream& ofs, bool report_zeros,
+    Taxonomy& taxonomy, taxon_counts_t& clade_counts,
+    vector<string>& taxonomy_names)
+{
+  auto clade_count = clade_counts.find(taxid) == clade_counts.end()
+                         ? 0
+                         : clade_counts[taxid];
+  // Clade count of 0 means all subtree nodes have clade count of 0
+  if (!report_zeros && clade_count == 0) return;
+  TaxonomyNode node = taxonomy.nodes()[taxid];
+  string rank = taxonomy.rank_data() + node.rank_offset;
+
+  char rank_code = '\0';
+  if (rank == "superkingdom" || rank == "domain") {
+    rank_code = 'd';
+  } else if (rank == "kingdom") {
+    rank_code = 'k';
+  } else if (rank == "phylum") {
+    rank_code = 'p';
+  } else if (rank == "class") {
+    rank_code = 'c';
+  } else if (rank == "order") {
+    rank_code = 'o';
+  } else if (rank == "family") {
+    rank_code = 'f';
+  } else if (rank == "genus") {
+    rank_code = 'g';
+  } else if (rank == "species") {
+    rank_code = 's';
+  }
+
+  if (rank_code) {
+    string name = "";
+    name += rank_code;
+    name += "__";
+    name += (taxonomy.name_data() + node.name_offset);
+    taxonomy_names.push_back(name);
+    string taxonomy_line = "";
+    for (auto& str : taxonomy_names)
+      taxonomy_line += str + "|";
+    taxonomy_line.pop_back();
+    PrintMpaStyleReportLine(ofs, clade_count, taxonomy_line);
+  }
+
+  auto child_count = node.child_count;
+  if (child_count != 0) {
+    vector<uint64_t> children(child_count);
+
+    for (auto i = 0u; i < child_count; i++) {
+      children[i] = node.first_child + i;
+    }
+    // Sorting child IDs by descending order of clade counts
+    sort(children.begin(), children.end(),
+        [&](const uint64_t& a, const uint64_t& b) {
+          return clade_counts[a] > clade_counts[b];
+        });
+    for (auto child : children) {
+      MpaReportDFS(child, ofs, report_zeros, taxonomy, clade_counts,
+                   taxonomy_names);
+    }
+  }
+
+  if (rank_code)
+    taxonomy_names.pop_back();
+}
+
+void ReportMpaStyle(string filename, bool report_zeros, Taxonomy& taxonomy,
+    taxon_counters_t& call_counters)
+{
+  taxon_counts_t call_counts;
+  for (auto& kv_pair : call_counters) {
+    call_counts[kv_pair.first] = kv_pair.second.readCount();
+  }
+  taxon_counts_t clade_counts = GetCladeCounts(taxonomy, call_counts);
+  ofstream ofs(filename);
+  vector<string> taxonomy_names;
+  MpaReportDFS(1, ofs, report_zeros, taxonomy, clade_counts, taxonomy_names);
+}
+
+void PrintKrakenStyleReportLine(ostream& ofs, bool report_kmer_data,
+    uint64_t total_seqs, READCOUNTER clade_counter,
+    READCOUNTER taxon_counter,
+    const string& rank_str, uint32_t taxid,
+    const string& sci_name, int depth)
+{
+  char pct_buffer[10] = "";
+  sprintf(pct_buffer, "%6.2f", 100.0 * clade_counter.readCount() / total_seqs);
+
+  ofs << pct_buffer << "\t" << clade_counter.readCount() << "\t"
+      << taxon_counter.readCount() << "\t";
+  if (report_kmer_data) {
+    ofs << clade_counter.kmerCount() << "\t"
+        << clade_counter.distinctKmerCount() << "\t";
+  }
+  ofs << rank_str << "\t" << taxid << "\t";
+  for (auto i = 0; i < depth; i++)
+    ofs << "  ";
+  ofs << sci_name << std::endl;
+}
+
+// Depth-first search of taxonomy tree, reporting info at each node
+void KrakenReportDFS(uint32_t taxid, ostream& ofs, bool report_zeros,
+    bool report_kmer_data, Taxonomy& taxonomy,
+    taxon_counters_t& clade_counters,
+    taxon_counters_t& call_counters, uint64_t total_seqs,
+    char rank_code, int rank_depth, int depth)
+{
+  // avoid a potentional allocation if the taxid does not exist
+  auto &&clade_counter = clade_counters.find(taxid) == clade_counters.end()
+                         ? READCOUNTER()
+                         : clade_counters[taxid];
+  auto &&call_counter = call_counters.find(taxid) == call_counters.end()
+                        ? READCOUNTER()
+                        : call_counters[taxid];
+
+  // Clade count of 0 means all subtree nodes have clade count of 0
+  if (!report_zeros && clade_counter.readCount() == 0)
+    return;
+  TaxonomyNode node = taxonomy.nodes()[taxid];
+  string rank = taxonomy.rank_data() + node.rank_offset;
+
+  if (rank == "superkingdom" || rank == "domain") {
+    rank_code = 'D';
+    rank_depth = 0;
+  } else if (rank == "kingdom") {
+    rank_code = 'K';
+    rank_depth = 0;
+  } else if (rank == "phylum") {
+    rank_code = 'P';
+    rank_depth = 0;
+  } else if (rank == "class") {
+    rank_code = 'C';
+    rank_depth = 0;
+  } else if (rank == "order") {
+    rank_code = 'O';
+    rank_depth = 0;
+  } else if (rank == "family") {
+    rank_code = 'F';
+    rank_depth = 0;
+  } else if (rank == "genus") {
+    rank_code = 'G';
+    rank_depth = 0;
+  } else if (rank == "species") {
+    rank_code = 'S';
+    rank_depth = 0;
+  } else {
+    rank_depth++;
+  }
+
+  string rank_str;
+  rank_str.push_back(rank_code);
+  if (rank_depth != 0)
+    rank_str += std::to_string(rank_depth);
+
+  string name = taxonomy.name_data() + node.name_offset;
+
+  PrintKrakenStyleReportLine(ofs, report_kmer_data, total_seqs,
+                             clade_counter, call_counter,
+                             rank_str, node.external_id, name, depth);
+
+  auto child_count = node.child_count;
+  if (child_count != 0) {
+    vector<uint64_t> children(child_count);
+
+    for (auto i = 0u; i < child_count; i++) {
+      children[i] = node.first_child + i;
+    }
+    // Sorting child IDs by descending order of clade read counts
+    std::sort(children.begin(), children.end(),
+              [&](const uint64_t &a, const uint64_t &b) {
+                if (clade_counters.find(a) == clade_counters.end()) {
+                  return false;
+                }
+                if (clade_counters.find(b) == clade_counters.end()) {
+                  return true;
+                }
+
+                return clade_counters[a].readCount() >
+                       clade_counters[b].readCount();
+              });
+
+    for (auto child : children) {
+      KrakenReportDFS(child, ofs, report_zeros, report_kmer_data, taxonomy,
+                      clade_counters, call_counters, total_seqs, rank_code,
+                      rank_depth, depth + 1);
+    }
+  }
+}
+
+
+void ReportKrakenStyle(string filename, bool report_zeros,
+    bool report_kmer_data, Taxonomy& taxonomy,
+    taxon_counters_t& call_counters, uint64_t total_seqs,
+    uint64_t total_unclassified)
+{
+  taxon_counters_t clade_counters = GetCladeCounters(taxonomy, call_counters);
+
+  ofstream ofs(filename);
+  char rank_code = 'R';
+  // Special handling of the unclassified sequences
+  if (total_unclassified != 0 || report_zeros) {
+    READCOUNTER rc(total_unclassified, 0);
+    PrintKrakenStyleReportLine(ofs, report_kmer_data, total_seqs, rc, rc, "U",
+        0, "unclassified", 0);
+  }
+  // DFS through the taxonomy, printing nodes as encountered
+  KrakenReportDFS(1, ofs, report_zeros, report_kmer_data, taxonomy,
+      clade_counters, call_counters, total_seqs, rank_code, -1, 0);
+}
+
+}  // end namespace
