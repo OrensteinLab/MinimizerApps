@@ -33,6 +33,7 @@
 #include "splitter.h"
 #include "cpu_info.h"
 #include "small_sort.h"
+#include "../kmc_api/custom_order.h"
 
 #ifdef DEVELOP_MODE
 #include "develop.h"
@@ -148,6 +149,34 @@ template <unsigned SIZE> void CKMC<SIZE>::SetParamsStage1(const KMC::Stage1Param
 
 	// Technical parameters related to temporary files
 	Params.signature_len = stage1Params.GetSignatureLen();
+	Params.custom_order_file = stage1Params.GetCustomOrderFile();
+	Params.custom_order_label = stage1Params.GetCustomOrderLabel();
+	Params.custom_order_mode = stage1Params.GetCustomOrderMode();
+	Params.custom_order_seed = stage1Params.GetCustomOrderSeed();
+	{
+		CCustomOrder::Config co;
+		co.signature_len = (uint32_t)Params.signature_len;
+		co.file = Params.custom_order_file;
+		co.label = Params.custom_order_label;
+		co.seed = Params.custom_order_seed;
+		co.lut_backend = stage1Params.GetCustomOrderDnaExpandedLut()
+			? CCustomOrder::LutBackend::DnaExpanded
+			: CCustomOrder::LutBackend::BinaryRuntime;
+		if (!co.file.empty())
+			co.mode = CCustomOrder::Mode::TABLE;
+		else if (!Params.custom_order_mode.empty())
+			co.mode = CCustomOrder::ParseMode(Params.custom_order_mode);
+		CCustomOrder::Install(co);
+		Params.use_custom_order = CCustomOrder::Active();
+		if (CCustomOrder::Active())
+		{
+			const CCustomOrder::Info info = CCustomOrder::GetInfo();
+			Params.custom_order_mode = info.mode_name;
+			Params.custom_order_label = info.label;
+			Params.custom_order_seed = info.seed;
+			Params.custom_order_file = info.file;
+		}
+	}
 	Params.bin_part_size = 1 << 16;
 
 #ifdef DEVELOP_MODE
@@ -550,6 +579,19 @@ template <unsigned SIZE> void CKMC<SIZE>::ShowSettingsStage1()
 	ostr << "k-mer length                 : " << Params.kmer_len << "\n";
 	ostr << "Max. k-mer length            : " << MAX_K << "\n";
 	ostr << "Signature length             : " << Params.signature_len << "\n";
+	if (CCustomOrder::Active())
+	{
+		const CCustomOrder::Info info = CCustomOrder::GetInfo();
+		ostr << "Signature order              : custom  mode=" << info.mode_name
+			 << "  label=" << info.label
+			 << "  seed=" << info.seed
+			 << "  k=" << info.k;
+		if (!info.file.empty())
+			ostr << "  file=" << info.file;
+		ostr << "\n";
+	}
+	else
+		ostr << "Signature order              : default\n";
 	ostr << "Both strands                 : " << (Params.both_strands ? "true\n" : "false\n");
 	ostr << "RAM only mode                : " << (Params.mem_mode ? "true\n" : "false\n");
 

@@ -11,6 +11,7 @@
 #include <numeric>
 #include "kb_completer.h"
 #include "critical_error_handler.h"
+#include "../kmc_api/custom_order.h"
 #include <sstream>
 
 using namespace std;
@@ -47,6 +48,7 @@ CKmerBinCompleter::CKmerBinCompleter(CKMCParams &Params, CKMCQueues &Queues)
 	lut_prefix_len = Params.lut_prefix_len;
 	both_strands   = Params.both_strands;
 	without_output = Params.without_output;
+	custom_order   = Params.use_custom_order;
 
 	kmer_t_size    = Params.KMER_T_size;
 
@@ -303,8 +305,9 @@ void CKmerBinCompleter::ProcessBinsSecondStage()
 
 			store_uint(out_lut, both_strands ? 0 : 1, 1);			offset++;
 
-			// Space for future use
-			for (int32 i = 0; i < 27; ++i)
+			store_uint(out_lut, custom_order ? CCustomOrder::kFlagCustom : CCustomOrder::kFlagDefault, 1);
+			offset++;
+			for (int32 i = 1; i < 27; ++i)
 			{
 				store_uint(out_lut, 0, 1);
 				offset++;
@@ -318,6 +321,8 @@ void CKmerBinCompleter::ProcessBinsSecondStage()
 			// Marker at the end
 			fwrite(s_kmc_pre, 1, 4, out_lut);
 			fclose(out_lut);
+			if (custom_order)
+				CCustomOrder::WriteSidecar(file_name);
 		}
 	}
 

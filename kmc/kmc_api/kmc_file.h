@@ -143,7 +143,7 @@ protected:
 	bool OpenASingleFile(const std::string &file_name, FILE *&file_handler, uint64 &size, char marker[]);	
 
 	// Recognize current parameters. Auxiliary function.
-	bool ReadParamsFrom_prefix_file_buf(uint64 &size, open_mode _open_mode);
+	bool ReadParamsFrom_prefix_file_buf(uint64 &size, open_mode _open_mode, const std::string& db_prefix);
 
 	// Reload a contents of an array "sufix_file_buf" for listing mode. Auxiliary function. 
 	void Reload_sufix_file_buf();

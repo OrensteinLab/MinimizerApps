@@ -113,7 +113,12 @@ namespace KMC
 		uint32_t kmerLen = 25;
 		uint32_t nThreads = std::thread::hardware_concurrency();
 		uint32_t maxRamGB = 12;
-		uint32_t signatureLen = 9;		
+		uint32_t signatureLen = 9;
+		std::string customOrderFile;
+		std::string customOrderLabel;
+		std::string customOrderMode;
+		uint64_t customOrderSeed = 0;
+		bool customOrderDnaExpandedLut = false;
 		bool homopolymerCompressed = false;
 		InputFileType inputFileType = InputFileType::FASTQ;
 		bool canonicalKmers = true;
@@ -135,7 +140,12 @@ namespace KMC
 		Stage1Params& SetKmerLen(uint32_t kmerLen);
 		Stage1Params& SetNThreads(uint32_t nThreads);
 		Stage1Params& SetMaxRamGB(uint32_t maxRamGB);
-		Stage1Params& SetSignatureLen(uint32_t signatureLen);		
+		Stage1Params& SetSignatureLen(uint32_t signatureLen);
+		Stage1Params& SetCustomOrderFile(const std::string& customOrderFile);
+		Stage1Params& SetCustomOrderLabel(const std::string& customOrderLabel);
+		Stage1Params& SetCustomOrderMode(const std::string& customOrderMode);
+		Stage1Params& SetCustomOrderSeed(uint64_t customOrderSeed);
+		Stage1Params& SetCustomOrderDnaExpandedLut(bool customOrderDnaExpandedLut);
 		Stage1Params& SetHomopolymerCompressed(bool homopolymerCompressed);
 		Stage1Params& SetInputFileType(InputFileType inputFileType);
 		Stage1Params& SetCanonicalKmers(bool canonicalKmers);
@@ -158,6 +168,11 @@ namespace KMC
 		uint32_t GetNThreads() const noexcept { return nThreads; }
 		uint32_t GetMaxRamGB() const noexcept { return maxRamGB; }
 		uint32_t GetSignatureLen() const noexcept { return signatureLen; }
+		const std::string& GetCustomOrderFile() const noexcept { return customOrderFile; }
+		const std::string& GetCustomOrderLabel() const noexcept { return customOrderLabel; }
+		const std::string& GetCustomOrderMode() const noexcept { return customOrderMode; }
+		uint64_t GetCustomOrderSeed() const noexcept { return customOrderSeed; }
+		bool GetCustomOrderDnaExpandedLut() const noexcept { return customOrderDnaExpandedLut; }
 		bool GetHomopolymerCompressed() const noexcept { return homopolymerCompressed; }
 		InputFileType GetInputFileType() const noexcept { return inputFileType; }
 		bool GetCanonicalKmers() const noexcept { return canonicalKmers; }

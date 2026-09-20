@@ -56,6 +56,7 @@ class CKmerBinCompleter
 	int32 signature_len;	
 	bool both_strands;
 	bool without_output;
+	bool custom_order = false;
 	bool store_uint(FILE *out, uint64 x, uint32 size);
 	std::unique_ptr<CKFFWriter> kff_writer;
 	OutputType output_type;

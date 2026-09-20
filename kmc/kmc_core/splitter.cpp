@@ -10,6 +10,26 @@ Date   : 2024-02-09
 
 #include "splitter.h"
 
+namespace {
+
+inline void init_signature_window(CSignatureMapper* mapper, CMmer& current, CMmer& end_mmer,
+	const char* seq, uint32 start_pos, int32& bin)
+{
+	current.insert(seq + start_pos);
+	end_mmer.set(current);
+	bin = mapper->get_bin_id(current.get());
+}
+
+inline void adopt_signature(CSignatureMapper* mapper, CMmer& current, const CMmer& end_mmer,
+	int32& bin, uint32& start_pos, uint32 pos)
+{
+	current.set(end_mmer);
+	start_pos = pos;
+	bin = mapper->get_bin_id(current.get());
+}
+
+}  // namespace
+
 //************************************************************************************************************
 // CSplitter class - splits kmers into bins according to their signatures
 //************************************************************************************************************
@@ -438,6 +458,23 @@ void CSplitter::HomopolymerCompressSeq(char* seq, uint32 &seq_size)
 // Calculate statistics of m-mers
 void CSplitter::CalcStats(uchar* _part, uint64 _part_size, ReadType read_type, uint32* _stats)
 {
+	switch (CMmer::LutMode())
+	{
+	case CMmer::LUT_BINARY:
+		CalcStatsT<CMmer::LUT_BINARY>(_part, _part_size, read_type, _stats);
+		break;
+	case CMmer::LUT_DNA:
+		CalcStatsT<CMmer::LUT_DNA>(_part, _part_size, read_type, _stats);
+		break;
+	default:
+		CalcStatsT<CMmer::LUT_DEFAULT>(_part, _part_size, read_type, _stats);
+		break;
+	}
+}
+
+template<int Mode>
+void CSplitter::CalcStatsT(uchar* _part, uint64 _part_size, ReadType read_type, uint32* _stats)
+{
 	part = _part;
 	part_size = _part_size;
 	part_pos = 0;
@@ -488,7 +525,7 @@ void CSplitter::CalcStats(uchar* _part, uint64 _part_size, ReadType read_type, u
 					++i;
 					break;
 				}
-				end_mmer.insert(seq[i]);
+				end_mmer.insert_sym<Mode>(seq[i]);
 				if (end_mmer < current_signature)//signature at the end of current k-mer is lower than current
 				{
 					if (len >= kmer_len)
@@ -515,7 +552,7 @@ void CSplitter::CalcStats(uchar* _part, uint64 _part_size, ReadType read_type, u
 					current_signature.set(end_mmer);
 					for (uint32 j = signature_start_pos + signature_len; j <= i; ++j)
 					{
-						end_mmer.insert(seq[j]);
+						end_mmer.insert_sym<Mode>(seq[j]);
 						if (end_mmer <= current_signature)
 						{
 							current_signature.set(end_mmer);
@@ -556,6 +593,20 @@ bool CSplitter::ProcessReadsOnlyEstimate(uchar* _part, uint64 _part_size, ReadTy
 // Process the reads from the given FASTQ file part
 bool CSplitter::ProcessReads(uchar *_part, uint64 _part_size, ReadType read_type)
 {
+	switch (CMmer::LutMode())
+	{
+	case CMmer::LUT_BINARY:
+		return ProcessReadsT<CMmer::LUT_BINARY>(_part, _part_size, read_type);
+	case CMmer::LUT_DNA:
+		return ProcessReadsT<CMmer::LUT_DNA>(_part, _part_size, read_type);
+	default:
+		return ProcessReadsT<CMmer::LUT_DEFAULT>(_part, _part_size, read_type);
+	}
+}
+
+template<int Mode>
+bool CSplitter::ProcessReadsT(uchar *_part, uint64 _part_size, ReadType read_type)
+{
 	part = _part;
 	part_size = _part_size;
 	part_pos = 0;
@@ -566,7 +617,7 @@ bool CSplitter::ProcessReads(uchar *_part, uint64 _part_size, ReadType read_type
 
 	uint32 signature_start_pos;
 	CMmer current_signature(signature_len), end_mmer(signature_len);
-	uint32 bin_no;
+	int32 current_bin = 0;
 
 	uint32 i;
 	uint32 len;//length of extended kmer
@@ -600,63 +651,51 @@ bool CSplitter::ProcessReads(uchar *_part, uint64 _part_size, ReadType read_type
 			}
 			len = signature_len;
 			signature_start_pos = i - signature_len;
-			current_signature.insert(seq + signature_start_pos);
-			end_mmer.set(current_signature);
+			init_signature_window(s_mapper, current_signature, end_mmer, seq, signature_start_pos, current_bin);
 			for (; i < seq_size; ++i)
 			{
 				if (seq[i] < 0)//'N'
 				{
 					if (len >= kmer_len)
-					{
-						bin_no = s_mapper->get_bin_id(current_signature.get());
-						bins[bin_no]->PutExtendedKmer(seq + i - len, len);
-					}
+						bins[current_bin]->PutExtendedKmer(seq + i - len, len);
 					len = 0;
 					++i;
 					break;
 				}
-				end_mmer.insert(seq[i]);
+				end_mmer.insert_sym<Mode>(seq[i]);
 				if (end_mmer < current_signature)//signature at the end of current k-mer is lower than current
 				{
 					if (len >= kmer_len)
 					{
-						bin_no = s_mapper->get_bin_id(current_signature.get());
-						bins[bin_no]->PutExtendedKmer(seq + i - len, len);
+						bins[current_bin]->PutExtendedKmer(seq + i - len, len);
 						len = kmer_len - 1;
 					}
-					current_signature.set(end_mmer);
-					signature_start_pos = i - signature_len + 1;
+					adopt_signature(s_mapper, current_signature, end_mmer, current_bin, signature_start_pos, i - signature_len + 1);
 				}
 				else if (end_mmer == current_signature)
 				{
-					current_signature.set(end_mmer);
-					signature_start_pos = i - signature_len + 1;
+					adopt_signature(s_mapper, current_signature, end_mmer, current_bin, signature_start_pos, i - signature_len + 1);
 				}
 				else if (signature_start_pos + kmer_len - 1 < i)//need to find new signature
 				{
-					bin_no = s_mapper->get_bin_id(current_signature.get());
-					bins[bin_no]->PutExtendedKmer(seq + i - len, len);
+					bins[current_bin]->PutExtendedKmer(seq + i - len, len);
 					len = kmer_len - 1;
 					//looking for new signature
 					++signature_start_pos;
 					//building first signature in current k-mer
 					end_mmer.insert(seq + signature_start_pos);
-					current_signature.set(end_mmer);
+					adopt_signature(s_mapper, current_signature, end_mmer, current_bin, signature_start_pos, signature_start_pos);
 					for (uint32 j = signature_start_pos + signature_len; j <= i; ++j)
 					{
-						end_mmer.insert(seq[j]);
+						end_mmer.insert_sym<Mode>(seq[j]);
 						if (end_mmer <= current_signature)
-						{
-							current_signature.set(end_mmer);
-							signature_start_pos = j - signature_len + 1;
-						}
+							adopt_signature(s_mapper, current_signature, end_mmer, current_bin, signature_start_pos, j - signature_len + 1);
 					}
 				}
 				++len;
 				if (len == kmer_len + 255) //one byte is used to store counter of additional symbols in extended k-mer
 				{
-					bin_no = s_mapper->get_bin_id(current_signature.get());
-					bins[bin_no]->PutExtendedKmer(seq + i + 1 - len, len);
+					bins[current_bin]->PutExtendedKmer(seq + i + 1 - len, len);
 					i -= kmer_len - 2;
 					len = 0;
 					break;
@@ -665,10 +704,7 @@ bool CSplitter::ProcessReads(uchar *_part, uint64 _part_size, ReadType read_type
 			}
 		}
 		if (len >= kmer_len)//last one in read
-		{
-			bin_no = s_mapper->get_bin_id(current_signature.get());
-			bins[bin_no]->PutExtendedKmer(seq + i - len, len);
-		}
+			bins[current_bin]->PutExtendedKmer(seq + i - len, len);
 	}
 
 	pmm_reads->free(seq);

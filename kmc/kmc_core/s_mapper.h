@@ -12,6 +12,7 @@
 #define _S_MAPPER_H
 #include "defs.h"
 #include "../kmc_api/mmer.h"
+#include "../kmc_api/custom_order.h"
 #include "params.h"
 #include "critical_error_handler.h"
 #include <sstream>
@@ -149,7 +150,8 @@ public:
 		list<pair<uint32, uint64>> _stats;
 		for (uint32 i = 0; i < map_size ; ++i)
 		{
-			if (CMmer::is_allowed(sorted[i], signature_len))
+			if (sorted[i] != special_signature &&
+				(CCustomOrder::Active() || CMmer::is_allowed(sorted[i], signature_len)))
 				_stats.push_back(make_pair(sorted[i], stats[sorted[i]]));
 		}
 
@@ -225,6 +227,15 @@ public:
 			}
 		}
 		signature_map[special_signature] = bin_no;
+		if (CCustomOrder::Active())
+		{
+			for (uint32 i = 0; i < map_size; ++i)
+			{
+				if (signature_map[i] < 0 || signature_map[i] >= (int32)n_bins)
+					signature_map[i] = (int32)n_bins - 1;
+			}
+			signature_map[special_signature] = (int32)n_bins - 1;
+		}
 		pmm_stats->free(sorted);
 
 #ifdef DEVELOP_MODE

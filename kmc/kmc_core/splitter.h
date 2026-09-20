@@ -62,6 +62,11 @@ class CSplitter
 
 	void HomopolymerCompressSeq(char* seq, uint32 &seq_size);
 
+	template<int Mode>
+	void CalcStatsT(uchar* _part, uint64 _part_size, ReadType read_type, uint32* _stats);
+	template<int Mode>
+	bool ProcessReadsT(uchar *_part, uint64 _part_size, ReadType read_type);
+
 public:
 	static uint32 MAX_LINE_SIZE;
 	
