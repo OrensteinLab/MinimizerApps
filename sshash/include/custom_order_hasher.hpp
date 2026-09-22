@@ -66,6 +66,45 @@ inline custom_order_mode parse_custom_order_mode(std::string const& s) {
 }
 
 /*
+    Full order name -> (base order, is_mod_minimizer). mod-minimizer
+    (Groot Koerkamp & Pibiri, WABI 2024) is an orthogonal flag, not a 5th-8th
+    custom_order_mode: it changes which locus is sampled (see
+    util::compute_mod_minimizer_single_strand), not what O_t/O_m computes for
+    a candidate, so the 4 base orders above are reused unchanged as O_t. The 4
+    "mod-minimizer-*" names spell their base order slightly differently from
+    the bare base-order name (an explicit "-hash" suffix for native, and
+    "pcg-xor-hash" rather than "xor-pcg-hash" for the PCG order) purely to
+    keep all four mod-minimizer names visually parallel; both spellings are
+    accepted here.
+*/
+inline std::pair<custom_order_mode, bool> parse_order_name(std::string const& s) {
+    static const std::string prefix = "mod-minimizer-";
+    if (s.rfind(prefix, 0) == 0) {
+        std::string base = s.substr(prefix.size());
+        if (base == "native-hash") base = "native";
+        else if (base == "pcg-xor-hash") base = "xor-pcg-hash";
+        return {parse_custom_order_mode(base), true};
+    }
+    return {parse_custom_order_mode(s), false};
+}
+
+/* Inverse of parse_order_name, for printing/logging. */
+inline std::string order_name(custom_order_mode mode, bool mod_minimizer) {
+    if (!mod_minimizer) return custom_order_mode_name(mode);
+    switch (mode) {
+        case custom_order_mode::NATIVE:
+            return "mod-minimizer-native-hash";
+        case custom_order_mode::XOR_HASH:
+            return "mod-minimizer-xor-hash";
+        case custom_order_mode::XOR_PCG_HASH:
+            return "mod-minimizer-pcg-xor-hash";
+        case custom_order_mode::GREEDYMINI:
+        default:
+            return "mod-minimizer-greedymini";
+    }
+}
+
+/*
     Replaces sshash's hasher_type (upstream: mixer_64). One binary, order
     chosen at runtime (build_configuration::order), same "no per-order build
     variant" posture as kraken2/kmc. NATIVE reproduces mixer_64's exact

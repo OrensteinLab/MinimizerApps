@@ -165,6 +165,8 @@ struct build_configuration {
 
         , order(custom_order_mode::NATIVE)
         , gm_alphabet(GmAlphabet::BINARY)
+        , mod_minimizer(false)
+        , t(0)
 
     {}
 
@@ -187,6 +189,13 @@ struct build_configuration {
     std::string greedy_mini_filename;  // required when order == GREEDYMINI
     GmAlphabet gm_alphabet;
 
+    /* Mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): when true, the
+       minimizer of a kmer is not the smallest m-mer directly, but the m-mer
+       at the position mod-sampling selects using `order` as the order O_t on
+       t-mers (t < m). See util::compute_mod_minimizer_single_strand. */
+    bool mod_minimizer;
+    uint64_t t;  // t-mer length for O_t; only meaningful when mod_minimizer
+
     void print() const {
         std::cout << "k = " << k                                              //
                   << ", m = " << m                                            //
@@ -197,7 +206,8 @@ struct build_configuration {
                   << ", weighted = " << (weighted ? "true" : "false")         //
                   << ", verbose = " << (verbose ? "true" : "false")           //
                   << ", tmp_dirname = '" << tmp_dirname << "'"                //
-                  << ", order = '" << custom_order_mode_name(order) << "'" << std::endl;  //
+                  << ", order = '" << order_name(order, mod_minimizer) << "'"              //
+                  << (mod_minimizer ? ", t = " + std::to_string(t) : "") << std::endl;     //
     }
 };
 
@@ -479,6 +489,107 @@ minimizer_info compute_minimizer(Kmer kmer, const uint64_t k, const uint64_t m,
     Kmer kmer_rc = kmer;
     kmer_rc.reverse_complement_inplace(k);
     return compute_minimizer(kmer, kmer_rc, k, m, hasher);
+}
+
+/*
+    Mod-sampling (Groot Koerkamp & Pibiri, "The mod-minimizer: a simple and
+    efficient sampling algorithm for long k-mers", WABI 2024, Algorithm 6 /
+    Definition 7), specialised to sshash's own (k, m) model: the paper's
+    generic "k-mer being sampled" is sshash's m-mer, and its window count w is
+    sshash's derived w = k-m+1. Instead of directly ranking the w candidate
+    m-mers, mod-sampling ranks the (more numerous) t-mers (t < m) across the
+    *whole* kmer by a separate order `hasher` = O_t, and reduces the winning
+    t-mer's locus mod w to pick which m-mer is sampled:
+
+        o_min = +inf; p = +inf
+        for i = 0; i < k-t+1; i++:
+            o = O_t(kmer[i..i+t))
+            if o == o_min: p = min(p, i mod w)
+            elif o < o_min: o_min = o; p = i mod w
+        return p
+
+    (`k-t+1`, the number of t-mer loci in the whole kmer, is the paper's
+    `w+k-t` after substituting w=k-m+1.) The sampled minimizer is the m-mer at
+    position p -- a raw, single-strand substring, not separately canonicalized
+    per locus.
+
+    Mod-sampling as stated operates on one fixed forward strand only; its
+    "prefer the smaller i mod w on a tie" rule is not symmetric under
+    reversal, so its per-locus values do NOT satisfy the mirror relationship
+    (kappa(i) in kmer's frame == kappa(k-m-i) in kmer_rc's frame) that
+    compute_minimizer's canonical_mmer_at/resolve_tie machinery relies on --
+    concretely, running this routine independently on kmer and on kmer_rc can
+    select genuinely different m-mers, for *any* input, not just at ties.
+
+    Worse, combining the two independently (taking the smaller of the two
+    resulting m-mers, as sshash's own *canonical parsing* modality does for
+    the classical scheme -- see the 2022 SSHash paper, "Double Strandedness")
+    is not just a mirror-equivariance problem here: it can make the SAME
+    physical kmer get claimed by two different super-kmers during
+    construction (a "backward jump", Section 4.1 of the mod-minimizer paper),
+    corrupting the index (duplicate kmer ids) rather than merely picking a
+    different-but-consistent bucket. Verified empirically: even t=10 (which
+    Lemma 13 of the mod-minimizer paper proves gives a true, forward
+    minimizer scheme on a single strand) still hits this once combined with
+    its own reverse-complement's independent computation.
+
+    So mod-minimizer instead uses sshash's *regular parsing* modality (the
+    2022 paper's other, simpler modality, also still real code today in
+    jermp/sshash-lite's streaming_query_regular_parsing): construction keeps
+    a kmer's minimizer as whichever single strand it was actually walked in
+    (this function, called once, no combination -- see
+    dictionary_builder::compute_minimizer_tuples), and Lookup instead "will
+    first search for g and -- only if not found -- will also search for ĝ.
+    This effectively doubles the query time for Lookup in the worst case"
+    (ibid., quoted verbatim) -- see dictionary::lookup's two-probe fallback.
+
+    Deliberately a straightforward O(k-t+1) computation per kmer (mirroring
+    compute_minimizer's own role as the brute-force reference), not an
+    amortized-O(1) incremental scheme like `minimizer_iterator`; see the
+    mod-minimizer integration notes for why this is an acceptable starting
+    point.
+*/
+template <typename Kmer>
+minimizer_info compute_mod_minimizer_single_strand(Kmer kmer, const uint64_t k, const uint64_t m,
+                                                   const uint64_t t,
+                                                   hasher_type const& hasher)  //
+{
+    assert(t <= m and m <= k);
+    assert(m <= Kmer::max_m);
+
+    const uint64_t w = k - m + 1;
+    const uint64_t num_t_loci = k - t + 1;
+
+    auto tau = [&](Kmer const& window) {
+        Kmer tmer = window;
+        tmer.take_chars(t);
+        return uint64_t(tmer);
+    };
+
+    /* first locus peeled off the loop, same reasoning as compute_minimizer:
+       o_min must start out as a real hash value, not a sentinel that a real
+       hash could legitimately collide with. */
+    Kmer window = kmer;
+    uint64_t o_min = hasher.hash(tau(window));
+    uint64_t p = 0;  // 0 % w == 0
+    window.drop_char();
+
+    for (uint64_t i = 1; i != num_t_loci; ++i) {
+        uint64_t o = hasher.hash(tau(window));
+        uint64_t pos_mod_w = i % w;
+        if (o < o_min) {
+            o_min = o;
+            p = pos_mod_w;
+        } else if (o == o_min and pos_mod_w < p) {
+            p = pos_mod_w;
+        }
+        window.drop_char();
+    }
+
+    Kmer final_window = kmer;
+    final_window.drop_chars(p);
+    final_window.take_chars(m);
+    return {uint64_t(final_window), p};
 }
 
 }  // namespace util

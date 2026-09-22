@@ -136,16 +136,30 @@ low-density order also used by this monorepo's
 shared implementation.
 
 ```bash
-./sshash build -i FILE -k 31 -m 11 -O native ...                                # default, unchanged
-./sshash build -i FILE -k 31 -m 11 -O xor-hash -s SEED ...
-./sshash build -i FILE -k 31 -m 11 -O xor-pcg-hash -s SEED ...
-./sshash build -i FILE -k 31 -m 11 -O greedymini \
-    --greedy-mini-file ../orders/GreedyMini/w21_k11_canonical.gm [--gm-alphabet binary|dna] ...
+./sshash build -i FILE -k 31 -m 21 -O native ...                                # default, unchanged
+./sshash build -i FILE -k 31 -m 21 -O xor-hash -s SEED ...
+./sshash build -i FILE -k 31 -m 21 -O xor-pcg-hash -s SEED ...
+./sshash build -i FILE -k 31 -m 21 -O greedymini \
+    --greedy-mini-file ../orders/GreedyMini/w11_k15_canonical.gm [--gm-alphabet binary|dna] ...
+
+# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): any base order as O_t
+./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-xor-hash --t-length 10 -s SEED ...
 ```
 
-The chosen order (and, for `greedymini`, the rank table itself) is embedded
-in the serialized `.sshash` index, so `query`/`check`/`bench` reconstruct it
-automatically from `-i` alone -- no sidecar files or extra flags needed.
+The chosen order (and, for `greedymini`/`mod-minimizer-greedymini`, the rank
+table itself) is embedded in the serialized `.sshash` index, so
+`query`/`check`/`bench` reconstruct it automatically from `-i` alone -- no
+sidecar files or extra flags needed.
+
+`m` has no minimizer-length-specific compile-time cap (the practical bound is
+`Kmer::max_m` -- 32 for the 2-bit DNA alphabet this fork always builds with,
+see `include/kmer.hpp`); `include/constants.hpp`'s `min_l`/`max_l` are
+unrelated -- they size the skew index's bucket-size partitioning, not `m`.
+See [`../orders/README.md`](../orders/README.md#mod-minimizer) for mod-minimizer
+itself: it's an orthogonal option on top of the 4 orders above, not a 5th
+mode, and the only one of these that falls back to sshash's older "regular
+parsing" construction/lookup (single-strand build, two-probe query) instead
+of its newer single-probe "canonical parsing" -- see that section for why.
 
 **NOTE**: this fork always builds with
 `-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` (the default in
@@ -238,10 +252,11 @@ if your queries are to be read from a (multi-line) FASTA file.
 
     ./sshash query -i salmonella_100.sshash -q ../data/queries/SRR5833294.10K.fastq.gz
 
-A k-mer and its reverse complement always share a bucket, so a lookup costs a
-single bucket probe and reports, in `kmer_orientation`, which of the two was
-found. This is the only indexing modality: there is no `--canonical` flag to
-choose, and no space-versus-speed trade-off to make.
+A k-mer and its reverse complement are always both found, and there is no
+`--canonical` flag to choose. For every order except `mod-minimizer-*`, a
+lookup costs a single bucket probe and reports, in `kmer_orientation`, which
+of the two was found; a `mod-minimizer-*` index costs up to two probes in the
+worst case instead (see [`../orders/README.md`](../orders/README.md#mod-minimizer)).
 
 The query above should originate the following report (reported here for reference):
 

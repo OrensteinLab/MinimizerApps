@@ -87,11 +87,18 @@ def default_k() -> int:
 
 
 def default_m() -> int:
-    return int(_cfg().get("defaults", {}).get("m", 11))
+    return int(_cfg().get("defaults", {}).get("m", 21))
 
 
 def default_orders() -> str:
-    return str(_cfg().get("defaults", {}).get("orders", "native,xor-hash,xor-pcg-hash,greedymini"))
+    return str(
+        _cfg().get("defaults", {}).get(
+            "orders",
+            "native,xor-hash,xor-pcg-hash,greedymini,"
+            "mod-minimizer-native-hash,mod-minimizer-xor-hash,"
+            "mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini",
+        )
+    )
 
 
 def default_n_seeds() -> int:
@@ -99,5 +106,12 @@ def default_n_seeds() -> int:
 
 
 def default_gm_file() -> Path:
-    name = str(_cfg().get("defaults", {}).get("gm_file", "w21_k11_canonical.gm"))
+    name = str(_cfg().get("defaults", {}).get("gm_file", "w11_k15_canonical.gm"))
+    return gm_dir() / name
+
+
+def mod_t_gm_file() -> Path:
+    """mod-minimizer-greedymini's O_t table (t=11, no CLI override -- see
+    lib/orders.sh::order_gm_file)."""
+    name = str(_cfg().get("defaults", {}).get("mod_t_gm_file", "w21_k11_canonical.gm"))
     return gm_dir() / name

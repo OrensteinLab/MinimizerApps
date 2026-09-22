@@ -60,6 +60,29 @@ struct streaming_query  //
             return m_res;
         }
 
+        if (m_dict->mod_minimizer()) {
+            /* mod-minimizer's "regular parsing" Lookup (see
+               dictionary::lookup's two-probe fallback, and
+               util::compute_mod_minimizer_single_strand's doc comment)
+               doesn't fit this class's incremental minimizer_iterator and
+               seed()'s shortcuts, which are built entirely around the
+               classical per-locus-canonicalized scheme's forwardness and
+               mirror-equivariance guarantees (e.g. the singleton-bucket
+               skip's assumption that an abandoned minimizer position is
+               never re-selected). Fall back to a plain per-kmer
+               dictionary::lookup call instead: no streaming speedup for
+               mod-minimizer builds specifically, but always correct. */
+            m_start = false;
+            m_remaining_string_bases = 0;
+            m_res = m_dict->lookup(kmer);
+            if (m_res.kmer_id == constants::invalid_uint64) {
+                m_num_negative += 1;
+            } else {
+                m_num_searches += 1;
+            }
+            return m_res;
+        }
+
         /* 2. compute uint kmer and kmer_rc from input char kmer and minimizers */
         if (!m_start) {
             m_kmer.drop_char();

@@ -15,6 +15,7 @@ def main(_argv: list[str] | None = None) -> int:
     command = cmd_file.read_text().splitlines()
 
     seed_s = os.environ.get("META_SEED", "").strip()
+    t_s = os.environ.get("META_T", "").strip()
 
     meta = {
         "run_id": os.environ["META_RUN_ID"],
@@ -24,6 +25,7 @@ def main(_argv: list[str] | None = None) -> int:
         "order": os.environ["META_ORDER"],
         "order_seed": int(seed_s, 0) if seed_s else None,
         "seed_idx": int(os.environ.get("META_SEED_IDX", "0")),
+        "t": int(t_s) if t_s else None,
         "gm_file": os.environ.get("META_GM_FILE", "") or "",
         "threads": int(os.environ.get("META_THREADS") or 1),
         "sshash_path": os.environ["META_SSHASH_PATH"],

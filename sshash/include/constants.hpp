@@ -11,6 +11,16 @@ constexpr double lambda = 5.0;
 constexpr uint64_t avg_partition_size = 3000000;
 
 constexpr uint64_t min_l = 6;
+/* min_l/max_l are NOT a bound on the minimizer length m (a prior
+   misconception this fork briefly repeated -- see git history): they size
+   sshash's skew-index bucket-size partitioning
+   (src/builder/build_sparse_and_skew_index.cpp), which packs a
+   `partition_id` into exactly 3 bits (`heavy_load_buckets_size << 3 |
+   partition_id`), so num_partitions must never exceed 8. Keeping
+   max_l - min_l + 1 <= 8 guarantees that arithmetically, for *any* dataset's
+   bucket-size distribution -- not just ones tested so far -- so do not
+   raise max_l without also widening that 3-bit field (and every place that
+   assumes it) to match. */
 constexpr uint64_t max_l = 13;
 static_assert(min_l < max_l);
 static_assert(max_l - min_l + 1 <= 8);

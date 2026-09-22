@@ -18,10 +18,16 @@ struct dictionary_builder  //
     {
         d.m_k = build_config.k;
         d.m_m = build_config.m;
+        d.m_mod_minimizer = build_config.mod_minimizer;
+        d.m_t = build_config.t;
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
         d.m_hasher.seed(build_config.seed);
-        d.m_hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
+        /* `hasher` ranks m-mers directly (O_m) for the classic scheme, but
+           ranks t-mers (O_t) for mod-minimizer -- its domain length is `t`,
+           not `m`, in that case. */
+        const uint64_t hasher_l = build_config.mod_minimizer ? build_config.t : build_config.m;
+        d.m_hasher.configure(build_config.order, hasher_l, build_config.greedy_mini_filename,
                              build_config.gm_alphabet);
 
         build_stats.add("input_filename", filename.c_str());

@@ -23,7 +23,9 @@ struct dictionary  //
         , m_num_kmers(0)
         , m_num_strings(0)
         , m_k(0)
-        , m_m(0) {}
+        , m_m(0)
+        , m_mod_minimizer(false)
+        , m_t(0) {}
 
     /* Build from input file. */
     void build(std::string const& input_filename, build_configuration const& build_config);
@@ -33,6 +35,8 @@ struct dictionary  //
     uint64_t num_strings() const { return m_num_strings; }
     uint64_t k() const { return m_k; }
     uint64_t m() const { return m_m; }
+    bool mod_minimizer() const { return m_mod_minimizer; }
+    uint64_t t() const { return m_t; }
     bool weighted() const { return !m_weights.empty(); }
     hasher_type const& hasher() const { return m_hasher; }
 
@@ -149,6 +153,8 @@ private:
         visitor.visit(t.m_num_strings);
         visitor.visit(t.m_k);
         visitor.visit(t.m_m);
+        visitor.visit(t.m_mod_minimizer);
+        visitor.visit(t.m_t);
         visitor.visit(t.m_hasher);
         visitor.visit(t.m_spss);
         visitor.visit(t.m_ssi);
@@ -160,6 +166,8 @@ private:
     uint64_t m_num_strings;
     uint16_t m_k;
     uint16_t m_m;
+    bool m_mod_minimizer;
+    uint16_t m_t;
     hasher_type m_hasher;
 
     spss_type m_spss;

@@ -18,8 +18,8 @@ Writes under ``--results-dir`` (default ``$SSHASH_RESULTS_DIR`` or
   dataset x order) and expected (theoretical, per order) -- side by side.
 
 Density: ``density_factor = (num_minimizer_positions / num_kmers) * (w + 1)``,
-where ``w = k - m + 1`` (the window size baked into the "w21" of
-``orders/GreedyMini/w21_k11_canonical``) and num_minimizer_positions is the
+where ``w = k - m + 1`` (=11 for k=31,m=21; the "w11" in
+``orders/GreedyMini/w11_k15_canonical``) and num_minimizer_positions is the
 number of super-k-mers (minimizer-value change points) sshash build
 --verbose reports. The raw ratio isn't kept as its own column --
 density_factor is the reported metric. A uniformly random order's
@@ -60,7 +60,7 @@ from scripts.common import bench_paths, die, load_dotenv
 from scripts.config import seeds as bench_seeds
 from scripts.density import density_factor as _density_factor
 from scripts.expected_density import ensure_expected_orders
-from scripts.orders import ORDERS
+from scripts.orders import ORDERS, order_t_values
 from xlsx_util import col_letter, root_rels_xml, write_csv as _shared_write_csv, xml_escape
 
 
@@ -205,6 +205,7 @@ RUN_FIELDS = (
     "order",
     "order_seed",
     "seed_idx",
+    "t",
     "gm_file",
     "threads",
     # space
@@ -330,6 +331,7 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "order": meta.get("order"),
         "order_seed": meta.get("order_seed"),
         "seed_idx": meta.get("seed_idx"),
+        "t": meta.get("t"),
         "gm_file": meta.get("gm_file") or "",
         "threads": meta.get("threads"),
         "num_kmers": num_kmers,
@@ -411,7 +413,10 @@ def validate_orders_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
         n_cmp += len(group)
         if len(counts) > 1:
             detail = ", ".join(
-                f"{r.get('order')}/seed{r.get('seed_idx')}={r.get('num_kmers')}" for r in group
+                f"{r.get('order')}"
+                f"{'@t' + str(r['t']) if r.get('t') is not None else ''}"
+                f"/seed{r.get('seed_idx')}={r.get('num_kmers')}"
+                for r in group
             )
             errors.append(f"{dataset}: num_kmers differs across orders/seeds: {detail}")
         for r in group:
@@ -463,7 +468,13 @@ def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
 
 
 def summary_group_key(r: dict) -> tuple:
-    return (r.get("dataset") or "", int(r.get("k") or 0), int(r.get("m") or 0), r.get("order") or "")
+    return (
+        r.get("dataset") or "",
+        int(r.get("k") or 0),
+        int(r.get("m") or 0),
+        r.get("order") or "",
+        r.get("t") if r.get("t") is not None else -1,
+    )
 
 
 def summary_sort_key(row: dict) -> tuple:
@@ -471,7 +482,8 @@ def summary_sort_key(row: dict) -> tuple:
         rank = ORDERS.index(row.get("order") or "")
     except ValueError:
         rank = len(ORDERS)
-    return (row.get("dataset") or "", rank)
+    t = row.get("t")
+    return (row.get("dataset") or "", rank, -1 if t is None else int(t))
 
 
 def summary_rows(rows: list[dict]) -> list[dict]:
@@ -488,6 +500,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             "m": head["m"],
             "w": head.get("w"),
             "order": head["order"],
+            "t": head.get("t"),
             "n_seeds": len({p.get("seed_idx") for p in parts}),
             "n_kmers": head.get("num_kmers"),
         }
@@ -525,7 +538,57 @@ REFERENCE_KMERS = {
 }
 
 
-def vs_reference_rows(rows: list[dict]) -> list[dict]:
+# Groot Koerkamp & Pibiri, WABI 2024, Section "Indexing k-mer sets with
+# SSHash": whole human genome (GRCh38), k=31, m=21 (the same regime this
+# benchmark uses) -- random minimizer vs. mod-minimizer with a hash-based
+# O_t (their own Definition 16 gives t=10 for this regime; no GreedyMini
+# O_t was tested in the paper). "space usage goes down from 8.70 to 7.40
+# bits/kmer (-14.9%)" -- quoted verbatim.
+PAPER_HUMAN_BITS_PER_KMER = {"native": 8.70, "mod_minimizer": 7.40}
+
+
+def _paper_reproduction_row(summary: list[dict]) -> dict:
+    """Reproduces the mod-minimizer paper's own published Human/GRCh38
+    space-reduction claim against our own measured numbers, on our 'human'
+    dataset -- native vs. mod-minimizer-native-hash at t=10, the same
+    hash-based O_t the paper used (see PAPER_HUMAN_BITS_PER_KMER). Purely
+    informational (like the rest of this sheet): our eulertigs-derived
+    'human' dataset isn't literally GRCh38, so this is a plausibility check,
+    not a correctness gate."""
+
+    def _find(order: str, t) -> dict | None:
+        for r in summary:
+            if r.get("dataset") == "human" and r.get("order") == order and r.get("t") == t:
+                return r
+        return None
+
+    native = _find("native", None)
+    mod = _find("mod-minimizer-native-hash", 10)
+    measured_native = native.get("bits_per_kmer_mean") if native else None
+    measured_mod = mod.get("bits_per_kmer_mean") if mod else None
+    measured_reduction_pct = None
+    if measured_native and measured_mod:
+        measured_reduction_pct = round((1 - measured_mod / measured_native) * 100, 2)
+
+    published_native = PAPER_HUMAN_BITS_PER_KMER["native"]
+    published_mod = PAPER_HUMAN_BITS_PER_KMER["mod_minimizer"]
+    published_reduction_pct = round((1 - published_mod / published_native) * 100, 2)
+
+    return {
+        "dataset": "human (mod-minimizer paper reproduction)",
+        "published_num_kmers_approx": None,
+        "measured_num_kmers": None,
+        "measured_vs_published_ratio": None,
+        "published_bits_per_kmer_native": published_native,
+        "published_bits_per_kmer_mod_minimizer_t10": published_mod,
+        "published_reduction_pct": published_reduction_pct,
+        "measured_bits_per_kmer_native": measured_native,
+        "measured_bits_per_kmer_mod_minimizer_t10": measured_mod,
+        "measured_reduction_pct": measured_reduction_pct,
+    }
+
+
+def vs_reference_rows(rows: list[dict], summary: list[dict] | None = None) -> list[dict]:
     out: list[dict] = []
     by_dataset: dict[str, dict] = {}
     for r in rows:
@@ -540,8 +603,16 @@ def vs_reference_rows(rows: list[dict]) -> list[dict]:
                 "published_num_kmers_approx": ref_kmers,
                 "measured_num_kmers": measured,
                 "measured_vs_published_ratio": ratio,
+                "published_bits_per_kmer_native": None,
+                "published_bits_per_kmer_mod_minimizer_t10": None,
+                "published_reduction_pct": None,
+                "measured_bits_per_kmer_native": None,
+                "measured_bits_per_kmer_mod_minimizer_t10": None,
+                "measured_reduction_pct": None,
             }
         )
+    if summary and any(r.get("dataset") == "human" for r in summary):
+        out.append(_paper_reproduction_row(summary))
     return out
 
 
@@ -560,14 +631,25 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "m", "w", "order", "n_seeds", "n_kmers"]
+    fields = ["dataset", "k", "m", "w", "order", "t", "n_seeds", "n_kmers"]
     for metric in SUMMARY_METRICS:
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
 
 
 def vs_reference_field_order() -> list[str]:
-    return ["dataset", "published_num_kmers_approx", "measured_num_kmers", "measured_vs_published_ratio"]
+    return [
+        "dataset",
+        "published_num_kmers_approx",
+        "measured_num_kmers",
+        "measured_vs_published_ratio",
+        "published_bits_per_kmer_native",
+        "published_bits_per_kmer_mod_minimizer_t10",
+        "published_reduction_pct",
+        "measured_bits_per_kmer_native",
+        "measured_bits_per_kmer_mod_minimizer_t10",
+        "measured_reduction_pct",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +673,7 @@ XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w"})
 XLSX_DATASET_BORDER_SHEETS = frozenset({"runs", "summary", "buckets"})
 
 _ID_FIELDS = frozenset({
-    "run_id", "dataset", "k", "m", "w", "order", "order_seed", "seed_idx",
+    "run_id", "dataset", "k", "m", "w", "order", "order_seed", "seed_idx", "t",
     "gm_file", "threads", "n_seeds", "n_kmers",
 })
 _METRIC_CATEGORY = {
@@ -635,7 +717,7 @@ def _field_category(field: str) -> str:
 
 
 def _orders_field_category(field: str) -> str:
-    if field in ("order", "description", "cli", "w"):
+    if field in ("order", "t", "description", "cli", "w"):
         return "order"
     if field.startswith("expected_density_factor"):
         return "expected (theoretical)"
@@ -935,8 +1017,9 @@ def index_rows() -> list[dict]:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
     return [
-        row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 11 for every order -- see README 'Choice of m')"),
-        row("all", "order", "native | xor-hash | xor-pcg-hash | greedymini -- see orders/README.md"),
+        row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 21 for every order -- matches the mod-minimizer paper's own tested SSHash regime, giving w=k-m+1=11; see README 'Choice of m')"),
+        row("all", "order", "native | xor-hash | xor-pcg-hash | greedymini | mod-minimizer-native-hash | mod-minimizer-xor-hash | mod-minimizer-pcg-xor-hash | mod-minimizer-greedymini -- see orders/README.md"),
+        row("all", "t", "t-mer length for mod-minimizer's inner order O_t (blank for the 4 base orders); 10 reproduces the mod-minimizer paper's own published numbers, 11 matches the GreedyMini t-order table's own length (fixed for mod-minimizer-greedymini)"),
         row("all", "num_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
         row("summary/runs", "bits_per_kmer", "index_bytes_on_disk * 8 / num_kmers"),
@@ -945,7 +1028,8 @@ def index_rows() -> list[dict]:
         row("summary", "{metric}_ratio", "this order's mean / native's mean for the same dataset (native = 1); color scale green (better) -> red (worse)"),
         row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
         row("vs_reference", "published_num_kmers_approx", "Zenodo 17582116's own published distinct-31-mer count (informational only, not order-specific)"),
-        row("summary/runs/orders", "w", "window size k - m + 1 (=21 for k=31,m=11; the 'w21' in orders/GreedyMini/w21_k11_canonical)"),
+        row("vs_reference", "published/measured_*_reduction_pct", "mod-minimizer paper reproduction (extra row, 'human' only): native vs mod-minimizer-native-hash@t10 bits_per_kmer reduction, ours vs the paper's own published GRCh38 figure (8.70 -> 7.40 bits/kmer, -14.9%) -- see scripts/export.py:PAPER_HUMAN_BITS_PER_KMER"),
+        row("summary/runs/orders", "w", "window size k - m + 1 (=11 for k=31,m=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
         row("summary/runs/orders", "density_factor", "particular (measured): (num_minimizer_positions/num_kmers) * (w+1) -- see scripts/density.py"),
         row("orders", "expected_density_factor_mean/std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
         row("buckets/summary/runs", "num_buckets / avg_bucket_size", "num_kmers / num_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
@@ -968,8 +1052,24 @@ ORDER_DESCRIPTIONS = {
         "cli": "-O xor-pcg-hash -s SEED",
     },
     "greedymini": {
-        "description": "Ranks minimizers by the precomputed GreedyMini w21_k11 rank table (gm_k=11, matches -m 11 exactly)",
-        "cli": "-O greedymini --greedy-mini-file orders/GreedyMini/w21_k11_canonical.gm -s SEED",
+        "description": "Ranks minimizers by the precomputed GreedyMini w11_k15 rank table (gm_k=15, Extend-k'd up to l=m=21)",
+        "cli": "-O greedymini --greedy-mini-file orders/GreedyMini/w11_k15_canonical.gm -s SEED",
+    },
+    "mod-minimizer-native-hash": {
+        "description": "Mod-minimizer (WABI 2024): ranks t-mers by the native order, samples the m-mer at the winning t-mer's position mod w",
+        "cli": "-O mod-minimizer-native-hash --t-length T -s SEED",
+    },
+    "mod-minimizer-xor-hash": {
+        "description": "Mod-minimizer: ranks t-mers by xor-hash, samples the m-mer at the winning t-mer's position mod w",
+        "cli": "-O mod-minimizer-xor-hash --t-length T -s SEED",
+    },
+    "mod-minimizer-pcg-xor-hash": {
+        "description": "Mod-minimizer: ranks t-mers by xor-pcg-hash, samples the m-mer at the winning t-mer's position mod w",
+        "cli": "-O mod-minimizer-pcg-xor-hash --t-length T -s SEED",
+    },
+    "mod-minimizer-greedymini": {
+        "description": "Mod-minimizer: ranks t-mers (t=11) by the GreedyMini w21_k11 rank table, samples the m-mer at the winning t-mer's position mod w",
+        "cli": "-O mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/w21_k11_canonical.gm --t-length 11 -s SEED",
     },
 }
 
@@ -988,47 +1088,53 @@ def summary_datasets(summary: list[dict]) -> list[str]:
     return sorted({r["dataset"] for r in summary if r.get("dataset")}, key=_dataset_sort_key)
 
 
-def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) -> list[dict]:
-    """One row per order (not per dataset x order -- w, expected density, and
-    description/CLI don't vary by dataset, so repeating them per dataset is
-    pure duplication): the order's description/CLI/w/expected density_factor,
-    plus each dataset's particular (measured, mean/std over seeds)
-    density_factor pivoted into its own columns (see orders_field_order).
-    Raw minimizer_density isn't kept anywhere -- density_factor is enough."""
+def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) -> list[dict]:
+    """One row per (order, t) -- not per dataset x order x t -- w, expected
+    density, and description/CLI don't vary by dataset, so repeating them per
+    dataset is pure duplication): the order's description/CLI/w/expected
+    density_factor, plus each dataset's particular (measured, mean/std over
+    seeds) density_factor pivoted into its own columns (see
+    orders_field_order). t is None (blank) for the 4 base orders and
+    mod-minimizer-greedymini (fixed at t=11 -- see orders/README.md), and 10
+    or 11 for the 3 hash-based mod-minimizer orders (see
+    scripts/orders.py::order_t_values). Raw minimizer_density isn't kept
+    anywhere -- density_factor is enough."""
     expected = expected or {}
     datasets = summary_datasets(summary)
-    by_order: dict[str, dict[str, dict]] = {}
+    by_order_t: dict[tuple, dict[str, dict]] = {}
     for r in summary:
         order = r.get("order")
         if order:
-            by_order.setdefault(order, {})[r.get("dataset")] = r
+            by_order_t.setdefault((order, r.get("t")), {})[r.get("dataset")] = r
 
     out = []
     for order in ORDERS:
-        per_dataset = by_order.get(order)
-        if not per_dataset:
-            continue
-        info = ORDER_DESCRIPTIONS.get(order, {"description": "", "cli": ""})
-        exp = expected.get(order, {})
-        w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
-        row = {
-            "order": order,
-            "description": info["description"],
-            "cli": info["cli"],
-            "w": w_val,
-            "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
-            "expected_density_factor_std": _num(exp.get("density_factor_std")),
-        }
-        for ds in datasets:
-            r = per_dataset.get(ds)
-            row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
-            row[f"{ds}_particular_density_factor_std"] = r.get("density_factor_std") if r else None
-        out.append(row)
+        for t in order_t_values(order):
+            per_dataset = by_order_t.get((order, t))
+            if not per_dataset:
+                continue
+            info = ORDER_DESCRIPTIONS.get(order, {"description": "", "cli": ""})
+            exp = expected.get((order, t), {})
+            w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
+            row = {
+                "order": order,
+                "t": t,
+                "description": info["description"],
+                "cli": info["cli"],
+                "w": w_val,
+                "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
+                "expected_density_factor_std": _num(exp.get("density_factor_std")),
+            }
+            for ds in datasets:
+                r = per_dataset.get(ds)
+                row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
+                row[f"{ds}_particular_density_factor_std"] = r.get("density_factor_std") if r else None
+            out.append(row)
     return out
 
 
 def orders_field_order(summary: list[dict]) -> list[str]:
-    fields = ["order", "description", "cli", "w", "expected_density_factor_mean", "expected_density_factor_std"]
+    fields = ["order", "t", "description", "cli", "w", "expected_density_factor_mean", "expected_density_factor_std"]
     for ds in summary_datasets(summary):
         fields.extend((f"{ds}_particular_density_factor_mean", f"{ds}_particular_density_factor_std"))
     return fields
@@ -1046,6 +1152,7 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
             {
                 "dataset": r.get("dataset"),
                 "order": r.get("order"),
+                "t": r.get("t"),
                 "n_seeds": r.get("n_seeds"),
                 "n_kmers": r.get("n_kmers"),
                 "num_buckets_mean": r.get("num_buckets_mean"),
@@ -1070,6 +1177,7 @@ def bucket_field_order() -> list[str]:
     return [
         "dataset",
         "order",
+        "t",
         "n_seeds",
         "n_kmers",
         "num_buckets_mean",
@@ -1125,16 +1233,17 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     rows.sort(key=lambda r: (r.get("dataset") or "", r.get("order") or "", int(r.get("seed_idx") or 0)))
     summary = summary_rows(rows)
     attach_native_ratios(summary)
-    vs_ref = vs_reference_rows(rows)
+    vs_ref = vs_reference_rows(rows, summary)
 
     m_val = next((r.get("m") for r in summary if r.get("m") is not None), None)
     w_val = next((r.get("w") for r in summary if r.get("w") is not None), None)
-    expected: dict[str, dict] = {}
+    expected: dict[tuple, dict] = {}
     if m_val is not None and w_val is not None:
-        from scripts.config import default_gm_file
+        from scripts.config import default_gm_file, mod_t_gm_file as _mod_t_gm_file
 
         expected = ensure_expected_orders(
-            out_root, int(m_val), int(w_val), list(bench_seeds())[:5], gm_file=default_gm_file()
+            out_root, int(m_val), int(w_val), list(bench_seeds())[:5],
+            gm_file=default_gm_file(), mod_t_gm_file=_mod_t_gm_file(),
         )
     orders = orders_rows(summary, expected)
     buckets = bucket_rows(summary)

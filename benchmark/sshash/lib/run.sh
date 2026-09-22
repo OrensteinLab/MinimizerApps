@@ -64,15 +64,18 @@ order_dir_name_for_run() {
 }
 
 run_rel_path() {
-  local ds="$1" k="$2" m="$3" order="$4" seed_idx="$5"
-  echo "${ds}/k${k}_m${m}/$(order_dir_name "$order")/${seed_idx}"
+  local ds="$1" k="$2" m="$3" order="$4" seed_idx="$5" t_len="${6:-}"
+  local seg
+  seg="$(order_dir_name "$order")"
+  [[ -n "$t_len" ]] && seg="${seg}/t${t_len}"
+  echo "${ds}/k${k}_m${m}/${seg}/${seed_idx}"
 }
 
 run_one() {
-  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}"
+  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" t_len="${8:-}"
 
   local rid run_dir index_path meta_path
-  rid="$(run_rel_path "$ds" "$k" "$m" "$order" "$seed_idx")"
+  rid="$(run_rel_path "$ds" "$k" "$m" "$order" "$seed_idx" "$t_len")"
   run_dir="$RESULTS_DIR/runs/$rid"
   meta_path="$run_dir/meta.json"
 
@@ -89,7 +92,7 @@ run_one() {
   fasta="$(dataset_fasta_path "$ds")"
   [[ -f "$fasta" ]] || die "missing $fasta; run: $0 download -d $ds"
 
-  build_order_flags "$order" "$seed" "$gm_file"
+  build_order_flags "$order" "$seed" "$gm_file" "$t_len"
 
   local build_log="$run_dir/build.log" build_time="$run_dir/build_time.txt"
   local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose "${ORDER_FLAGS[@]}" -o "$index_path")
@@ -168,6 +171,7 @@ run_one() {
   META_SEED="${seed:-}" \
   META_SEED_IDX="$seed_idx" \
   META_GM_FILE="${gm_file:-}" \
+  META_T="${t_len:-}" \
   META_THREADS="$THREADS" \
   META_SSHASH_PATH="$SSHASH_BIN" \
   META_SSHASH_VERSION="$SSHASH_VERSION" \
@@ -197,7 +201,7 @@ run_schemes() {
   orders_list="$(resolve_orders)"
   IFS=',' read -r -a order_arr <<<"$orders_list"
 
-  local ds order i seed
+  local ds order i seed t_val gm_file
   for ds in "${ds_arr[@]}"; do
     ds="$(trim "$ds")"
     [[ -n "$ds" ]] || continue
@@ -206,7 +210,11 @@ run_schemes() {
       for order in "${order_arr[@]}"; do
         order="$(trim "$order")"
         [[ -n "$order" ]] || continue
-        run_one "$ds" "$K" "$M" "$order" "$GM_FILE" "$seed" "$i"
+        gm_file="$(order_gm_file "$order" "$GM_FILE")"
+        for t_val in $(order_t_values "$order"); do
+          [[ "$t_val" == "-" ]] && t_val=""
+          run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "$t_val"
+        done
       done
     done
   done

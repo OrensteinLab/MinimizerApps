@@ -1,3 +1,5 @@
+#include <tuple>
+
 using namespace sshash;
 
 int build(int argc, char** argv) {
@@ -44,14 +46,21 @@ int build(int argc, char** argv) {
     parser.add("check", "Check correctness after construction.", "--check", false, true);
     parser.add("verbose", "Verbose output during construction.", "--verbose", false, true);
     parser.add("order",
-               "Minimizer order: native (default), xor-hash, xor-pcg-hash, or greedymini. See "
-               "orders/README.md.",
+               "Minimizer order: native (default), xor-hash, xor-pcg-hash, greedymini, or one "
+               "of the 4 mod-minimizer orders (mod-minimizer-native-hash, "
+               "mod-minimizer-xor-hash, mod-minimizer-pcg-xor-hash, mod-minimizer-greedymini). "
+               "See orders/README.md.",
                "-O", false);
     parser.add("greedy_mini_filename",
-               "GreedyMini .gm rank table (required with -O greedymini).",
+               "GreedyMini .gm rank table (required with -O greedymini or "
+               "-O mod-minimizer-greedymini).",
                "--greedy-mini-file", false);
     parser.add("gm_alphabet", "GreedyMini table alphabet: binary (default) or dna.",
                "--gm-alphabet", false);
+    parser.add("t_length",
+               "t-mer length for mod-minimizer's inner order O_t (required, and only "
+               "meaningful, with a mod-minimizer-* order; must be < m).",
+               "--t-length", false);
 
     if (!parser.parse()) return 0;
 
@@ -77,7 +86,8 @@ int build(int argc, char** argv) {
     if (parser.parsed("t")) build_config.num_threads = parser.get<uint64_t>("t");
 
     if (parser.parsed("order")) {
-        build_config.order = parse_custom_order_mode(parser.get<std::string>("order"));
+        std::tie(build_config.order, build_config.mod_minimizer) =
+            parse_order_name(parser.get<std::string>("order"));
     }
     if (parser.parsed("greedy_mini_filename")) {
         build_config.greedy_mini_filename = parser.get<std::string>("greedy_mini_filename");
@@ -88,6 +98,21 @@ int build(int argc, char** argv) {
     if (build_config.order == custom_order_mode::GREEDYMINI &&
         build_config.greedy_mini_filename.empty()) {
         std::cerr << "Error: -O greedymini requires --greedy-mini-file" << std::endl;
+        return 1;
+    }
+    if (build_config.mod_minimizer) {
+        if (!parser.parsed("t_length")) {
+            std::cerr << "Error: a mod-minimizer-* order requires --t-length" << std::endl;
+            return 1;
+        }
+        build_config.t = parser.get<uint64_t>("t_length");
+        if (build_config.t == 0 or build_config.t >= m) {
+            std::cerr << "Error: --t-length must be > 0 and < m" << std::endl;
+            return 1;
+        }
+    } else if (parser.parsed("t_length")) {
+        std::cerr << "Error: --t-length is only meaningful with a mod-minimizer-* order"
+                  << std::endl;
         return 1;
     }
 

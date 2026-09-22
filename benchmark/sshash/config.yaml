@@ -26,7 +26,14 @@ paths:
 defaults:
   datasets: cod,kestrel,human
   k: 31
-  m: 11
-  orders: native,xor-hash,xor-pcg-hash,greedymini
+  # m=21 (up from the original 11): matches the mod-minimizer paper's own
+  # tested SSHash regime (k=31, m=21, giving w=k-m+1=11) -- see
+  # orders/README.md "mod-minimizer" and sshash/README.md.
+  m: 21
+  orders: native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini
   n_seeds: 5
-  gm_file: w21_k11_canonical.gm
+  # Plain greedymini's table: gm_k=15, Extend-k'd up to l=m=21 (density ~1.523
+  # at its own design window w=11).
+  gm_file: w11_k15_canonical.gm
+  # mod-minimizer-greedymini's O_t table (t=11, no extend needed: gm_k=11=t).
+  mod_t_gm_file: w21_k11_canonical.gm

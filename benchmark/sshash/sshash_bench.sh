@@ -33,12 +33,21 @@ Run options:
   -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human)
   -k K                    k-mer length (default: 31)
   -m M                    Minimizer length, fixed across ALL orders by design
-                          (default: 11; see README "Choice of m")
-  -O, --orders LIST       native,xor-hash,xor-pcg-hash,greedymini or "all" (default: all)
-                          Every order (including native) is run once per seed --
-                          sshash has no seed-less baseline the way kmc's lex does.
+                          (default: 21, giving w=k-m+1=11 -- the mod-minimizer
+                          paper's own tested SSHash regime; see README)
+  -O, --orders LIST       native,xor-hash,xor-pcg-hash,greedymini,
+                          mod-minimizer-native-hash,mod-minimizer-xor-hash,
+                          mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,
+                          or "all" (default: all). Every order (including
+                          native) is run once per seed -- sshash has no
+                          seed-less baseline the way kmc's lex does. Each
+                          mod-minimizer-* order (except -greedymini, fixed at
+                          t=11) additionally runs once per t in {10, 11}.
   --greedy-mini-file PATH GreedyMini .gm table for -O greedymini
-                          (default: orders/GreedyMini/w21_k11_canonical.gm)
+                          (default: orders/GreedyMini/w11_k15_canonical.gm;
+                          mod-minimizer-greedymini's own O_t table is fixed to
+                          orders/GreedyMini/w21_k11_canonical.gm, config.yaml
+                          mod_t_gm_file, not overridable from here)
   -n, --n-seeds N         First N predefined seeds from config.yaml (default: 5, max: ${#BENCH_SEEDS[@]})
   -t, --threads N         sshash build/query -t (default: 8)
   --sshash PATH           sshash binary (default: $REPO_ROOT/build/sshash)

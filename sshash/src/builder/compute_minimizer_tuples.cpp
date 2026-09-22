@@ -44,7 +44,11 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
             kmer_iterator<Kmer, bits::bit_vector::builder> kmer_it(strings_builder, k);
             hasher_type hasher(build_config.seed);
-            hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
+            /* O_t (ranks t-mers) for mod-minimizer, O_m (ranks m-mers) for the
+               classic scheme -- see dictionary_builder::build's own hasher
+               configuration for the same choice. */
+            const uint64_t hasher_l = build_config.mod_minimizer ? build_config.t : m;
+            hasher.configure(build_config.order, hasher_l, build_config.greedy_mini_filename,
                              build_config.gm_alphabet);
             minimizer_iterator<Kmer> minimizer_it(k, m, hasher);
 
@@ -64,7 +68,18 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
                 for (uint64_t j = 0; j != sequence_len - k + 1; ++j) {
                     auto uint_kmer = kmer_it.get();
-                    auto mini_info = minimizer_it.next(uint_kmer);
+                    minimizer_info mini_info;
+                    if (build_config.mod_minimizer) {
+                        /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc
+                           comment): keep whichever single strand the unitig was actually walked
+                           in, no reverse-complement combination -- Lookup's two-probe fallback
+                           (dictionary::lookup) handles the other orientation at query time. */
+                        mini_info = util::compute_mod_minimizer_single_strand(uint_kmer, k, m,
+                                                                              build_config.t, hasher);
+                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
+                    } else {
+                        mini_info = minimizer_it.next(uint_kmer);
+                    }
                     assert(mini_info.pos_in_seq < end - m + 1);
                     assert(mini_info.pos_in_kmer < k - m + 1);
 

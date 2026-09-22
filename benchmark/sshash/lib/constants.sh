@@ -15,7 +15,7 @@ fi
 CMD="run"
 DATASETS=""
 K=31
-M=11
+M=21
 ORDERS="all"
 GM_FILE=""
 THREADS=8
@@ -84,11 +84,21 @@ load_bench_config() {
   ALL_DATASETS="$(_config_scalar defaults datasets)"
   DATASETS="${DATASETS:-$ALL_DATASETS}"
 
-  local default_gm
-  default_gm="$(_config_scalar defaults gm_file)"
-  default_gm="${default_gm:-w21_k11_canonical.gm}"
   local gm_dir
   gm_dir="$(_config_scalar paths gm_dir)"
   gm_dir="${gm_dir:-../../orders/GreedyMini}"
-  DEFAULT_GM_FILE="$(cd "$BENCHMARK_DIR" && cd "$gm_dir" && pwd)/$default_gm"
+  local gm_dir_abs
+  gm_dir_abs="$(cd "$BENCHMARK_DIR" && cd "$gm_dir" && pwd)"
+
+  local default_gm
+  default_gm="$(_config_scalar defaults gm_file)"
+  default_gm="${default_gm:-w11_k15_canonical.gm}"
+  DEFAULT_GM_FILE="$gm_dir_abs/$default_gm"
+
+  # mod-minimizer-greedymini's O_t table (t=11), separate from plain
+  # greedymini's own (Extend-k'd) table above -- see config.yaml.
+  local mod_t_gm
+  mod_t_gm="$(_config_scalar defaults mod_t_gm_file)"
+  mod_t_gm="${mod_t_gm:-w21_k11_canonical.gm}"
+  MOD_T_GM_FILE="$gm_dir_abs/$mod_t_gm"
 }
