@@ -1,0 +1,32 @@
+# Shared benchmark configuration (loaded by python -m scripts config and sshash_bench.sh).
+#
+# Seeds are the exact same 10 hex literals used by benchmark/kmc/config.yaml,
+# reused here for cross-tool consistency across this monorepo's benchmarks
+# (not because sshash's orders have anything numerically in common with
+# kmc's -- they don't -- just so "seed index 3" means the same literal value
+# in every benchmark's results tree).
+
+seeds:
+  - 0xDEADBEEF
+  - 0xC0FFEE01
+  - 0x31415926
+  - 0x27182818
+  - 0x16180339
+  - 0x0BADF00D
+  - 0x600D600D
+  - 0xFEEDFACE
+  - 0x12345678
+  - 0x87654321
+
+paths:
+  gm_dir: ../../orders/GreedyMini
+  experiments: experiments
+  data: data
+
+defaults:
+  datasets: cod,kestrel,human
+  k: 31
+  m: 11
+  orders: native,xor-hash,xor-pcg-hash,greedymini
+  n_seeds: 5
+  gm_file: w21_k11_canonical.gm

@@ -49,6 +49,7 @@ If you are interested in a **membership-only** version of SSHash, have a look at
 
 #### Table of contents
 * [Compiling the Code](#compiling-the-code)
+* [Custom minimizer](#custom-minimizer)
 * [Dependencies](#dependencies)
 * [Tools and Usage](#tools-and-usage)
 * [Examples](#Examples)
@@ -122,6 +123,37 @@ compile SSHash with the flag `-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On`.
 By default, SSHash uses a maximum k-mer length of 31.
 If you want to support k-mer lengths up to (and including) 63,
 compile the library with the flag `-DSSHASH_USE_MAX_KMER_LENGTH_63=On`.
+
+Custom minimizer
+----------------
+
+This fork adds pluggable minimizer orders (`build -O`) on top of upstream
+SSHash's own default order (`native`), including a shared GreedyMini-based
+low-density order also used by this monorepo's
+[kraken2](../kraken2/README.md#custom-minimizer) and
+[kmc](../kmc/README.md#custom-minimizer) forks. See
+[`../orders/README.md`](../orders/README.md) for the option/CLI reference and
+shared implementation.
+
+```bash
+./sshash build -i FILE -k 31 -m 11 -O native ...                                # default, unchanged
+./sshash build -i FILE -k 31 -m 11 -O xor-hash -s SEED ...
+./sshash build -i FILE -k 31 -m 11 -O xor-pcg-hash -s SEED ...
+./sshash build -i FILE -k 31 -m 11 -O greedymini \
+    --greedy-mini-file ../orders/GreedyMini/w21_k11_canonical.gm [--gm-alphabet binary|dna] ...
+```
+
+The chosen order (and, for `greedymini`, the rank table itself) is embedded
+in the serialized `.sshash` index, so `query`/`check`/`bench` reconstruct it
+automatically from `-i` alone -- no sidecar files or extra flags needed.
+
+**NOTE**: this fork always builds with
+`-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` (the default in
+`CMakeLists.txt` is flipped from upstream's `Off`), so its 2-bit packing
+matches the shared minimizer-order implementation. This also changes the
+`native` order's own on-disk character mapping from vanilla upstream's
+default, so **indexes built by this fork are not binary-compatible with
+indexes built by unmodified upstream `sshash`**, and vice versa.
 
 Dependencies
 ------------

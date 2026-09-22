@@ -21,6 +21,8 @@ struct dictionary_builder  //
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
         d.m_hasher.seed(build_config.seed);
+        d.m_hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
+                             build_config.gm_alphabet);
 
         build_stats.add("input_filename", filename.c_str());
         build_stats.add("k", d.m_k);

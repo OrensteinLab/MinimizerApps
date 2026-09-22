@@ -163,6 +163,9 @@ struct build_configuration {
 
         , tmp_dirname(constants::default_tmp_dirname)
 
+        , order(custom_order_mode::NATIVE)
+        , gm_alphabet(GmAlphabet::BINARY)
+
     {}
 
     uint64_t k;  // kmer length
@@ -178,6 +181,12 @@ struct build_configuration {
 
     std::string tmp_dirname;
 
+    /* Custom minimizer order (see orders/README.md); NATIVE reproduces
+       upstream's own mixer_64-based order unchanged. */
+    custom_order_mode order;
+    std::string greedy_mini_filename;  // required when order == GREEDYMINI
+    GmAlphabet gm_alphabet;
+
     void print() const {
         std::cout << "k = " << k                                              //
                   << ", m = " << m                                            //
@@ -187,7 +196,8 @@ struct build_configuration {
                   << ", lambda = " << lambda                                  //
                   << ", weighted = " << (weighted ? "true" : "false")         //
                   << ", verbose = " << (verbose ? "true" : "false")           //
-                  << ", tmp_dirname = '" << tmp_dirname << "'" << std::endl;  //
+                  << ", tmp_dirname = '" << tmp_dirname << "'"                //
+                  << ", order = '" << custom_order_mode_name(order) << "'" << std::endl;  //
     }
 };
 

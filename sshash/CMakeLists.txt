@@ -13,7 +13,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 option(SSHASH_BUILD_EXECUTABLES "Build sshash executables" ON)
 option(SSHASH_USE_ARCH_NATIVE "Build with -march=native" OFF)
 option(SSHASH_USE_MAX_KMER_LENGTH_63 "Use max kmer length 63" OFF)
-option(SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING "Use traditional nucleotide encoding" OFF)
+option(SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING "Use traditional nucleotide encoding" ON)
 option(SSHASH_USE_SANITIZERS "Build with sanitizers" OFF)
 
 if (UNIX AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))

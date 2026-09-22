@@ -43,6 +43,15 @@ int build(int argc, char** argv) {
                true);
     parser.add("check", "Check correctness after construction.", "--check", false, true);
     parser.add("verbose", "Verbose output during construction.", "--verbose", false, true);
+    parser.add("order",
+               "Minimizer order: native (default), xor-hash, xor-pcg-hash, or greedymini. See "
+               "orders/README.md.",
+               "-O", false);
+    parser.add("greedy_mini_filename",
+               "GreedyMini .gm rank table (required with -O greedymini).",
+               "--greedy-mini-file", false);
+    parser.add("gm_alphabet", "GreedyMini table alphabet: binary (default) or dna.",
+               "--gm-alphabet", false);
 
     if (!parser.parse()) return 0;
 
@@ -66,6 +75,21 @@ int build(int argc, char** argv) {
         build_config.ram_limit_in_GiB = parser.get<uint64_t>("RAM");
     }
     if (parser.parsed("t")) build_config.num_threads = parser.get<uint64_t>("t");
+
+    if (parser.parsed("order")) {
+        build_config.order = parse_custom_order_mode(parser.get<std::string>("order"));
+    }
+    if (parser.parsed("greedy_mini_filename")) {
+        build_config.greedy_mini_filename = parser.get<std::string>("greedy_mini_filename");
+    }
+    if (parser.parsed("gm_alphabet")) {
+        build_config.gm_alphabet = parse_gm_alphabet(parser.get<std::string>("gm_alphabet"));
+    }
+    if (build_config.order == custom_order_mode::GREEDYMINI &&
+        build_config.greedy_mini_filename.empty()) {
+        std::cerr << "Error: -O greedymini requires --greedy-mini-file" << std::endl;
+        return 1;
+    }
 
     // build_config.print();
 

@@ -1,0 +1,22 @@
+# Secondary, explicitly OPTIONAL sweep: how much does minimizer length m
+# alone move space/time at a FIXED order (native)? Not the primary order
+# comparison (see sweep_orders.yaml / README "Choice of m") -- m is held
+# fixed at 11 for every order there specifically so the order sweep isolates
+# the order's effect; this sweep isolates m's effect instead, one order at a
+# time, and is not meant to be read side-by-side with the order sweep.
+name: sweep_m
+description: Secondary/optional -- native order only, m in 7/9/11/13 (sshash caps m to [6,13]), k=31, 3 seeds, cod only.
+
+defaults:
+  datasets: cod
+  k: 31
+  orders: native
+  n_seeds: 3
+  threads: 16
+  force: false
+
+configs:
+  - m: 7
+  - m: 9
+  - m: 11
+  - m: 13

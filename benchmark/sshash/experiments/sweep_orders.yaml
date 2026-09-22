@@ -1,0 +1,16 @@
+# Primary comparison: all four minimizer orders at the fixed k=31/m=11 this
+# benchmark uses throughout (see README "Choice of m"), 5 seeds each.
+name: sweep_orders
+description: Primary order comparison (native/xor-hash/xor-pcg-hash/greedymini), k=31 m=11, 5 seeds, cod+kestrel+human.
+
+defaults:
+  datasets: cod,kestrel,human
+  k: 31
+  m: 11
+  orders: all
+  n_seeds: 5
+  threads: 16
+  force: false
+
+configs:
+  - run_tag: main

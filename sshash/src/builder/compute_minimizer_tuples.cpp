@@ -44,6 +44,8 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
             kmer_iterator<Kmer, bits::bit_vector::builder> kmer_it(strings_builder, k);
             hasher_type hasher(build_config.seed);
+            hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
+                             build_config.gm_alphabet);
             minimizer_iterator<Kmer> minimizer_it(k, m, hasher);
 
             for (uint64_t i = index_begin; i < index_end; ++i)  //
