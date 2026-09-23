@@ -61,6 +61,11 @@ int build(int argc, char** argv) {
                "t-mer length for mod-minimizer's inner order O_t (required, and only "
                "meaningful, with a mod-minimizer-* order; must be < m).",
                "--t-length", false);
+    parser.add("regular_parsing",
+               "Force two-probe 'regular parsing' for a non-mod-minimizer order "
+               "(default is single-probe canonical parsing). No-op for "
+               "mod-minimizer-* orders, which are always regular parsing.",
+               "--regular", false, true);
 
     if (!parser.parse()) return 0;
 
@@ -115,6 +120,7 @@ int build(int argc, char** argv) {
                   << std::endl;
         return 1;
     }
+    build_config.regular_parsing = parser.get<bool>("regular_parsing");
 
     // build_config.print();
 

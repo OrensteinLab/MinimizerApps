@@ -1,6 +1,7 @@
 #include "include/util.hpp"
 #include "include/kmer_iterator.hpp"
 #include "include/minimizer_iterator.hpp"
+#include "include/mod_minimizer_iterator.hpp"
 
 namespace sshash {
 
@@ -51,6 +52,7 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
             hasher.configure(build_config.order, hasher_l, build_config.greedy_mini_filename,
                              build_config.gm_alphabet);
             minimizer_iterator<Kmer> minimizer_it(k, m, hasher);
+            mod_minimizer_iterator<Kmer> mod_minimizer_it(k, m, build_config.t, hasher);
 
             for (uint64_t i = index_begin; i < index_end; ++i)  //
             {
@@ -65,17 +67,34 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
                 kmer_it.at(Kmer::bits_per_char * begin);
                 minimizer_it.set_position(begin);
+                mod_minimizer_it.set_position(begin);
 
                 for (uint64_t j = 0; j != sequence_len - k + 1; ++j) {
                     auto uint_kmer = kmer_it.get();
                     minimizer_info mini_info;
-                    if (build_config.mod_minimizer) {
+                    if (build_config.mod_minimizer and
+                        util::is_mod_minimizer_canonical_safe(k, m, build_config.t)) {
+                        /* Mirror-equivariant: a single computation (in whichever orientation the
+                           unitig happens to be walked) already gives the frame-invariant
+                           canonical minimizer -- same shape as the classical scheme below. */
+                        Kmer uint_kmer_rc = uint_kmer;
+                        uint_kmer_rc.reverse_complement_inplace(k);
+                        mini_info = util::compute_mod_minimizer_canonical(uint_kmer, uint_kmer_rc, k, m,
+                                                                          build_config.t, hasher);
+                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
+                    } else if (build_config.mod_minimizer) {
                         /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc
                            comment): keep whichever single strand the unitig was actually walked
                            in, no reverse-complement combination -- Lookup's two-probe fallback
-                           (dictionary::lookup) handles the other orientation at query time. */
-                        mini_info = util::compute_mod_minimizer_single_strand(uint_kmer, k, m,
-                                                                              build_config.t, hasher);
+                           (dictionary::lookup) handles the other orientation at query time.
+                           mod_minimizer_it computes the same thing incrementally (amortized O(1)
+                           vs the brute-force O(k-t+1) reference; see its own doc comment). */
+                        mini_info = mod_minimizer_it.next(uint_kmer);
+                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
+                    } else if (build_config.regular_parsing) {
+                        /* Comparison mode: same shape as mod-minimizer's regular
+                           parsing above, but for a classical order. */
+                        mini_info = util::compute_minimizer_single_strand(uint_kmer, k, m, hasher);
                         mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
                     } else {
                         mini_info = minimizer_it.next(uint_kmer);

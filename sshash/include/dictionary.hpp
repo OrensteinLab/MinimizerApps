@@ -25,7 +25,8 @@ struct dictionary  //
         , m_k(0)
         , m_m(0)
         , m_mod_minimizer(false)
-        , m_t(0) {}
+        , m_t(0)
+        , m_regular_parsing(false) {}
 
     /* Build from input file. */
     void build(std::string const& input_filename, build_configuration const& build_config);
@@ -37,6 +38,7 @@ struct dictionary  //
     uint64_t m() const { return m_m; }
     bool mod_minimizer() const { return m_mod_minimizer; }
     uint64_t t() const { return m_t; }
+    bool regular_parsing() const { return m_regular_parsing; }
     bool weighted() const { return !m_weights.empty(); }
     hasher_type const& hasher() const { return m_hasher; }
 
@@ -155,6 +157,7 @@ private:
         visitor.visit(t.m_m);
         visitor.visit(t.m_mod_minimizer);
         visitor.visit(t.m_t);
+        visitor.visit(t.m_regular_parsing);
         visitor.visit(t.m_hasher);
         visitor.visit(t.m_spss);
         visitor.visit(t.m_ssi);
@@ -168,6 +171,7 @@ private:
     uint16_t m_m;
     bool m_mod_minimizer;
     uint16_t m_t;
+    bool m_regular_parsing;
     hasher_type m_hasher;
 
     spss_type m_spss;

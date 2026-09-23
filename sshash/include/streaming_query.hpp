@@ -2,6 +2,7 @@
 
 #include "include/dictionary.hpp"
 #include "include/minimizer_iterator.hpp"
+#include "include/mod_minimizer_iterator.hpp"
 #include "include/util.hpp"
 
 namespace sshash {
@@ -22,6 +23,7 @@ struct streaming_query  //
         , m_m(dict->m_m)
 
         , m_minimizer_it(dict->m_k, dict->m_m, dict->m_hasher)
+        , m_mod_minimizer_it(dict->m_k, dict->m_m, dict->m_t, dict->m_hasher)
         , m_curr_mini_info()
 
         , m_it(dict->m_spss.strings, m_k)
@@ -44,6 +46,7 @@ struct streaming_query  //
         m_remaining_string_bases = 0;
         m_res = lookup_result();
         m_minimizer_it.reset();
+        m_mod_minimizer_it.set_position(0);
         m_last_seed_mini_info = minimizer_info();
         m_last_seed_positive = false;
         m_bucket_cache.size = 0;
@@ -60,18 +63,12 @@ struct streaming_query  //
             return m_res;
         }
 
-        if (m_dict->mod_minimizer()) {
-            /* mod-minimizer's "regular parsing" Lookup (see
-               dictionary::lookup's two-probe fallback, and
-               util::compute_mod_minimizer_single_strand's doc comment)
-               doesn't fit this class's incremental minimizer_iterator and
-               seed()'s shortcuts, which are built entirely around the
-               classical per-locus-canonicalized scheme's forwardness and
-               mirror-equivariance guarantees (e.g. the singleton-bucket
-               skip's assumption that an abandoned minimizer position is
-               never re-selected). Fall back to a plain per-kmer
-               dictionary::lookup call instead: no streaming speedup for
-               mod-minimizer builds specifically, but always correct. */
+        if (m_dict->regular_parsing()) {
+            /* Ad hoc classical-order comparison mode: brute-force O(w) per
+               kmer is already fast on cheap hashes, so it stays a plain
+               per-kmer dictionary::lookup -- no streaming speedup here, but
+               always correct (see the "Incremental mod-sampling" plan for
+               why this is explicitly out of scope). */
             m_start = false;
             m_remaining_string_bases = 0;
             m_res = m_dict->lookup(kmer);
@@ -96,6 +93,33 @@ struct streaming_query  //
             m_kmer = util::string_to_uint_kmer<kmer_t>(kmer, m_k);
             m_kmer_rc = m_kmer;
             m_kmer_rc.reverse_complement_inplace(m_k);
+        }
+
+        if (m_dict->mod_minimizer()) {
+            /* Incremental forward-strand mod-sampling (mod_minimizer_iterator):
+               amortized O(1) vs util::compute_mod_minimizer_single_strand's own
+               O(k-t+1) brute-force scan -- see that file's doc comment. A new,
+               separate path: it doesn't reuse seed()'s singleton-bucket-skip/
+               bucket-cache shortcuts below, which assume the classical
+               scheme's forwardness/mirror-equivariance guarantees. */
+            m_start = false;
+            m_remaining_string_bases = 0;
+            minimizer_info mini_info_fwd = m_mod_minimizer_it.next(m_kmer);
+            m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_fwd);
+            if (m_res.kmer_id == constants::invalid_uint64) {
+                /* Only this second, reverse-complement probe can't be made
+                   incremental: its own sliding window moves in the opposite
+                   direction relative to the forward read being streamed. */
+                auto mini_info_rc = util::compute_mod_minimizer_single_strand(
+                    m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher);
+                m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_rc);
+            }
+            if (m_res.kmer_id == constants::invalid_uint64) {
+                m_num_negative += 1;
+            } else {
+                m_num_searches += 1;
+            }
+            return m_res;
         }
 
         m_curr_mini_info = m_minimizer_it.next(m_kmer);
@@ -145,6 +169,7 @@ private:
 
     /* minimizer state */
     minimizer_iterator<kmer_t> m_minimizer_it;
+    mod_minimizer_iterator<kmer_t> m_mod_minimizer_it;
     minimizer_info m_curr_mini_info;
 
     /* string state */

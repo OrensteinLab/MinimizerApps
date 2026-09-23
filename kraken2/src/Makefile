@@ -30,7 +30,8 @@ endif
 # Headers whose layout/inlines are merged under -flto; keep deps tight to avoid
 # -Wlto-type-mismatch from stale TUs (e.g. classify.o vs mmscanner.o).
 MM_HEADERS = mmscanner.h minimizer_rankers.h sketching_schemes.h \
-	mod_minimizer.h dna_kmer.h greedymini_rank.h
+	mod_minimizer.h dna_kmer.h greedymini_rank.h \
+	../../common/minimizer-orders/mod_residue_deque.h
 
 all: check_prof_mode $(PROGS)
 

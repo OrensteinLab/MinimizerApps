@@ -20,6 +20,7 @@ struct dictionary_builder  //
         d.m_m = build_config.m;
         d.m_mod_minimizer = build_config.mod_minimizer;
         d.m_t = build_config.t;
+        d.m_regular_parsing = build_config.regular_parsing;
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
         d.m_hasher.seed(build_config.seed);

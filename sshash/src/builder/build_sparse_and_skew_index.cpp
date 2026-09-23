@@ -299,6 +299,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
         mphf_build_config.verbose = false;
         mphf_build_config.num_threads = build_config.num_threads;
         mphf_build_config.avg_partition_size = constants::avg_partition_size;
+        mphf_build_config.tmp_dir = build_config.tmp_dirname;
 
         uint64_t partition_id = 0;
         uint64_t lower = min_size;
