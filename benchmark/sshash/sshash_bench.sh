@@ -43,6 +43,12 @@ Run options:
                           seed-less baseline the way kmc's lex does. Each
                           mod-minimizer-* order (except -greedymini, fixed at
                           t=11) additionally runs once per t in {10, 11}.
+  -M, --modality VALUE   canonical (default, single-probe) or regular
+                          (two-probe, sshash build --regular). Separate axis
+                          from -O; a mod-minimizer-* order is always regular
+                          regardless. E.g. -O native -M regular is the
+                          apples-to-apples comparison against mod-minimizer's
+                          own (mandatory) two-probe path.
   --greedy-mini-file PATH GreedyMini .gm table for -O greedymini
                           (default: orders/GreedyMini/w11_k15_canonical.gm;
                           mod-minimizer-greedymini's own O_t table is fixed to
@@ -67,6 +73,7 @@ Examples:
   $0 download -d cod
   $0 run -d cod -n 1
   $0 run -d cod,kestrel,human -O all -n 5 -t 16
+  $0 run -d cod,kestrel -O native -M regular -n 5 -t 16
   $0 run --dataset-file sshash/data/unitigs_stitched/salmonella_enterica_k31_ust.fa.gz -n 1
   $0 experiment sweep_orders
   $0 experiment sweep_m
@@ -82,6 +89,11 @@ parse_options() {
       -k) K="$2"; shift 2 ;;
       -m) M="$2"; shift 2 ;;
       -O|--orders) ORDERS="$2"; shift 2 ;;
+      -M|--modality)
+        MODALITY="$2"
+        [[ "$MODALITY" == "canonical" || "$MODALITY" == "regular" ]] || \
+          die "--modality must be 'canonical' or 'regular', got: $MODALITY"
+        shift 2 ;;
       --greedy-mini-file) GM_FILE="$2"; shift 2 ;;
       -n|--n-seeds) N_SEEDS="$2"; shift 2 ;;
       -t|--threads) THREADS="$2"; shift 2 ;;

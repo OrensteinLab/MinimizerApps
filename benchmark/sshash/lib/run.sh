@@ -59,23 +59,26 @@ ensure_query_sets() {
   bench_py equivalence to-fasta --txt "$neg_txt" --fasta "$QUERY_NEG_FASTA" >/dev/null
 }
 
-order_dir_name_for_run() {
-  order_dir_name "$1"
-}
-
+# runs/{dataset}/{modality}/{order}/[t{t}/]{seed_idx} -- k/m aren't in the
+# path (fixed for the whole benchmark, recorded in meta.json instead).
 run_rel_path() {
-  local ds="$1" k="$2" m="$3" order="$4" seed_idx="$5" t_len="${6:-}"
+  local ds="$1" order="$2" seed_idx="$3" t_len="${4:-}" modality="${5:-canonical}"
   local seg
   seg="$(order_dir_name "$order")"
   [[ -n "$t_len" ]] && seg="${seg}/t${t_len}"
-  echo "${ds}/k${k}_m${m}/${seg}/${seed_idx}"
+  echo "${ds}/${modality}/${seg}/${seed_idx}"
 }
 
 run_one() {
-  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" t_len="${8:-}"
+  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" t_len="${8:-}" modality="${9:-canonical}"
+
+  # A mod-minimizer-* order is always regular parsing, independent of -M
+  # (its single-probe canonical path is permanently disabled) -- record and
+  # file it under its actual modality, not whatever -M happened to be.
+  [[ "$order" == mod-minimizer-* ]] && modality="regular"
 
   local rid run_dir index_path meta_path
-  rid="$(run_rel_path "$ds" "$k" "$m" "$order" "$seed_idx" "$t_len")"
+  rid="$(run_rel_path "$ds" "$order" "$seed_idx" "$t_len" "$modality")"
   run_dir="$RESULTS_DIR/runs/$rid"
   meta_path="$run_dir/meta.json"
 
@@ -88,14 +91,18 @@ run_one() {
   index_path="$run_dir/index.sshash"
   rm -f "$index_path"
 
+  # Per-run tmp dir on the same SSD as $RESULTS_DIR, isolated from other runs.
+  local tmp_dir="$run_dir/tmp"
+  mkdir -p "$tmp_dir"
+
   local fasta
   fasta="$(dataset_fasta_path "$ds")"
   [[ -f "$fasta" ]] || die "missing $fasta; run: $0 download -d $ds"
 
-  build_order_flags "$order" "$seed" "$gm_file" "$t_len"
+  build_order_flags "$order" "$seed" "$gm_file" "$t_len" "$modality"
 
   local build_log="$run_dir/build.log" build_time="$run_dir/build_time.txt"
-  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose "${ORDER_FLAGS[@]}" -o "$index_path")
+  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose "${ORDER_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
   local wrapped=("${build_cmd[@]}")
   [[ -x "$TIME_BIN" ]] && wrapped=("$TIME_BIN" -v -o "$build_time" "${build_cmd[@]}")
 
@@ -112,6 +119,7 @@ run_one() {
   build_rc=$?
   set -e
   wall="$(wall_time_delta "$t0" "$EPOCHREALTIME")"
+  rm -rf "$tmp_dir"
 
   local check_rc=-1 check_ok=0 bench_rc=-1 query_rc=-1
   local index_bytes="" pos_match="" neg_match=""
@@ -168,6 +176,7 @@ run_one() {
   META_K="$k" \
   META_M="$m" \
   META_ORDER="$order" \
+  META_MODALITY="$modality" \
   META_SEED="${seed:-}" \
   META_SEED_IDX="$seed_idx" \
   META_GM_FILE="${gm_file:-}" \
@@ -213,7 +222,7 @@ run_schemes() {
         gm_file="$(order_gm_file "$order" "$GM_FILE")"
         for t_val in $(order_t_values "$order"); do
           [[ "$t_val" == "-" ]] && t_val=""
-          run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "$t_val"
+          run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "$t_val" "${MODALITY:-canonical}"
         done
       done
     done

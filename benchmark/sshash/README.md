@@ -237,7 +237,7 @@ Per-run artifacts live under `$SSHASH_BENCH_ROOT/results/runs/` in a nested layo
 ```
 runs/
   {dataset}/
-    k{k}_m{m}/
+    {modality}/            # canonical | regular -- see -M/--modality
       {order}/              # native | xor_hash | xor_pcg_hash | greedymini |
                              # mod_minimizer_{native_hash,xor_hash,pcg_xor_hash,greedymini}
         [t{t}/]              # mod-minimizer-* only: t10 or t11 (fixed t11 for -greedymini)
@@ -249,7 +249,7 @@ runs/
           query.log          # sshash query vs the real dataset FASTQ (if configured)
           query_time.txt     # GNU /usr/bin/time -v for query.log
           equivalence.json   # {"pos": {...}, "neg": {...}} fixed-set check results
-          meta.json          # run identity + config + exit codes + command
+          meta.json          # run identity + config + exit codes + command (k/m recorded here, not in the path)
           # index.sshash is deleted after check/bench/query/equivalence unless --keep-index
 ```
 

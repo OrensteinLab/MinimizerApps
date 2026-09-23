@@ -17,6 +17,7 @@ DATASETS=""
 K=31
 M=21
 ORDERS="all"
+MODALITY="canonical"
 GM_FILE=""
 THREADS=8
 N_SEEDS=5

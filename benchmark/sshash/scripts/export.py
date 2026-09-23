@@ -64,6 +64,21 @@ from scripts.orders import ORDERS, order_t_values
 from xlsx_util import col_letter, root_rels_xml, write_csv as _shared_write_csv, xml_escape
 
 
+def scheme_and_order(order_id: str) -> tuple[str, str]:
+    """Splits an order id into ("minimizer" | "mod-minimizer", base order
+    name), normalized so the *same* base order has the *same* name under
+    either scheme even though sshash's own CLI names diverge (e.g.
+    "xor-pcg-hash" vs "mod-minimizer-pcg-xor-hash" -- note the swapped word
+    order)."""
+    if order_id.startswith("mod-minimizer-"):
+        return "mod-minimizer", order_id[len("mod-minimizer-"):]
+    if order_id == "native":
+        return "minimizer", "native-hash"
+    if order_id == "xor-pcg-hash":
+        return "minimizer", "pcg-xor-hash"
+    return "minimizer", order_id
+
+
 # ---------------------------------------------------------------------------
 # time.txt / build+query JSON parsing
 # ---------------------------------------------------------------------------
@@ -202,6 +217,8 @@ RUN_FIELDS = (
     "k",
     "m",
     "w",
+    "modality",
+    "scheme",
     "order",
     "order_seed",
     "seed_idx",
@@ -323,12 +340,19 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         v = _num(build_json.get(key), float)
         return round(v / 1_000_000, 6) if v is not None else None
 
+    order_id = meta.get("order") or ""
+    modality = meta.get("modality") or "canonical"
+    scheme, order_name = scheme_and_order(order_id)
+
     row = {
         "run_id": meta.get("run_id") or str(run_dir.relative_to(runs_root)),
         "dataset": meta.get("dataset"),
         "k": meta.get("k"),
         "m": meta.get("m"),
-        "order": meta.get("order"),
+        "order_id": order_id,
+        "modality": modality,
+        "scheme": scheme,
+        "order": order_name,
         "order_seed": meta.get("order_seed"),
         "seed_idx": meta.get("seed_idx"),
         "t": meta.get("t"),
@@ -472,18 +496,21 @@ def summary_group_key(r: dict) -> tuple:
         r.get("dataset") or "",
         int(r.get("k") or 0),
         int(r.get("m") or 0),
-        r.get("order") or "",
+        r.get("order_id") or "",
+        r.get("modality") or "",
         r.get("t") if r.get("t") is not None else -1,
     )
 
 
 def summary_sort_key(row: dict) -> tuple:
+    order_id = row.get("order_id") or ""
+    modality_rank = 0 if (row.get("modality") or "canonical") == "canonical" else 1
     try:
-        rank = ORDERS.index(row.get("order") or "")
+        rank = ORDERS.index(order_id)
     except ValueError:
         rank = len(ORDERS)
     t = row.get("t")
-    return (row.get("dataset") or "", rank, -1 if t is None else int(t))
+    return (row.get("dataset") or "", modality_rank, rank, -1 if t is None else int(t))
 
 
 def summary_rows(rows: list[dict]) -> list[dict]:
@@ -499,7 +526,10 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             "k": head["k"],
             "m": head["m"],
             "w": head.get("w"),
+            "modality": head["modality"],
+            "scheme": head["scheme"],
             "order": head["order"],
+            "order_id": head["order_id"],
             "t": head.get("t"),
             "n_seeds": len({p.get("seed_idx") for p in parts}),
             "n_kmers": head.get("num_kmers"),
@@ -514,10 +544,24 @@ def summary_rows(rows: list[dict]) -> list[dict]:
 
 
 def attach_native_ratios(rows: list[dict]) -> None:
-    """`{metric}_ratio` = this order's mean / native's mean, same dataset (native = 1)."""
-    native_by_dataset = {r["dataset"]: r for r in rows if r.get("order") == "native"}
+    """`{metric}_ratio` = this order's mean / the same-modality native's mean
+    for the same dataset (native = 1). Isolates each order's own effect from
+    the canonical-vs-regular parsing-mode difference. Matches the regular
+    baseline by (scheme, order) == ("minimizer", "native-hash") rather than
+    order_id, since "native" itself can run under either modality. Falls back
+    to the canonical baseline if no regular-modality native was run."""
+    base_by_key: dict[tuple, dict] = {}
+    canonical_native_by_dataset: dict[str, dict] = {}
     for r in rows:
-        base = native_by_dataset.get(r["dataset"])
+        if r.get("scheme") == "minimizer" and r.get("order") == "native-hash":
+            base_by_key[(r["dataset"], r.get("modality"))] = r
+            if r.get("modality") == "canonical":
+                canonical_native_by_dataset[r["dataset"]] = r
+    for r in rows:
+        modality = r.get("modality") or "canonical"
+        base = base_by_key.get((r["dataset"], modality)) or canonical_native_by_dataset.get(
+            r["dataset"]
+        )
         for metric in SUMMARY_METRICS:
             mean = r.get(f"{metric}_mean")
             base_mean = base.get(f"{metric}_mean") if base else None
@@ -556,9 +600,9 @@ def _paper_reproduction_row(summary: list[dict]) -> dict:
     'human' dataset isn't literally GRCh38, so this is a plausibility check,
     not a correctness gate."""
 
-    def _find(order: str, t) -> dict | None:
+    def _find(order_id: str, t) -> dict | None:
         for r in summary:
-            if r.get("dataset") == "human" and r.get("order") == order and r.get("t") == t:
+            if r.get("dataset") == "human" and r.get("order_id") == order_id and r.get("t") == t:
                 return r
         return None
 
@@ -631,7 +675,7 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "m", "w", "order", "t", "n_seeds", "n_kmers"]
+    fields = ["dataset", "k", "m", "w", "modality", "scheme", "order", "t", "n_seeds", "n_kmers"]
     for metric in SUMMARY_METRICS:
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
@@ -667,14 +711,14 @@ XLSX_DATA_START_ROW = 3
 # Repeated across every row of a dataset's block (k/m/w are fixed for the
 # whole benchmark; dataset obviously repeats) -- merge vertically instead of
 # printing the same value on every row.
-XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w"})
+XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w", "modality", "scheme"})
 # Sheets with one row per (dataset, ...): get a divider (bottom border) after
 # each dataset's last row, and the vertical merge above.
 XLSX_DATASET_BORDER_SHEETS = frozenset({"runs", "summary", "buckets"})
 
 _ID_FIELDS = frozenset({
-    "run_id", "dataset", "k", "m", "w", "order", "order_seed", "seed_idx", "t",
-    "gm_file", "threads", "n_seeds", "n_kmers",
+    "run_id", "dataset", "k", "m", "w", "modality", "scheme", "order", "order_seed", "seed_idx",
+    "t", "gm_file", "threads", "n_seeds", "n_kmers",
 })
 _METRIC_CATEGORY = {
     # space
@@ -1018,14 +1062,16 @@ def index_rows() -> list[dict]:
 
     return [
         row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 21 for every order -- matches the mod-minimizer paper's own tested SSHash regime, giving w=k-m+1=11; see README 'Choice of m')"),
-        row("all", "order", "native | xor-hash | xor-pcg-hash | greedymini | mod-minimizer-native-hash | mod-minimizer-xor-hash | mod-minimizer-pcg-xor-hash | mod-minimizer-greedymini -- see orders/README.md"),
+        row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order/scheme; a mod-minimizer-* order is always regular regardless of this flag."),
+        row("all", "scheme", "minimizer (classical, per-locus-canonicalized) or mod-minimizer (wider t-mer scan) -- see scripts/export.py:scheme_and_order"),
+        row("all", "order", "base order/hash within scheme, normalized so the same base order has the same name under either scheme (sshash's own CLI names diverge, e.g. xor-pcg-hash vs mod-minimizer-pcg-xor-hash): native-hash | xor-hash | pcg-xor-hash | greedymini"),
         row("all", "t", "t-mer length for mod-minimizer's inner order O_t (blank for the 4 base orders); 10 reproduces the mod-minimizer paper's own published numbers, 11 matches the GreedyMini t-order table's own length (fixed for mod-minimizer-greedymini)"),
         row("all", "num_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
         row("summary/runs", "bits_per_kmer", "index_bytes_on_disk * 8 / num_kmers"),
         row("summary/runs", "bench_*_ns", "sshash bench's internal avg_nanosec_per_kmer (the paper's own headline query-time metric)"),
         row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, elapsed_millisec from sshash's own JSON)"),
-        row("summary", "{metric}_ratio", "this order's mean / native's mean for the same dataset (native = 1); color scale green (better) -> red (worse)"),
+        row("summary", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order/sampling-scheme effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
         row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
         row("vs_reference", "published_num_kmers_approx", "Zenodo 17582116's own published distinct-31-mer count (informational only, not order-specific)"),
         row("vs_reference", "published/measured_*_reduction_pct", "mod-minimizer paper reproduction (extra row, 'human' only): native vs mod-minimizer-native-hash@t10 bits_per_kmer reduction, ours vs the paper's own published GRCh38 figure (8.70 -> 7.40 bits/kmer, -14.9%) -- see scripts/export.py:PAPER_HUMAN_BITS_PER_KMER"),
@@ -1103,9 +1149,9 @@ def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) 
     datasets = summary_datasets(summary)
     by_order_t: dict[tuple, dict[str, dict]] = {}
     for r in summary:
-        order = r.get("order")
-        if order:
-            by_order_t.setdefault((order, r.get("t")), {})[r.get("dataset")] = r
+        order_id = r.get("order_id")
+        if order_id:
+            by_order_t.setdefault((order_id, r.get("t")), {})[r.get("dataset")] = r
 
     out = []
     for order in ORDERS:
@@ -1151,6 +1197,8 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
         out.append(
             {
                 "dataset": r.get("dataset"),
+                "modality": r.get("modality"),
+                "scheme": r.get("scheme"),
                 "order": r.get("order"),
                 "t": r.get("t"),
                 "n_seeds": r.get("n_seeds"),
@@ -1176,6 +1224,8 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
 def bucket_field_order() -> list[str]:
     return [
         "dataset",
+        "modality",
+        "scheme",
         "order",
         "t",
         "n_seeds",
@@ -1230,7 +1280,15 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
             print(f"error: {msg}", file=sys.stderr)
         die(f"{len(errors)} equivalence/check failure(s) out of {n_cmp} run(s); see above")
 
-    rows.sort(key=lambda r: (r.get("dataset") or "", r.get("order") or "", int(r.get("seed_idx") or 0)))
+    rows.sort(
+        key=lambda r: (
+            r.get("dataset") or "",
+            0 if (r.get("modality") or "canonical") == "canonical" else 1,
+            r.get("order_id") or "",
+            r.get("t") if r.get("t") is not None else -1,
+            int(r.get("seed_idx") or 0),
+        )
+    )
     summary = summary_rows(rows)
     attach_native_ratios(summary)
     vs_ref = vs_reference_rows(rows, summary)

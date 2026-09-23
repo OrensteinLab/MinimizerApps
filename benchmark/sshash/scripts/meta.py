@@ -23,6 +23,7 @@ def main(_argv: list[str] | None = None) -> int:
         "k": int(os.environ["META_K"]),
         "m": int(os.environ["META_M"]),
         "order": os.environ["META_ORDER"],
+        "modality": os.environ.get("META_MODALITY", "") or "canonical",
         "order_seed": int(seed_s, 0) if seed_s else None,
         "seed_idx": int(os.environ.get("META_SEED_IDX", "0")),
         "t": int(t_s) if t_s else None,

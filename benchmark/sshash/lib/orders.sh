@@ -53,9 +53,11 @@ order_gm_file() {
   esac
 }
 
-# Fills the global ORDER_FLAGS array with sshash build's -O/-s/
-# --greedy-mini-file/--t-length flags for order `$1` with seed `$2` (GreedyMini
-# table `$3`, t-length `$4` for mod-minimizer-* orders).
+# Fills ORDER_FLAGS with sshash build's -O/-s/--greedy-mini-file/--t-length/
+# --regular flags for order `$1`, seed `$2` (GreedyMini table `$3`, t-length
+# `$4` for mod-minimizer-* orders, modality `$5`: "canonical" default or
+# "regular"). A mod-minimizer-* order is always regular, so --regular is
+# only added for other orders.
 #
 # `$2` comes in as config.yaml's hex literal (e.g. "0xDEADBEEF") -- sshash's
 # CLI parser (external/pthash/external/cmd_line_parser) reads -s via
@@ -63,7 +65,7 @@ order_gm_file() {
 # silently parses as 0 (strtoull stops at the non-decimal 'x'). $((seed))
 # converts it to a decimal string sshash actually understands correctly.
 build_order_flags() {
-  local order="$1" seed="$2" gm_file="$3" t_len="${4:-}"
+  local order="$1" seed="$2" gm_file="$3" t_len="${4:-}" modality="${5:-canonical}"
   ORDER_FLAGS=(-s "$((seed))")
   case "$order" in
     native) ;;
@@ -85,6 +87,9 @@ build_order_flags() {
       ;;
     *) die "unknown order: $order (see orders/README.md)" ;;
   esac
+  if [[ "$modality" == "regular" && "$order" != mod-minimizer-* ]]; then
+    ORDER_FLAGS+=(--regular)
+  fi
 }
 
 resolve_orders() {
