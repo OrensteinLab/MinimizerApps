@@ -18,13 +18,7 @@ lookup_result dictionary<Kmer, Offsets>::lookup(Kmer uint_kmer,
     uint_kmer_rc.reverse_complement_inplace(m_k);
 
     lookup_result res;
-    if (m_mod_minimizer and util::is_mod_minimizer_canonical_safe(m_k, m_m, m_t)) {
-        /* Mirror-equivariant: a single computation (in whichever orientation was handed in)
-           already gives the frame-invariant canonical minimizer, so one probe suffices --
-           same shape as the classical scheme just below. */
-        auto mini_info = util::compute_mod_minimizer_canonical(uint_kmer, uint_kmer_rc, m_k, m_m, m_t, m_hasher);
-        res = lookup(uint_kmer, uint_kmer_rc, mini_info);
-    } else if (m_mod_minimizer) {
+    if (m_mod_minimizer) {
         /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc comment and
            dictionary_builder::compute_minimizer_tuples): construction stores a kmer's minimizer
            for whichever single strand it was walked in, with no forward/reverse-complement
@@ -64,17 +58,26 @@ lookup_result dictionary<Kmer, Offsets>::lookup(const Kmer uint_kmer,           
                                                 const minimizer_info mini_info,                 //
                                                 typename spss_type::bucket_cache* cache) const  //
 {
-    /* The canonical mod-minimizer path (like the classical scheme) has one frame-invariant
-       recomputation to check against. The two-probe regular-parsing fallback calls this with
-       either the forward or the reverse-complement strand's own single-strand minimizer_info
-       (see the public lookup's two-probe fallback above), so there is no single "the"
-       recomputation to assert against in that case. */
-    assert((m_mod_minimizer and !util::is_mod_minimizer_canonical_safe(m_k, m_m, m_t)) or
-           (!m_mod_minimizer and m_regular_parsing) or
-           minimizer_info(mini_info.minimizer, mini_info.pos_in_kmer) ==
-               (m_mod_minimizer
-                    ? util::compute_mod_minimizer_canonical(uint_kmer, uint_kmer_rc, m_k, m_m, m_t, m_hasher)
-                    : util::compute_minimizer(uint_kmer, uint_kmer_rc, m_k, m_m, m_hasher)));
+    /* Independent-recomputation self-check. The classical single-probe scheme has one
+       frame-invariant recomputation to check against; the two-probe "regular parsing"
+       fallback (mod-minimizer always, or the classical scheme under --regular) calls this
+       with either the forward or the reverse-complement strand's own single-strand
+       minimizer_info (see the public lookup's two-probe fallback above and
+       streaming_query::lookup's mod-minimizer branch), so it must match one of the two. */
+    assert([&] {
+        minimizer_info got(mini_info.minimizer, mini_info.pos_in_kmer);
+        if (m_mod_minimizer) {
+            return got == util::compute_mod_minimizer_single_strand(uint_kmer, m_k, m_m, m_t,
+                                                                     m_hasher) or
+                   got == util::compute_mod_minimizer_single_strand(uint_kmer_rc, m_k, m_m, m_t,
+                                                                     m_hasher);
+        }
+        if (m_regular_parsing) {
+            return got == util::compute_minimizer_single_strand(uint_kmer, m_k, m_m, m_hasher) or
+                   got == util::compute_minimizer_single_strand(uint_kmer_rc, m_k, m_m, m_hasher);
+        }
+        return got == util::compute_minimizer(uint_kmer, uint_kmer_rc, m_k, m_m, m_hasher);
+    }());
     auto it = m_ssi.lookup(uint_kmer, uint_kmer_rc, mini_info);
     return m_spss.lookup(it, uint_kmer, uint_kmer_rc, mini_info, cache);
 }

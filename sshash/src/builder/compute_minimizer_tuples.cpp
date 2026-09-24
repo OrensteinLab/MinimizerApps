@@ -72,17 +72,7 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
                 for (uint64_t j = 0; j != sequence_len - k + 1; ++j) {
                     auto uint_kmer = kmer_it.get();
                     minimizer_info mini_info;
-                    if (build_config.mod_minimizer and
-                        util::is_mod_minimizer_canonical_safe(k, m, build_config.t)) {
-                        /* Mirror-equivariant: a single computation (in whichever orientation the
-                           unitig happens to be walked) already gives the frame-invariant
-                           canonical minimizer -- same shape as the classical scheme below. */
-                        Kmer uint_kmer_rc = uint_kmer;
-                        uint_kmer_rc.reverse_complement_inplace(k);
-                        mini_info = util::compute_mod_minimizer_canonical(uint_kmer, uint_kmer_rc, k, m,
-                                                                          build_config.t, hasher);
-                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
-                    } else if (build_config.mod_minimizer) {
+                    if (build_config.mod_minimizer) {
                         /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc
                            comment): keep whichever single strand the unitig was actually walked
                            in, no reverse-complement combination -- Lookup's two-probe fallback

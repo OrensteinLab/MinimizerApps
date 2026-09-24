@@ -29,8 +29,13 @@ static const std::string default_tmp_dirname(".");
 constexpr int forward_orientation = 1;
 constexpr int backward_orientation = -1;
 
+/* x gates on-disk compatibility (util::check_version_number throws on
+   mismatch, "index needs rebuilding"); bump it whenever dictionary::visit_impl's
+   serialized field set/order changes, as it did here (m_mod_minimizer, m_t,
+   m_regular_parsing) -- an index built by an older binary must not be silently
+   misread by a newer one. */
 namespace current_version_number {
-constexpr uint8_t x = 6;
+constexpr uint8_t x = 7;
 constexpr uint8_t y = 0;
 constexpr uint8_t z = 0;
 }  // namespace current_version_number

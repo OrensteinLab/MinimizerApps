@@ -547,6 +547,17 @@ minimizer_info compute_minimizer_single_strand(Kmer kmer, const uint64_t k, cons
     return {minimizer, pos};
 }
 
+/* The first `num_chars` characters of `window`, packed as a plain integer --
+   the substring handed to a rank/hash function when only its raw value (not
+   the Kmer type) is needed. Shared by compute_mod_minimizer_single_strand and
+   mod_minimizer_iterator (which extract a t-mer this same way). */
+template <typename Kmer>
+inline uint64_t take_chars_as_uint(Kmer const& window, uint64_t num_chars) {
+    Kmer prefix = window;
+    prefix.take_chars(num_chars);
+    return uint64_t(prefix);
+}
+
 /*
     Mod-sampling (Groot Koerkamp & Pibiri, "The mod-minimizer: a simple and
     efficient sampling algorithm for long k-mers", WABI 2024, Algorithm 6 /
@@ -616,11 +627,7 @@ minimizer_info compute_mod_minimizer_single_strand(Kmer kmer, const uint64_t k, 
     const uint64_t w = k - m + 1;
     const uint64_t num_t_loci = k - t + 1;
 
-    auto tau = [&](Kmer const& window) {
-        Kmer tmer = window;
-        tmer.take_chars(t);
-        return uint64_t(tmer);
-    };
+    auto tau = [&](Kmer const& window) { return take_chars_as_uint(window, t); };
 
     /* first locus peeled off the loop, same reasoning as compute_minimizer:
        o_min must start out as a real hash value, not a sentinel that a real
@@ -648,112 +655,15 @@ minimizer_info compute_mod_minimizer_single_strand(Kmer kmer, const uint64_t k, 
     return {uint64_t(final_window), p};
 }
 
-/*
-    Mirror-equivariant ("canonical") mod-sampling: a single-probe variant of
-    compute_mod_minimizer_single_strand, at the cost of two deviations from
-    the paper's literal Algorithm 6:
-
-      1. t-mers are canonicalized per locus (min(fwd,rc), via
-         canonical_mmer_at) instead of used raw.
-      2. Ties are broken by locus proximity to the centre of the t-mer locus
-         range [0, k-t] (exactly compute_minimizer's own resolve_tie, reused
-         unmodified with `t` in place of `m`), not by Algorithm 6's "prefer
-         the smaller i mod w", which is not mirror-symmetric.
-
-    Together with the precondition below, this makes the whole computation
-    exactly as frame-invariant as compute_minimizer itself: finding the
-    canonical winning t-mer LOCUS is literally compute_minimizer<Kmer>(kmer,
-    kmer_rc, k, t, hasher) -- that function is already fully generic in the
-    substring length, "m" is just a name -- and the reduction mod w plus
-    final canonical m-mer readout add nothing that depends on which strand
-    was handed in.
-
-    Precondition: (m - t) % w == 0, i.e. t ≡ m (mod w). Only then does a
-    mirrored t-mer locus land in the mirrored mod-w slot
-    ((k-t-i) mod w == (w-1) - (i mod w)), which is what makes the final
-    (canonicalized) m-mer readout frame-invariant; verified both
-    algebraically and empirically (20000 random kmers + the specific
-    tandem-repeat kmers that broke the raw/single-strand version, all
-    mirror-consistent). t=11 (mod-minimizer-greedymini's own t, matching
-    w21_k11_canonical.gm's gm_k) does NOT satisfy this -- callers must check
-    is_mod_minimizer_canonical_safe below and fall back to
-    compute_mod_minimizer_single_strand + dictionary::lookup's two-probe
-    fallback when it doesn't.
-
-    FORWARDNESS FAILS EMPIRICALLY, root cause confirmed by direct instrumen-
-    tation of this exact code path (not just a hypothesis). A debug-
-    assertions rebuild at (k=31, m=21, t=10) aborts on real Cod data; the
-    minimal reproducing input is a SINGLE 557-base sequence with a long
-    tandem AAT/ATT repeat. Tracing (minimizer, pos_in_kmer) per k-mer through
-    that repeat shows the exact failure: at k-mer start j=433 the winning
-    t-mer locus reduces to p=10, i.e. absolute position 443, with minimizer
-    value 1047150735555 ("TAATAATAATAATTATTATTA"); at j=434..439 the window
-    picks a different locus (positions 435, then 446); at j=440 it picks
-    position 443 again with the SAME minimizer value 1047150735555 -- a
-    genuine re-opening of an already-closed super-kmer boundary, exactly the
-    violation count_and_check_forward_one detects.
-
-    Mechanism: because the repeat is periodic, the same canonicalized t-mer
-    content recurs at multiple raw loci spaced by the repeat's period, so
-    compute_minimizer<Kmer>(..., t, ...) has a genuine tie among loci spread
-    across a wide range of the t-mer window. Its tie-break -- closest to the
-    centre of the RAW [0, k-t] t-mer-locus range (needed for mirror-
-    equivariance, see above) -- picks whichever tied locus is nearest-centre
-    *in that unreduced coordinate*, and which one that is changes as the
-    k-mer window slides across the repeat. The final `p = pos % w` reduction
-    does not preserve monotonicity of that choice: two different raw loci
-    can be adjacent in "closest-to-centre" terms yet map to unrelated (even
-    smaller) values mod w, so p oscillates instead of advancing. Algorithm
-    6's own tie-break ("prefer the smaller i mod w") sidesteps this because
-    it optimizes directly in the reduced coordinate that must stay monotonic
-    -- Lemma 8 of the mod-minimizer paper proves forwardness only for that
-    literal rule on RAW (uncanonicalized) t-mers. Our substitute tie-break
-    restores mirror-equivariance but, being centre-based in the wrong
-    (unreduced) coordinate frame, forfeits the property Lemma 8 relies on.
-    This is not a rare edge case avoidable by a smarter tie-break tweak: any
-    tie-break that is both (a) mirror-symmetric and (b) evaluated before the
-    mod-w reduction is vulnerable to the same oscillation on a periodic
-    repeat whose period does not evenly divide w -- the classical scheme
-    never faces this because it never reduces mod w at all (t=m there).
-
-    Kept here, disabled (see is_mod_minimizer_canonical_safe, which always
-    returns false), as a documented, verified-mirror-equivariant building
-    block for future work on this open problem, NOT as a usable code path:
-    do not re-enable without first re-verifying forwardness empirically on a
-    real, repeat-rich dataset (a debug-assertions rebuild, same technique
-    used to both find and rule this out).
+/* A mirror-equivariant ("canonical") single-probe variant of
+   compute_mod_minimizer_single_strand was explored and found to break
+   construction-time forwardness empirically on real data (a periodic-repeat
+   counterexample) -- see commit history (util.hpp, "Mirror-equivariant
+   ('canonical') mod-sampling") for the full writeup, kept there rather than
+   in this file since it is not a usable code path. mod-minimizer therefore
+   always uses the two-probe "regular parsing" modality below, unconditionally
+   -- see dictionary::lookup and dictionary_builder::compute_minimizer_tuples.
 */
-template <typename Kmer>
-minimizer_info compute_mod_minimizer_canonical(Kmer kmer, Kmer const& kmer_rc, const uint64_t k,
-                                               const uint64_t m, const uint64_t t,
-                                               hasher_type const& hasher)  //
-{
-    assert(t <= m and m <= k);
-    assert(m <= Kmer::max_m);
-    assert((m - t) % (k - m + 1) == 0);  // t ≡ m (mod w) -- see doc comment
-
-    const uint64_t w = k - m + 1;
-    minimizer_info t_min = compute_minimizer<Kmer>(kmer, kmer_rc, k, t, hasher);
-    const uint64_t p = t_min.pos_in_kmer % w;
-
-    Kmer window = kmer;
-    window.drop_chars(p);
-    uint64_t minimizer = canonical_mmer_at<Kmer>(window, kmer_rc, k, m, p);
-    return {minimizer, p};
-}
-
-/* Always false: compute_mod_minimizer_canonical satisfies its own
-   mirror-equivariance precondition ((m - t) % w == 0) but was found to break
-   construction-time forwardness empirically -- see that function's doc
-   comment. Kept as a named gate (rather than deleting the canonical path
-   outright) so re-enabling it later is a one-line, obviously-flagged change
-   made only after forwardness is re-verified, not an accidental one. Do not
-   change this to depend on (k, m, t) again without that verification. */
-inline bool is_mod_minimizer_canonical_safe([[maybe_unused]] const uint64_t k,
-                                            [[maybe_unused]] const uint64_t m,
-                                            [[maybe_unused]] const uint64_t t) {
-    return false;
-}
 
 }  // namespace util
 

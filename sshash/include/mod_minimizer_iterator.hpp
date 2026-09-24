@@ -62,11 +62,7 @@ struct mod_minimizer_iterator {
     }
 
     minimizer_info next(Kmer kmer) {
-        auto tau = [&](Kmer const& window) {
-            Kmer tmer = window;
-            tmer.take_chars(m_t);
-            return uint64_t(tmer);
-        };
+        auto tau = [&](Kmer const& window) { return util::take_chars_as_uint(window, m_t); };
 
         if (!m_primed) {
             /* First kmer since set_position: prime all w deques with a full

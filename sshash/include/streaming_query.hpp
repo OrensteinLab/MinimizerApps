@@ -95,12 +95,17 @@ struct streaming_query  //
             return m_res;
         }
 
-        if (m_dict->regular_parsing()) {
+        if (!m_dict->mod_minimizer() and m_dict->regular_parsing()) {
             /* Ad hoc classical-order comparison mode: brute-force O(w) per
                kmer is already fast on cheap hashes, so it stays a plain
                per-kmer dictionary::lookup -- no streaming speedup here, but
                always correct (see the "Incremental mod-sampling" plan for
-               why this is explicitly out of scope). */
+               why this is explicitly out of scope). Checked after
+               mod_minimizer(), matching dictionary::lookup's and
+               compute_minimizer_tuples's own priority: mod-minimizer is
+               unconditionally two-probe regardless of --regular (a no-op for
+               mod-minimizer-* orders, per build.cpp's own help text), so it
+               must take the fast incremental path below, not this one. */
             m_start = false;
             m_remaining_string_bases = 0;
             m_res = m_dict->lookup(kmer);
