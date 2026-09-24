@@ -59,6 +59,9 @@ all:$(PROG)
 
 extra:all $(PROG_EXTRA)
 
+test:all
+		./test_order.sh
+
 minimap2:main.o libminimap2.a
 		$(CC) $(CFLAGS) main.o -o $@ -L. -lminimap2 $(LIBS)
 

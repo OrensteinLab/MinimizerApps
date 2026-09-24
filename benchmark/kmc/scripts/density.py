@@ -37,6 +37,7 @@ from scripts.gm import (
 )
 from scripts.metrics import minimizer_window
 from scripts.schemes import resolve_scheme_label
+from density import density_factor as _shared_density_factor
 
 _BASE_FROM_BYTE = [-1] * 256
 for _ch, _v in zip(b"ACGTNacgtn", (0, 1, 2, 3, -1, 0, 1, 2, 3, -1)):
@@ -44,9 +45,10 @@ for _ch, _v in zip(b"ACGTNacgtn", (0, 1, 2, 3, -1, 0, 1, 2, 3, -1)):
 
 
 def density_factor(n_selected: int, n_kmers: int, w: int) -> float | None:
-    if n_kmers <= 0 or n_selected <= 0:
-        return None
-    return round(n_selected / n_kmers * (w + 1), 4)
+    # 4-decimal rounding is this file's own established precision (kept
+    # exactly, unlike benchmark/common/density.py's 6-decimal default, so
+    # existing CSV output/tests here are unaffected).
+    return _shared_density_factor(n_selected, n_kmers, w, decimals=4)
 
 
 def _read_raw_gm(path: Path) -> list[int]:
@@ -126,6 +128,13 @@ def _sliding_runs(keys: list[int], w: int) -> tuple[int, int, int]:
     n_windows is the KMC k-mer count (one window of w signatures per k-mer).
     n_signature_runs matches KMC super-k-mers (runs of the same min key).
     n_selected_positions is |f(S)| (argmin index changes; paper particular).
+
+    NOT the same function as benchmark/common/density.py's `sliding_runs`
+    (used by sshash's and minimap2's own scripts/density.py): this one pops
+    the deque on a *strict* `>` (rightmost tie wins), the shared one on `>=`
+    (leftmost tie wins) -- a real tie-break difference, not just a naming
+    one, discovered while extracting the shared module; left as its own
+    KMC-specific copy rather than risk changing KMC's existing behavior.
     """
     n_win = len(keys) - w + 1
     if n_win <= 0:
