@@ -92,16 +92,20 @@ benchmark/sshash/
 |---|---|
 | `config.yaml` | Shared seeds (same 10 hex literals as `benchmark/kmc/config.yaml`, for cross-tool consistency), paths, defaults |
 | `sshash_bench.sh` | Main entry (download / run / export / experiment) |
-| `lib/*.sh` | Bash helpers: `env.sh` (.env loading), `datasets.sh` (download + md5), `orders.sh` (order -> CLI flags), `run.sh` (build/check/bench/query + equivalence, `/usr/bin/time -v` wrapping), `experiment.sh` (YAML sweep dispatch) |
+| `lib/*.sh` | Bash helpers: `constants.sh` (shared defaults + `config.yaml` loading), `env.sh` (.env loading), `datasets.sh` (download + md5), `orders.sh` (order -> CLI flags), `run.sh` (build/check/bench/query + equivalence, `/usr/bin/time -v` wrapping), `experiment.sh` (YAML sweep dispatch) |
 | `scripts/config.py` | Load `config.yaml` |
 | `scripts/orders.py` | Order name -> sshash CLI flags (Python twin of `lib/orders.sh`) |
 | `scripts/equivalence.py` | Fixed positive/negative k-mer query-set generation + per-run equivalence checks |
 | `scripts/export.py` | CSV / XLSX export + the equivalence hard-fail gate |
 | `scripts/zenodo.py` | Zenodo record 17582116 lookup (maintainers only; not on the normal run path) |
 | `scripts/meta.py` | Per-run `meta.json` writer |
+| `scripts/common.py` | Shared helpers (`.env` loading, `die()`) |
+| `scripts/density.py` | Sliding-window "particular" density + pure-Python re-implementations of sshash's order formulas |
+| `scripts/expected_density.py` | Monte Carlo theoretical `density_factor` per order (feeds the `orders` xlsx sheet) |
+| `scripts/experiments.py` | Load/expand `experiments/*.yaml` (shared engine in `benchmark/common/experiments_lib.py`) |
 | `data/` | Dataset catalog (`datasets.csv`) + committed sanity-test query sets (`queries/`) |
 | `experiments/*.yaml` | Multi-config sweep definitions |
-| `tests/` | Offline sanity checks (order/equivalence correctness, not report formatting); `make venv` once, then `make test` |
+| `tests/` | Offline sanity checks: `test_order_sanity.py` (order/equivalence correctness against the in-repo sample) + `test_export.py` (`export.py`'s aggregation/validation/CSV/XLSX logic, synthetic rows, no sshash binary needed); `make venv` once, then `make test` |
 
 Python CLI (from the repo root, `BENCHMARK_DIR=benchmark/sshash` set by `sshash_bench.sh`):
 
@@ -140,10 +144,16 @@ benchmark/sshash/sshash_bench.sh all -d cod -n 1                      # download
 
 Defaults: `cod,kestrel,human`, k=31, m=21, `-O all` (native, xor-hash, xor-pcg-hash, greedymini,
 mod-minimizer-native-hash, mod-minimizer-xor-hash, mod-minimizer-pcg-xor-hash,
-mod-minimizer-greedymini), `-n 5` seeds, 8 threads.
+mod-minimizer-greedymini), `-M canonical`, `-n 5` seeds, 8 threads.
 
 The command name (`download`/`run`/`export`/`all`/`experiment`) must come **first**, before any
 options -- e.g. `sshash_bench.sh run --dataset-file PATH -n 1`, not the reverse.
+
+`-M/--modality` selects `canonical` (default, single-probe) or `regular` (two-probe, `sshash
+build --regular`); a `mod-minimizer-*` order is always `regular` regardless of this flag, so e.g.
+`-O native -M regular` is the apples-to-apples comparison against mod-minimizer's own (mandatory)
+two-probe path. `--force` re-runs a config even if its `meta.json` already exists (default:
+skip unchanged configs).
 
 **Experiments** (multi-config sweeps from YAML):
 
@@ -268,9 +278,12 @@ data exists).
 
 ### CSV columns (main fields)
 
-**Shared keys:** `dataset`, `k`, `m`, `order` (`native`/`xor-hash`/`xor-pcg-hash`/`greedymini`/the
-4 `mod-minimizer-*` names), `order_seed`, `seed_idx`, `t` (blank except for `mod-minimizer-*`),
-`gm_file`, `threads`.
+**Shared keys:** `dataset`, `k`, `m`, `w` (`k-m+1`), `modality` (`canonical`/`regular`, see
+`-M/--modality`), `scheme` (`minimizer`/`mod-minimizer`) + `order` (the *normalized* order name,
+identical across a scheme's base and `mod-minimizer-*` variants: `native-hash`/`xor-hash`/
+`pcg-xor-hash`/`greedymini` -- e.g. `-O native` and `-O mod-minimizer-native-hash` both write
+`order=native-hash`, distinguished only by `scheme`), `order_seed`, `seed_idx`, `t` (blank except
+for `scheme=mod-minimizer`), `gm_file`, `threads`.
 
 **Space:** `num_kmers`, `index_size_in_bytes` (from `build`'s own JSON), `index_bytes_on_disk`
 (`os.path.getsize`, the ground truth), `bits_per_kmer` (`index_bytes_on_disk * 8 / num_kmers`).

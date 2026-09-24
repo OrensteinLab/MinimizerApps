@@ -45,7 +45,7 @@ A GreedyMini table's own `gm_k` need not equal the length `l` being ranked: when
 
 ## mod-minimizer
 
-sshash additionally supports the **mod-minimizer** (Groot Koerkamp & Pibiri, ["The mod-minimizer: a simple and efficient sampling algorithm for long k-mers"](https://doi.org/10.4230/LIPIcs.WABI.2024.11), WABI 2024) — a two-step sampling scheme with provably lower density than a plain (random) minimizer when the minimizer length `m` is large relative to the window `w = k-m+1`. Instead of directly ranking the `w` candidate m-mers, it ranks the more numerous **t-mers** (`t < m`) across the *whole* k-mer with a separate order **O_t** (any of the 4 base orders above), and reduces the winning t-mer's position mod `w` to pick which m-mer is sampled. This is unrelated to kraken2's own "Mod sketching scheme" below, which predates it and is a different mechanism.
+sshash additionally supports the **mod-minimizer** (Groot Koerkamp & Pibiri, ["The mod-minimizer: a simple and efficient sampling algorithm for long k-mers"](https://doi.org/10.4230/LIPIcs.WABI.2024.11), WABI 2024) — a two-step sampling scheme with provably lower density than a plain (random) minimizer when the minimizer length `m` is large relative to the window `w = k-m+1`. Instead of directly ranking the `w` candidate m-mers, it ranks the more numerous **t-mers** (`t < m`) across the *whole* k-mer with a separate order **O_t** (any of the 4 base orders above), and reduces the winning t-mer's position mod `w` to pick which m-mer is sampled. This is the same algorithm as kraken2's own "Mod" sketching scheme below (both implement Groot Koerkamp & Pibiri's mod-sampling, and — since the incremental-iterator work — even share the `common/minimizer-orders/mod_residue_deque.h` primitive); sshash just exposes it as its own `mod-minimizer-*` orders rather than a separate scheme flag.
 
 The 4 base orders above each get a `mod-minimizer-*` counterpart, reusing that order as O_t:
 
@@ -75,8 +75,8 @@ k2 build --sketching-scheme Mod --order GreedyMini --greedy-mini-file ... ...   
 **kmc**:
 
 ```bash
-kmc -or hash -os<seed> ...                                    # RandomXor
-kmc -or pcg -os<seed> ...                                     # RandomPcg
+kmc -orhash -ol<label> [-os<seed>] ...                        # RandomXor (-ol is mandatory with -or)
+kmc -orpcg -ol<label> [-os<seed>] ...                         # RandomPcg
 kmc -co<file>.gm -ol<label> [-os<seed>] [-ode] ...             # GreedyMini (binary .gm, or _dna.gm/-ode for DNA-alphabet)
 kmc ...                                                        # no -or/-co: kmc's own lex order (not shared code)
 ```
@@ -101,11 +101,10 @@ kmc ...                                                        # no -or/-co: kmc
 | Order | kraken2 | kmc | sshash |
 |---|---|---|---|
 | default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) |
-| RandomXor | `--order RandomXor` (default) | `-or hash -os<seed>` | `-O xor-hash -s<seed>` |
-| RandomPcg | `--order RandomPcg` | `-or pcg -os<seed>` | `-O xor-pcg-hash -s<seed>` |
+| RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
+| RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
 | GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` |
-| Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a — different from sshash's own mod-minimizer below) |
-| mod-minimizer | (n/a) | (n/a) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above |
+| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above |
 
 ## Regenerating a `.gm` table
 
