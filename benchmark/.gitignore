@@ -24,3 +24,18 @@ kmc/.pytest_cache/
 # Downloaded / prepared FASTQ and generated file lists
 kmc/data/*/
 !kmc/data/*.csv
+
+# sshash benchmark harness — harness itself is tracked; local data and
+# outputs are not.
+sshash/.env
+sshash/.venv/
+sshash/results/
+sshash/**/__pycache__/
+sshash/**/*.pyc
+sshash/.pytest_cache/
+# Downloaded eulertigs FASTA / query FASTQ (data/datasets.csv and the
+# committed sanity-check query sets under data/queries/ are tracked).
+sshash/data/cod/
+sshash/data/kestrel/
+sshash/data/human/
+sshash/data/adhoc/

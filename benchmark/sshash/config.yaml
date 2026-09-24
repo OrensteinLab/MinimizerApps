@@ -1,0 +1,39 @@
+# Shared benchmark configuration (loaded by python -m scripts config and sshash_bench.sh).
+#
+# Seeds are the exact same 10 hex literals used by benchmark/kmc/config.yaml,
+# reused here for cross-tool consistency across this monorepo's benchmarks
+# (not because sshash's orders have anything numerically in common with
+# kmc's -- they don't -- just so "seed index 3" means the same literal value
+# in every benchmark's results tree).
+
+seeds:
+  - 0xDEADBEEF
+  - 0xC0FFEE01
+  - 0x31415926
+  - 0x27182818
+  - 0x16180339
+  - 0x0BADF00D
+  - 0x600D600D
+  - 0xFEEDFACE
+  - 0x12345678
+  - 0x87654321
+
+paths:
+  gm_dir: ../../orders/GreedyMini
+  experiments: experiments
+  data: data
+
+defaults:
+  datasets: cod,kestrel,human
+  k: 31
+  # m=21 (up from the original 11): matches the mod-minimizer paper's own
+  # tested SSHash regime (k=31, m=21, giving w=k-m+1=11) -- see
+  # orders/README.md "mod-minimizer" and sshash/README.md.
+  m: 21
+  orders: native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini
+  n_seeds: 5
+  # Plain greedymini's table: gm_k=15, Extend-k'd up to l=m=21 (density ~1.523
+  # at its own design window w=11).
+  gm_file: w11_k15_canonical.gm
+  # mod-minimizer-greedymini's O_t table (t=11, no extend needed: gm_k=11=t).
+  mod_t_gm_file: w21_k11_canonical.gm
