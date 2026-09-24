@@ -60,6 +60,7 @@ streaming_query_report streaming_query_from_fasta_file(Dict const* dict, std::is
         std::getline(is, line);  // skip first header line
         std::getline(is, line);
         if (line.size() < k) continue;
+        query.set_sequence(line.data(), line.size());
         const uint64_t num_kmers = line.size() - k + 1;
         report.num_kmers += num_kmers;
         for (uint64_t i = 0; i != num_kmers; ++i) {
@@ -91,6 +92,7 @@ streaming_query_report streaming_query_from_fastq_file(Dict const* dict, std::is
         std::getline(is, line);  // skip first header line
         std::getline(is, line);
         if (line.size() >= k) {
+            query.set_sequence(line.data(), line.size());
             const uint64_t num_kmers = line.size() - k + 1;
             report.num_kmers += num_kmers;
             for (uint64_t i = 0; i != num_kmers; ++i) {

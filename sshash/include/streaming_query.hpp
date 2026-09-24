@@ -24,6 +24,8 @@ struct streaming_query  //
 
         , m_minimizer_it(dict->m_k, dict->m_m, dict->m_hasher)
         , m_mod_minimizer_it(dict->m_k, dict->m_m, dict->m_t, dict->m_hasher)
+        , m_mod_minimizer_it_rc(dict->m_k, dict->m_m, dict->m_t, dict->m_hasher)
+        , m_read_pos(0)
         , m_curr_mini_info()
 
         , m_it(dict->m_spss.strings, m_k)
@@ -47,9 +49,39 @@ struct streaming_query  //
         m_res = lookup_result();
         m_minimizer_it.reset();
         m_mod_minimizer_it.set_position(0);
+        m_read_pos = 0;
+        m_rc_mini_infos.clear();
         m_last_seed_mini_info = minimizer_info();
         m_last_seed_positive = false;
         m_bucket_cache.size = 0;
+    }
+
+    /* Precompute the mod-sampling minimizer of every k-mer window of the
+       reverse complement of `seq` (the whole read/sequence about to be
+       streamed), so `lookup`'s reverse-complement probe below becomes an O(1)
+       array index instead of a fresh O(k-t+1) brute-force scan on every miss.
+       Requires the whole sequence up front, so callers that only see a
+       sliding window (e.g. the multiline FASTA path) simply don't call this;
+       `lookup` then falls back to the brute-force computation, exactly as
+       before this optimization. Call once per read, right after `reset()`. */
+    void set_sequence(char const* seq, uint64_t len) {
+        m_read_pos = 0;
+        if (!m_dict->mod_minimizer() or len < m_k) {
+            m_rc_mini_infos.clear();
+            return;
+        }
+        const uint64_t num_kmers = len - m_k + 1;
+        m_rc_buffer.resize(len);
+        kmer_t::compute_reverse_complement(seq, m_rc_buffer.data(), len);
+        m_rc_mini_infos.resize(num_kmers);
+        m_mod_minimizer_it_rc.set_position(0);
+        kmer_t rc_kmer = util::string_to_uint_kmer<kmer_t>(m_rc_buffer.data(), m_k);
+        m_rc_mini_infos[0] = m_mod_minimizer_it_rc.next(rc_kmer);
+        for (uint64_t j = 1; j != num_kmers; ++j) {
+            rc_kmer.drop_char();
+            rc_kmer.set(m_k - 1, kmer_t::char_to_uint(m_rc_buffer[j + m_k - 1]));
+            m_rc_mini_infos[j] = m_mod_minimizer_it_rc.next(rc_kmer);
+        }
     }
 
     lookup_result lookup(char const* kmer)  //
@@ -107,13 +139,26 @@ struct streaming_query  //
             minimizer_info mini_info_fwd = m_mod_minimizer_it.next(m_kmer);
             m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_fwd);
             if (m_res.kmer_id == constants::invalid_uint64) {
-                /* Only this second, reverse-complement probe can't be made
-                   incremental: its own sliding window moves in the opposite
-                   direction relative to the forward read being streamed. */
-                auto mini_info_rc = util::compute_mod_minimizer_single_strand(
-                    m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher);
+                /* This second, reverse-complement probe's own sliding window
+                   moves in the opposite direction relative to the forward
+                   read being streamed, so it can't reuse mod_minimizer_it's
+                   incremental state directly. Instead, whenever the whole
+                   read was known up front (see set_sequence), its answer for
+                   every position was already precomputed there by running a
+                   second mod_minimizer_iterator forward over the read's own
+                   reverse complement -- an O(1) array index here. Otherwise
+                   (set_sequence wasn't called for this read), fall back to
+                   the brute-force per-call computation. */
+                minimizer_info mini_info_rc =
+                    (m_read_pos < m_rc_mini_infos.size())
+                        ? m_rc_mini_infos[m_rc_mini_infos.size() - 1 - m_read_pos]
+                        : util::compute_mod_minimizer_single_strand(
+                              m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher);
+                assert(mini_info_rc == util::compute_mod_minimizer_single_strand(
+                                           m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher));
                 m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_rc);
             }
+            ++m_read_pos;
             if (m_res.kmer_id == constants::invalid_uint64) {
                 m_num_negative += 1;
             } else {
@@ -170,6 +215,10 @@ private:
     /* minimizer state */
     minimizer_iterator<kmer_t> m_minimizer_it;
     mod_minimizer_iterator<kmer_t> m_mod_minimizer_it;
+    mod_minimizer_iterator<kmer_t> m_mod_minimizer_it_rc;
+    std::vector<char> m_rc_buffer;
+    std::vector<minimizer_info> m_rc_mini_infos;
+    uint64_t m_read_pos;
     minimizer_info m_curr_mini_info;
 
     /* string state */
