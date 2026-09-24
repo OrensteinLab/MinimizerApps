@@ -15,6 +15,15 @@
 #include "ksw2.h"
 #include "kvec.h"
 #include "khash.h"
+#include "order.h"
+
+// "MMI\2" (MM_IDX_MAGIC) is upstream's own format; "MMI\3" additionally
+// carries a trailing custom-order metadata section (see mm_idx_dump/
+// mm_idx_load2 below). An explicit magic-byte bump, not an inferred-from-EOF
+// signal: a binary that doesn't know about "MMI\3" fails mm_idx_load's own
+// magic check immediately and cleanly, and a binary that does know about it
+// degrades a plain "MMI\2" file to MM_ORDER_NATIVE with no ambiguity.
+#define MM_IDX_MAGIC2 "MMI\3"
 
 #define idx_hash(a) ((a)>>1)
 #define idx_eq(a, b) ((a)>>1 == (b)>>1)
@@ -63,6 +72,7 @@ void mm_idx_destroy(mm_idx_t *mi)
 {
 	uint32_t i;
 	if (mi == 0) return;
+	if (mi->order) mm_order_destroy(mi->order);
 	if (mi->h) kh_destroy(str, (khash_t(str)*)mi->h);
 	if (mi->B) {
 		for (i = 0; i < 1U<<mi->b; ++i) {
@@ -370,8 +380,12 @@ static void *worker_pipeline(void *shared, int step, void *in)
         step_t *s = (step_t*)in;
 		for (i = 0; i < s->n_seq; ++i) {
 			mm_bseq1_t *t = &s->seq[i];
-			if (t->l_seq > 0)
-				mm_sketch(0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
+			if (t->l_seq > 0) {
+				if (p->mi->order)
+					mm_sketch_ordered(p->mi->order, 0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
+				else
+					mm_sketch(0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
+			}
 			else if (mm_verbose >= 2)
 				fprintf(stderr, "[WARNING] the length database sequence '%s' is 0\n", t->name);
 			free(t->seq); free(t->name);
@@ -386,7 +400,7 @@ static void *worker_pipeline(void *shared, int step, void *in)
     return 0;
 }
 
-mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini_batch_size, int n_threads, uint64_t batch_size)
+mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini_batch_size, int n_threads, uint64_t batch_size, mm_order_t *order)
 {
 	pipeline_t pl;
 	if (fp == 0 || mm_bseq_eof(fp)) return 0;
@@ -395,6 +409,7 @@ mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini
 	pl.batch_size = batch_size;
 	pl.fp = fp;
 	pl.mi = mm_idx_init(w, k, b, flag);
+	pl.mi->order = order; // NULL = native (upstream behaviour, untouched)
 
 	kt_pipeline(n_threads < 3? n_threads : 3, worker_pipeline, &pl, 3);
 	if (mm_verbose >= 3)
@@ -413,7 +428,7 @@ mm_idx_t *mm_idx_build(const char *fn, int w, int k, int flag, int n_threads) //
 	mm_idx_t *mi;
 	fp = mm_bseq_open(fn);
 	if (fp == 0) return 0;
-	mi = mm_idx_gen(fp, w, k, 14, flag, 1<<18, n_threads, UINT64_MAX);
+	mi = mm_idx_gen(fp, w, k, 14, flag, 1<<18, n_threads, UINT64_MAX, 0); // deprecated API: native order only
 	mm_bseq_close(fp);
 	return mi;
 }
@@ -472,13 +487,14 @@ mm_idx_t *mm_idx_str(int w, int k, int is_hpc, int bucket_bits, int n, const cha
  * index I/O *
  *************/
 
-void mm_idx_dump(FILE *fp, const mm_idx_t *mi)
+void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part)
 {
 	uint64_t sum_len = 0;
 	uint32_t x[5], i;
+	int write_order = is_first_part && mi->order != 0;
 
 	x[0] = mi->w, x[1] = mi->k, x[2] = mi->b, x[3] = mi->n_seq, x[4] = mi->flag;
-	fwrite(MM_IDX_MAGIC, 1, 4, fp);
+	fwrite(write_order ? MM_IDX_MAGIC2 : MM_IDX_MAGIC, 1, 4, fp);
 	fwrite(x, 4, 5, fp);
 	for (i = 0; i < mi->n_seq; ++i) {
 		if (mi->seq[i].name) {
@@ -510,6 +526,18 @@ void mm_idx_dump(FILE *fp, const mm_idx_t *mi)
 	}
 	if (!(mi->flag & MM_I_NO_SEQ))
 		fwrite(mi->S, 4, (sum_len + 7) / 8, fp);
+	if (write_order) {
+		uint8_t *buf = 0;
+		uint64_t len = 0;
+		if (mm_order_serialize(mi->order, &buf, &len) == 0) {
+			fwrite(&len, 8, 1, fp);
+			if (len) fwrite(buf, 1, len, fp);
+			free(buf);
+		} else {
+			uint64_t zero = 0;
+			fwrite(&zero, 8, 1, fp);
+		}
+	}
 	fflush(fp);
 }
 
@@ -520,8 +548,11 @@ mm_idx_t *mm_idx_load(FILE *fp)
 	uint64_t sum_len = 0;
 	mm_idx_t *mi;
 
+	int has_order;
 	if (fread(magic, 1, 4, fp) != 4) return 0;
-	if (strncmp(magic, MM_IDX_MAGIC, 4) != 0) return 0;
+	if (strncmp(magic, MM_IDX_MAGIC, 4) == 0) has_order = 0;
+	else if (strncmp(magic, MM_IDX_MAGIC2, 4) == 0) has_order = 1;
+	else return 0;
 	if (fread(x, 4, 5, fp) != 5) return 0;
 	mi = mm_idx_init(x[0], x[1], x[2], x[4]);
 	mi->n_seq = x[3];
@@ -565,6 +596,20 @@ mm_idx_t *mm_idx_load(FILE *fp)
 		mi->S = (uint32_t*)malloc((sum_len + 7) / 8 * 4);
 		fread(mi->S, 4, (sum_len + 7) / 8, fp);
 	}
+	if (has_order) {
+		uint64_t len = 0;
+		if (fread(&len, 8, 1, fp) == 1 && len > 0) {
+			uint8_t *buf = (uint8_t*)malloc(len);
+			if (buf && fread(buf, 1, len, fp) == len) {
+				char errbuf[256];
+				mm_order_t *ord = mm_order_deserialize(buf, len, errbuf, sizeof errbuf);
+				if (ord) mi->order = ord;
+				else if (mm_verbose >= 1)
+					fprintf(stderr, "[WARNING] failed to load custom order metadata from index: %s\n", errbuf);
+			}
+			free(buf);
+		}
+	}
 	return mi;
 }
 
@@ -585,7 +630,7 @@ int64_t mm_idx_is_idx(const char *fn)
 		lseek(fd, 0, SEEK_SET);
 #endif // WIN32
 		ret = read(fd, magic, 4);
-		if (ret == 4 && strncmp(magic, MM_IDX_MAGIC, 4) == 0)
+		if (ret == 4 && (strncmp(magic, MM_IDX_MAGIC, 4) == 0 || strncmp(magic, MM_IDX_MAGIC2, 4) == 0))
 			is_idx = 1;
 	}
 	close(fd);
@@ -607,6 +652,15 @@ mm_idx_reader_t *mm_idx_reader_open(const char *fn, const mm_idxopt_t *opt, cons
 		r->idx_size = is_idx;
 	} else r->fp.seq = mm_bseq_open(fn);
 	if (fn_out) r->fp_out = fopen(fn_out, "wb");
+	if (!r->is_idx && r->opt.order_conf.kind != MM_ORDER_NATIVE) {
+		char errbuf[256];
+		r->order = mm_order_init(&r->opt.order_conf, errbuf, sizeof errbuf);
+		if (!r->order) {
+			fprintf(stderr, "[ERROR] failed to initialize custom minimizer order: %s\n", errbuf);
+			mm_idx_reader_close(r);
+			return 0;
+		}
+	}
 	return r;
 }
 
@@ -615,6 +669,7 @@ void mm_idx_reader_close(mm_idx_reader_t *r)
 	if (r->is_idx) fclose(r->fp.idx);
 	else mm_bseq_close(r->fp.seq);
 	if (r->fp_out) fclose(r->fp_out);
+	if (r->order) mm_order_destroy(r->order);
 	free(r);
 }
 
@@ -623,12 +678,22 @@ mm_idx_t *mm_idx_reader_read(mm_idx_reader_t *r, int n_threads)
 	mm_idx_t *mi;
 	if (r->is_idx) {
 		mi = mm_idx_load(r->fp.idx);
+		if (mi) {
+			if (mi->order) { // this part's own file section carried an order (always part 0)
+				if (r->order) mm_order_destroy(r->order);
+				r->order = mm_order_clone(mi->order);
+			} else if (r->order) { // a later part: reuse part 0's order
+				mi->order = mm_order_clone(r->order);
+			}
+		}
 		if (mi && mm_verbose >= 2 && (mi->k != r->opt.k || mi->w != r->opt.w || (mi->flag&MM_I_HPC) != (r->opt.flag&MM_I_HPC)))
 			fprintf(stderr, "[WARNING]\033[1;31m Indexing parameters (-k, -w or -H) overridden by parameters used in the prebuilt index.\033[0m\n");
-	} else
-		mi = mm_idx_gen(r->fp.seq, r->opt.w, r->opt.k, r->opt.bucket_bits, r->opt.flag, r->opt.mini_batch_size, n_threads, r->opt.batch_size);
+	} else {
+		mm_order_t *ord = r->order ? mm_order_clone(r->order) : 0;
+		mi = mm_idx_gen(r->fp.seq, r->opt.w, r->opt.k, r->opt.bucket_bits, r->opt.flag, r->opt.mini_batch_size, n_threads, r->opt.batch_size, ord);
+	}
 	if (mi) {
-		if (r->fp_out) mm_idx_dump(r->fp_out, mi);
+		if (r->fp_out) mm_idx_dump(r->fp_out, mi, r->n_parts == 0);
 		mi->index = r->n_parts++;
 	}
 	return mi;

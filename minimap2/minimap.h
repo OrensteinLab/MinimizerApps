@@ -77,6 +77,31 @@ extern "C" {
 typedef struct { uint64_t x, y; } mm128_t;
 typedef struct { size_t n, m; mm128_t *a; } mm128_v;
 
+// Custom minimizer order (lab fork; see order.h/order.cpp). The order only
+// changes which k-mer wins a window during sketching -- the value stored in
+// the index (mm128_t::x) is always derived the same injective way mm_sketch()
+// already does for the native order (see order.cpp's design comment).
+typedef enum {
+	MM_ORDER_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()
+	MM_ORDER_XOR_HASH,          // kmer ^ seed
+	MM_ORDER_XOR_PCG_HASH,      // pcg_rxs_m_xs64(kmer ^ seed)
+	MM_ORDER_GREEDYMINI,        // GreedyMini UHS rank table (binary alphabet + projection)
+	MM_ORDER_MOD_XOR_HASH,      // mod-minimizer, O_t = xor-hash
+	MM_ORDER_MOD_PCG_XOR_HASH,  // mod-minimizer, O_t = xor-pcg-hash
+	MM_ORDER_MOD_GREEDYMINI     // mod-minimizer, O_t = greedymini
+} mm_order_kind_t;
+
+typedef struct {
+	mm_order_kind_t kind;
+	uint64_t seed;                // xor-hash / xor-pcg-hash / mod-* O_t seed
+	const char *greedymini_file;  // path to a .gm table; only read at mm_order_init() time
+	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
+	int k;                        // the minimizer length this order is used with (validated
+	                               // against the GreedyMini table's own gm_k at init time)
+} mm_order_conf_t;
+
+typedef struct mm_order_s mm_order_t; // opaque; see order.h/order.cpp
+
 // minimap2 index
 typedef struct {
 	char *name;      // name of the db sequence
@@ -97,6 +122,7 @@ typedef struct {
 	struct mm_idx_spsc_s *spsc;// splice score (hidden)
 	struct mm_idx_jjump_s *J;  // junctions to create jumps (hidden)
 	void *km, *h;
+	mm_order_t *order;         // NULL = native order (upstream behaviour, untouched)
 } mm_idx_t;
 
 // minimap2 alignment
@@ -131,6 +157,7 @@ typedef struct {
 	short k, w, flag, bucket_bits;
 	int64_t mini_batch_size;
 	uint64_t batch_size;
+	mm_order_conf_t order_conf; // default-initialized kind=MM_ORDER_NATIVE (all-zero)
 } mm_idxopt_t;
 
 typedef struct {
@@ -201,6 +228,7 @@ typedef struct {
 		struct mm_bseq_file_s *seq;
 		FILE *idx;
 	} fp;
+	mm_order_t *order; // owned clone materialized once from opt.order_conf (build) or the first loaded part's order (load); cloned onto each mm_idx_t part (see mm_idx_reader_read in index.c)
 } mm_idx_reader_t;
 
 // memory buffer for thread-local storage during mapping
@@ -303,10 +331,15 @@ mm_idx_t *mm_idx_load(FILE *fp);
 /**
  * Append an index (or one part of a full index) to file
  *
- * @param fp         pointer to FILE object
- * @param mi         minimap2 index
+ * @param fp             pointer to FILE object
+ * @param mi             minimap2 index
+ * @param is_first_part  1 for a uni-part index or the first part of a
+ *                       multi-part one; embeds mi->order's metadata (and,
+ *                       for a GreedyMini order, its table bytes) so a reload
+ *                       needs nothing re-supplied. 0 for a later part: the
+ *                       loader reuses the first part's order (see index.c).
  */
-void mm_idx_dump(FILE *fp, const mm_idx_t *mi);
+void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part);
 
 /**
  * Create an index from strings in memory

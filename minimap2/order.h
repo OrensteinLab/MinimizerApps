@@ -1,0 +1,70 @@
+// Custom minimizer order integration (lab fork, not part of upstream
+// minimap2). See common/minimizer-orders/README.md (orders/README.md at the
+// monorepo root) for the shared order implementation this wraps, and this
+// file's companion order.cpp for the design rationale (rank-vs-index-key
+// separation, allocator/threading rules, HPC/palindrome handling).
+//
+// order.cpp is the only C++ translation unit in minimap2/; everything else
+// stays plain C. This header is extern-"C" safe (like minimap.h already is)
+// so it can be included from both.
+
+#ifndef MM_ORDER_H
+#define MM_ORDER_H
+
+#include <stdint.h>
+#include "minimap.h" // mm128_v, mm_order_kind_t, mm_order_conf_t, mm_order_t
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Materializes conf into a ready-to-use order context: loads the GreedyMini
+// table from disk when conf->kind is MM_ORDER_GREEDYMINI or
+// MM_ORDER_MOD_GREEDYMINI, validates conf->t for MOD_* kinds. Returns NULL
+// and writes a human-readable message into errbuf (always NUL-terminated)
+// on failure; conf->greedymini_file only needs to stay valid for the
+// duration of this call.
+mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, size_t errbuf_len);
+
+// minimap2's own native invertible hash (sketch.c), exported (was file-local
+// `static inline hash64`) so order.cpp can derive the *stored* index key the
+// same way for every order -- see order.cpp's top-of-file design comment.
+uint64_t mm_hash64(uint64_t key, uint64_t mask);
+
+void mm_order_destroy(mm_order_t *ord);
+
+// A fresh, independently-destroyable copy sharing the same (read-only)
+// GreedyMini table when present. NULL-safe (clone of NULL is NULL). Used to
+// give each part of a multi-part index its own mm_idx_t::order while a
+// single mm_order_t is only ever materialized/deserialized once (see
+// mm_idx_reader_read in index.c).
+mm_order_t *mm_order_clone(const mm_order_t *ord);
+
+mm_order_kind_t mm_order_kind(const mm_order_t *ord);
+
+// One call per sequence -- same contract as mm_sketch(): km/allocator rules
+// (kalloc vs libc realloc, matching whichever the call site already uses),
+// output appended to *p (caller may set p->n = 0 first). index.c and map.c
+// call this instead of mm_sketch() whenever mi->order != NULL.
+void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *str, int len,
+                        int w, int k, uint32_t rid, int is_hpc, mm128_v *p);
+
+// .mmi persistence: serialize a fully-materialized order -- including the
+// loaded GreedyMini table's raw bytes, not just the source filename -- into
+// a caller-owned malloc'd buffer (free() it), so a reload never needs
+// --greedymini-file re-supplied. Returns 0 on success.
+int mm_order_serialize(const mm_order_t *ord, uint8_t **out, uint64_t *out_len);
+
+// Reconstructs an order purely from a serialized blob (no filesystem
+// access). Returns NULL and writes to errbuf on failure.
+mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, char *errbuf, size_t errbuf_len);
+
+// CLI helpers (main.c): name <-> kind, both directions.
+const char *mm_order_kind_name(mm_order_kind_t kind);
+int mm_order_parse_kind(const char *s, mm_order_kind_t *out); // 0 on success, -1 on unknown name
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // MM_ORDER_H
