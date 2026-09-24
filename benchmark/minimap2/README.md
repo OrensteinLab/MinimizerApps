@@ -41,10 +41,14 @@ by pointing `minimap2_bench.sh run`/`sweep` at a different `$DATASET` whose
 (e.g. a human chromosome with real segmental duplications, closer to the
 paper's own scale) -- see that script's own docstring for the format.
 
-Read simulation is a lightweight, dependency-free stand-in for a real
-long-read simulator; `environment.yml`/`setup.sh` set up a conda env with
-`pbsim2` (a real ONT/PacBio error-model simulator) for when that matters
-more than fast iteration.
+`make_dataset.py`'s own read simulation is a lightweight, dependency-free
+stand-in for a real long-read simulator. `environment.yml`/`setup.sh` set up
+a conda env (`minimap2_bench`) with `pbsim2` (a real ONT/PacBio error-model
+simulator); once set up, `./minimap2_bench.sh pbsim-reads` replaces
+`reads.fa`/`truth.tsv` with pbsim2's own simulated reads (still sampled from
+the same genome+repeat, ground truth parsed straight from pbsim2's own
+`.maf` output) -- `lib/pbsim_reads.py`'s docstring has the details. This is
+what actually produced the numbers below.
 
 ## `.env` setup
 
@@ -82,16 +86,30 @@ never clobbered by `.env`.
 
 ```bash
 cd benchmark/minimap2
-./minimap2_bench.sh make-dataset          # regenerate data/smoke/
-./minimap2_bench.sh list                  # orders the default sweep covers
+./minimap2_bench.sh make-dataset           # regenerate data/smoke/ (built-in simulator)
+./setup.sh && ./minimap2_bench.sh pbsim-reads R94.model 8  # swap in real pbsim2 ONT reads at 8x depth
+./minimap2_bench.sh list                   # orders the default sweep covers
 ./minimap2_bench.sh sweep                  # build+map+score every default order
-./minimap2_bench.sh run xor-pcg-hash 0x123 # just one order/seed
+./minimap2_bench.sh run xor-pcg-hash 0x123  # just one order/seed
 ./minimap2_bench.sh export                 # -> $MINIMAP2_RESULTS_DIR/minimap2_runs.csv
 
 # offline sanity tests (needs a python3 new enough for these type hints --
 # system python3 here is 3.6; use the conda env's or /usr/bin/python3.11)
 /usr/bin/python3.11 -m pytest tests/ -q
 ```
+
+Latest sweep (413 real pbsim2 ONT reads, 8x depth, `k=15 w=10 mod-t=5`,
+one seed): mod-minimizer orders land furthest below the ~2.0 random-order
+density baseline *without* sacrificing accuracy -- `mod-minimizer-pcg-xor-hash`
+is in fact the best of all five orders on both accuracy metrics here:
+
+| order | density_factor | frac_correct | frac_correct_in_repeat |
+|---|---|---|---|
+| native | 1.920 | 0.964 | 0.759 |
+| xor-hash | 1.784 | 0.959 | 0.722 |
+| xor-pcg-hash | 1.867 | 0.954 | 0.685 |
+| mod-minimizer-xor-hash | 1.466 | 0.964 | 0.741 |
+| mod-minimizer-pcg-xor-hash | 1.491 | **0.969** | **0.796** |
 
 `greedymini` and `mod-minimizer-greedymini` are excluded from `list`/`sweep`
 until `orders/GreedyMini/w10_k15_canonical.gm` (k=15,w=10, matching this

@@ -9,10 +9,17 @@ HERE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$HERE_DIR/../.." && pwd)"
 
 # The system's bare python3 is 3.6 (too old for this harness's type hints);
-# prefer the conda env's once set up (see environment.yml/setup.sh), else
-# fall back to the newest system python3 available.
-if [ -x "$HERE_DIR/../../.conda_envs/minimap2_bench/bin/python3" ]; then
-  PYTHON="${PYTHON:-$HERE_DIR/../../.conda_envs/minimap2_bench/bin/python3}"
+# prefer the `minimap2_bench` conda env's once set up (setup.sh/environment.yml
+# -- `conda env list` shows where it actually lands, typically
+# ~/.conda/envs/minimap2_bench), else fall back to the newest system python3.
+_CONDA_ENV_DIR="$(command -v conda >/dev/null 2>&1 && conda env list 2>/dev/null | awk '$1=="minimap2_bench"{print $NF}')"
+if [ -z "$_CONDA_ENV_DIR" ] && [ -x "$HOME/.conda/envs/minimap2_bench/bin/python3" ]; then
+  _CONDA_ENV_DIR="$HOME/.conda/envs/minimap2_bench"
+fi
+if [ -n "$_CONDA_ENV_DIR" ] && [ -x "$_CONDA_ENV_DIR/bin/python3" ]; then
+  PYTHON="${PYTHON:-$_CONDA_ENV_DIR/bin/python3}"
+  PBSIM="${PBSIM:-$_CONDA_ENV_DIR/bin/pbsim}"
+  SAMTOOLS="${SAMTOOLS:-$_CONDA_ENV_DIR/bin/samtools}"
 elif command -v /usr/bin/python3.11 >/dev/null 2>&1; then
   PYTHON="${PYTHON:-/usr/bin/python3.11}"
 else
