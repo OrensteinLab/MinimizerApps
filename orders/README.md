@@ -1,10 +1,12 @@
 # Minimizer/signature orders
 
-All three apps pick a *substring order* — the ranking used to choose which
-k-mer substring (kraken2's minimizer, kmc's signature, sshash's minimizer)
-represents a window — from the same small set of options, and share the C++
-implementation of every non-trivial one instead of each maintaining its own
-copy.
+All four apps pick a *substring order* — the ranking used to choose which
+k-mer substring (kraken2's minimizer, kmc's signature, sshash's/minimap2's
+minimizer) represents a window — from the same small set of options, and
+share the C++ implementation of every non-trivial one instead of each
+maintaining its own copy. minimap2 is pure C, so it wraps that shared C++
+implementation behind a small extern-"C" bridge instead of using it directly
+— see [`minimap2/README.md`](../minimap2/README.md) and `minimap2/order.cpp`.
 
 ## Order modes
 
@@ -96,15 +98,30 @@ kmc ...                                                        # no -or/-co: kmc
     --greedy-mini-file orders/GreedyMini/w21_k11_canonical.gm --t-length 11 -s SEED ...
 ```
 
+**minimap2** (long-only flags: `-O`/`-s` were already taken by minimap2 itself, for gap-open penalty and min DP score):
+
+```bash
+./minimap2 -a ref.fa reads.fq                                                     # native, unchanged
+./minimap2 -a --minimizer-order xor-hash --order-seed SEED ref.fa reads.fq
+./minimap2 -a --minimizer-order xor-pcg-hash --order-seed SEED ref.fa reads.fq
+./minimap2 -a --minimizer-order greedymini \
+    --greedymini-file orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq       # binary alphabet only, no Extend-k: gm_k must equal -k
+
+# mod-minimizer: O_t is any base order + --mod-t (minimap2's own -k/-w already match the paper's/kraken2's/sshash's m/w notation directly)
+./minimap2 -a --minimizer-order mod-minimizer-xor-hash --order-seed SEED --mod-t T ref.fa reads.fq
+./minimap2 -a --minimizer-order mod-minimizer-greedymini \
+    --greedymini-file orders/GreedyMini/w10_k5_canonical.gm --mod-t 5 ref.fa reads.fq  # table's gm_k must equal --mod-t
+```
+
 ### CLI flag mapping
 
-| Order | kraken2 | kmc | sshash |
-|---|---|---|---|
-| default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) |
-| RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
-| RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
-| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` |
-| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above |
+| Order | kraken2 | kmc | sshash | minimap2 |
+|---|---|---|---|---|
+| default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) | no `--minimizer-order` (minimap2's own `hash64()`) |
+| RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` | `--minimizer-order xor-hash --order-seed SEED` |
+| RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` | `--minimizer-order xor-pcg-hash --order-seed SEED` |
+| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `--minimizer-order greedymini --greedymini-file FILE.gm` (binary alphabet only, no Extend-k) |
+| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above | `--minimizer-order mod-minimizer-{xor-hash,pcg-xor-hash,greedymini} --mod-t T [--greedymini-file FILE.gm]` |
 
 ## Regenerating a `.gm` table
 

@@ -1,0 +1,29 @@
+# Default order sweep. Run with: ./minimap2_bench.sh sweep
+#
+# Not yet wired through benchmark/common/experiments_lib.py's generic
+# YAML-config expander the way kraken2's/kmc's/sshash's own experiments.py
+# are (see benchmark/common/experiments_lib.py's docstring) -- this file
+# documents the sweep's shape for now; minimap2_bench.sh's `sweep`/`list`
+# commands read lib/orders.sh's DEFAULT_ORDERS directly. Wiring this file
+# through the shared engine (a scripts/experiments.py mirroring sshash's) is
+# a natural next step once the sweep needs to vary k/w/seeds/datasets rather
+# than just the fixed order list below.
+description: "Compare minimizer orders at minimap2's own default k=15,w=10"
+
+defaults:
+  dataset: smoke
+  k: 15
+  w: 10
+  mod_t: 5
+  seed: 0x2545F4914F6CDD1D
+
+configs:
+  - order: native
+  - order: xor-hash
+  - order: xor-pcg-hash
+  - order: mod-minimizer-xor-hash
+  - order: mod-minimizer-pcg-xor-hash
+  # Deferred until orders/GreedyMini/w10_k15_canonical.gm (and a gm_k=5
+  # table for the mod-minimizer case) are supplied:
+  # - order: greedymini
+  # - order: mod-minimizer-greedymini

@@ -39,3 +39,12 @@ sshash/data/cod/
 sshash/data/kestrel/
 sshash/data/human/
 sshash/data/adhoc/
+
+# minimap2 benchmark harness — harness itself is tracked; local data/results
+# (both live under MINIMIZER_BENCH_ROOT off-repo, but guard anyway) are not.
+minimap2/.env
+minimap2/results/
+minimap2/data/
+minimap2/**/__pycache__/
+minimap2/**/*.pyc
+minimap2/.pytest_cache/

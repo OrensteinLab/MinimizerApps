@@ -1,0 +1,22 @@
+# Shared benchmark config (single source for seeds/paths/defaults), mirroring
+# benchmark/sshash/config.yaml and benchmark/kmc/config.yaml (same seed list,
+# for cross-tool consistency of any seed-dependent order).
+seeds:
+  - 0x2545F4914F6CDD1D
+  - 0x9E3779B97F4A7C15
+  - 0xDEADBEEFCAFEBABE
+  - 0x1234567890ABCDEF
+  - 0xA5A5A5A5A5A5A5A5
+
+defaults:
+  k: 15
+  w: 10
+  mod_t: 5
+  dataset: smoke
+  genome_len: 300000
+  repeat_len: 20000
+  n_reads: 400
+
+paths:
+  data: data
+  gm_dir: ../../orders/GreedyMini

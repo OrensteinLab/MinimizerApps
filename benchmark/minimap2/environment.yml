@@ -1,0 +1,9 @@
+name: minimap2_bench
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pyyaml
+  - samtools
+  - pbsim2
