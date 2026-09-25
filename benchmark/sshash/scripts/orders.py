@@ -17,7 +17,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from scripts.config import default_gm_file, mod_t_gm_file
+from scripts.config import (
+    default_gm_file,
+    mod_t_gm_file,
+    mod_t_gm_file_t10,
+    mod_t_gm_label_file,
+)
 
 ORDERS = (
     "native",
@@ -28,15 +33,19 @@ ORDERS = (
     "mod-minimizer-xor-hash",
     "mod-minimizer-pcg-xor-hash",
     "mod-minimizer-greedymini",
+    "mod-minimizer-greedymini-v2",
 )
 
 MOD_ORDERS = frozenset(o for o in ORDERS if o.startswith("mod-minimizer-"))
 
-# t values swept for the 3 hash-based mod-minimizer orders: t=10 reproduces
-# the mod-minimizer paper's own published Human/GRCh38 numbers; t=11 matches
-# the GreedyMini t-order table's own length, for a fair comparison against
-# mod-minimizer-greedymini (which is fixed at t=11 -- see order_t_values).
+# t values swept for the 3 hash-based mod-minimizer orders and for
+# mod-minimizer-greedymini itself: t=10 reproduces the mod-minimizer paper's
+# own published Human/GRCh38 numbers; t=11 matches the GreedyMini t-order
+# table's own length. A labeled table variant (mod-minimizer-greedymini-*,
+# e.g. "-v2") is fixed at t=11 instead -- see order_t_values.
 MOD_T_VALUES = (10, 11)
+
+_GREEDYMINI_PREFIX = "mod-minimizer-greedymini-"
 
 
 def order_dir_name(order: str) -> str:
@@ -50,14 +59,27 @@ def order_dir_name(order: str) -> str:
 
 
 def order_t_values(order: str) -> tuple[int | None, ...]:
-    """t values to sweep for `order`: (None,) for the 4 base orders, (11,)
-    for mod-minimizer-greedymini (fixed, matching w21_k11_canonical.gm's own
-    gm_k), MOD_T_VALUES for the 3 hash-based mod-minimizer orders."""
+    """t values to sweep for `order`: (None,) for the 4 base orders,
+    MOD_T_VALUES for mod-minimizer-greedymini and the 3 hash-based
+    mod-minimizer orders, (11,) for a labeled table variant (fixed, matching
+    the convention so far -- register a new label in config.yaml's
+    mod_t_gm_labels, not a new case here)."""
     if order not in MOD_ORDERS:
         return (None,)
-    if order == "mod-minimizer-greedymini":
+    if order.startswith(_GREEDYMINI_PREFIX):
         return (11,)
     return MOD_T_VALUES
+
+
+def sshash_order_flag(order: str) -> str:
+    """The real sshash `-O` value for `order` -- differs from the harness's
+    own order id for a labeled table-variant alias (e.g.
+    mod-minimizer-greedymini-v2), which is still plain
+    mod-minimizer-greedymini as far as sshash itself is concerned (only
+    --greedy-mini-file differs)."""
+    if order.startswith(_GREEDYMINI_PREFIX):
+        return "mod-minimizer-greedymini"
+    return order
 
 
 def build_flags(order: str, seed: int, gm_file: str | None = None, t: int | None = None) -> list[str]:
@@ -73,13 +95,21 @@ def build_flags(order: str, seed: int, gm_file: str | None = None, t: int | None
         if t is None:
             raise ValueError(f"order {order} requires t (see order_t_values)")
         return ["-O", order, "--t-length", str(t), *flags]
-    # greedymini / mod-minimizer-greedymini: both need --greedy-mini-file
-    if order == "mod-minimizer-greedymini" and t is None:
+    # greedymini / mod-minimizer-greedymini(-<label>): all need --greedy-mini-file
+    is_greedymini_variant = order == "mod-minimizer-greedymini" or order.startswith(_GREEDYMINI_PREFIX)
+    if is_greedymini_variant and t is None:
         raise ValueError(f"order {order} requires t (see order_t_values)")
-    gm_path = Path(gm_file) if gm_file else (mod_t_gm_file() if order == "mod-minimizer-greedymini" else default_gm_file())
+    if gm_file:
+        gm_path = Path(gm_file)
+    elif order.startswith(_GREEDYMINI_PREFIX):
+        gm_path = mod_t_gm_label_file(order[len(_GREEDYMINI_PREFIX):])
+    elif order == "mod-minimizer-greedymini":
+        gm_path = mod_t_gm_file_t10() if t == 10 else mod_t_gm_file()
+    else:
+        gm_path = default_gm_file()
     if not gm_path.is_file():
         raise FileNotFoundError(f"GreedyMini table not found: {gm_path}")
-    out = ["-O", order, "--greedy-mini-file", str(gm_path)]
+    out = ["-O", sshash_order_flag(order), "--greedy-mini-file", str(gm_path)]
     if t is not None:
         out += ["--t-length", str(t)]
     return [*out, *flags]

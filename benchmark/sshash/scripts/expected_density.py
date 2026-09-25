@@ -43,6 +43,22 @@ from scripts.density import (
 from scripts.orders import MOD_ORDERS, ORDERS, order_t_values
 
 DEFAULT_N_BASES = 300_000
+_GREEDYMINI_PREFIX = "mod-minimizer-greedymini-"
+
+
+def _config_gm_path(section: str, key: str) -> Path | None:
+    """Best-effort config.yaml lookup (mod-minimizer-greedymini's own t=10
+    table, or a labeled variant's table), returning None rather than dying if
+    unset/missing -- this theoretical/informational path degrades gracefully
+    (a None ranks table already falls back to a blank density_factor row),
+    unlike the real run path's strict lookups in scripts/config.py."""
+    from scripts.config import _cfg, gm_dir
+
+    if section == "defaults":
+        name = _cfg().get("defaults", {}).get(key)
+    else:
+        name = (_cfg().get(section) or {}).get(key)
+    return (gm_dir() / name) if name else None
 DEFAULT_MOD_N_BASES = 40_000
 DEFAULT_SEED = 0xC0FFEE01
 
@@ -57,6 +73,7 @@ _BASE_ORDER = {
     "mod-minimizer-xor-hash": "xor-hash",
     "mod-minimizer-pcg-xor-hash": "xor-pcg-hash",
     "mod-minimizer-greedymini": "greedymini",
+    "mod-minimizer-greedymini-v2": "greedymini",
 }
 
 
@@ -126,13 +143,32 @@ def compute_all_orders(
 ) -> list[dict]:
     gm_ranks = read_gm_ranks(gm_file) if gm_file and gm_file.is_file() else None
     mod_gm_ranks = read_gm_ranks(mod_t_gm_file) if mod_t_gm_file and mod_t_gm_file.is_file() else None
+    # mod-minimizer-greedymini's own t=10 table, and any labeled variant's
+    # table (e.g. mod-minimizer-greedymini-v2), are resolved lazily below
+    # (each needs a different table than the single mod_t_gm_file passed in,
+    # which only covers the default t=11 case) and cached here by path so a
+    # repeated label/t only reads its file once.
+    _ranks_cache: dict[Path, list[int] | None] = {}
+
+    def _ranks_at(path: Path | None) -> list[int] | None:
+        if path is None:
+            return None
+        if path not in _ranks_cache:
+            _ranks_cache[path] = read_gm_ranks(path) if path.is_file() else None
+        return _ranks_cache[path]
 
     out: list[dict] = []
     for order in ORDERS:
         is_mod = order in MOD_ORDERS
-        ranks_for_order = mod_gm_ranks if is_mod else gm_ranks
         needs_gm = _BASE_ORDER[order] == "greedymini"
         for t in order_t_values(order):
+            if order.startswith(_GREEDYMINI_PREFIX):
+                label = order[len(_GREEDYMINI_PREFIX):]
+                ranks_for_order = _ranks_at(_config_gm_path("mod_t_gm_labels", label))
+            elif order == "mod-minimizer-greedymini" and t == 10:
+                ranks_for_order = _ranks_at(_config_gm_path("defaults", "mod_t_gm_file_t10"))
+            else:
+                ranks_for_order = mod_gm_ranks if is_mod else gm_ranks
             if needs_gm and ranks_for_order is None:
                 out.append(
                     {"order": order, "t": t, "m": m, "w": w, "n_seeds": 0,

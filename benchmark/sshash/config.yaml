@@ -30,10 +30,22 @@ defaults:
   # tested SSHash regime (k=31, m=21, giving w=k-m+1=11) -- see
   # orders/README.md "mod-minimizer" and sshash/README.md.
   m: 21
-  orders: native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini
+  orders: native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,mod-minimizer-greedymini-v2
   n_seeds: 5
   # Plain greedymini's table: gm_k=15, Extend-k'd up to l=m=21 (density ~1.523
   # at its own design window w=11).
   gm_file: w11_k15_canonical.gm
-  # mod-minimizer-greedymini's O_t table (t=11, no extend needed: gm_k=11=t).
+  # mod-minimizer-greedymini's O_t table for t=11 (no extend needed: gm_k=11=t).
   mod_t_gm_file: w21_k11_canonical.gm
+  # ...and for t=10 (gm_k=10=t), filling in the t=10 case the original table
+  # never covered.
+  mod_t_gm_file_t10: w22_k10_canonical.gm
+
+# Extra labeled mod-minimizer-greedymini table variants, each exposed as its
+# own order "mod-minimizer-greedymini-<label>" (fixed at t=11, an A/B
+# comparison against the default table above -- see lib/orders.sh's
+# order_gm_file/mod_t_gm_label_file and scripts/orders.py's
+# mod_t_gm_label_file). Register a new variant by adding a line here, not by
+# adding code.
+mod_t_gm_labels:
+  v2: w21_k11_canonical_v2.gm
