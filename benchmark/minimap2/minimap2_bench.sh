@@ -55,10 +55,6 @@ cmd_sweep() {
   local seed=${SWEEP_SEED:-0x2545F4914F6CDD1D}
   local fail=0
   for o in "${orders[@]}"; do
-    if ! order_relevant_for_w "$o"; then
-      echo "== [$o] skipped: not relevant at w=$W (k=$K) -- see lib/orders.sh's order_relevant_for_w ==" >&2
-      continue
-    fi
     run_one "$o" "$seed" || fail=1
   done
   return $fail
@@ -70,11 +66,7 @@ cmd_export() {
 }
 
 cmd_list() {
-  local o
-  IFS=',' read -r -a _all <<< "$DEFAULT_ORDERS"
-  for o in "${_all[@]}"; do
-    order_relevant_for_w "$o" && echo "$o"
-  done
+  echo "$DEFAULT_ORDERS" | tr ',' '\n'
 }
 
 case "${1:-}" in

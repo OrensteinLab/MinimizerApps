@@ -129,6 +129,11 @@ cd benchmark/minimap2
 
 ## Results
 
+Swept at `k=15, w=10` -- minimap2's own defaults, and mod-minimizer's actual
+design regime (it only improves on a classic minimizer's density bound when
+the sampled substring `k` is large *relative to* the window `w`, i.e. `w <
+k`; there is no `w=50`/other-window sweep in this harness).
+
 ### Real chromosome (T2T CHM13 chrX v0.7, 154.3 Mbp)
 
 `data/chm13_chrX/` -- the exact assembly and repeat-region coordinates
@@ -136,89 +141,83 @@ Winnowmap's own D1/D3 evaluation used (Jain et al. 2020): downloaded from
 [github.com/marbl/CHM13](https://github.com/marbl/CHM13) (md5-verified), the
 centromeric repeat span (57,828,561-60,934,693) taken directly from that
 paper's Table 3 caption. 85,324 real pbsim2 PacBio-model reads (P6C4, 5x
-depth). Swept at `k=15` (minimap2's own default) and both `w=10` (also
-minimap2's own default) and `w=50` -- Winnowmap's own default, and the
-window size where its headline centromere result (3.6%->0%, 34.7%->0%
-incorrectly-mapped at w=10 vs w=50) is most dramatic, so it's the window
-size where custom orders' effect on this same comparison should show up
-most clearly too:
+depth), 4 threads, single seed (`0x2545F4914F6CDD1D`) for the hash-based
+orders.
 
-| w | order | density_factor | frac_mapped | frac_correct | frac_correct_in_repeat |
-|---|---|---|---|---|---|
-| 10 | native | 2.072 | 0.999 | 0.991 | 0.716 |
-| 10 | xor-pcg-hash | 2.010 | 0.999 | 0.991 | 0.731 |
-| 10 | xor-hash | 1.944 | 0.998 | 0.992 | 0.786 |
-| 10 | mod-minimizer-pcg-xor-hash | 1.600 | 0.998 | 0.989 | 0.742 |
-| 10 | mod-minimizer-xor-hash | 1.567 | 0.998 | 0.989 | 0.745 |
-| 10 | **greedymini** | **1.545** | 0.998 | **0.991** | **0.745** |
-| 50 | **greedymini** | **2.131** | **0.986** | **0.969** | **0.337** |
-| 50 | native | 2.088 | 0.985 | 0.965 | 0.276 |
-| 50 | xor-hash | 2.036 | 0.986 | 0.968 | 0.310 |
-| 50 | xor-pcg-hash | 2.007 | 0.985 | 0.966 | 0.296 |
+| order | density_factor | build time (s) | build peak RSS (MB) | map time (s) | map peak RSS (MB) | frac_mapped | frac_correct | frac_correct_in_repeat | mean_identity |
+|---|---|---|---|---|---|---|---|---|---|
+| **greedymini** | **1.545** | 6.12 | 1124 | 5.92 | 1288 | 0.998 | **0.991** | **0.745** | 0.924 |
+| mod-minimizer-xor-hash | 1.567 | 14.04 | 1129 | 7.59 | 1294 | 0.998 | 0.989 | 0.745 | 0.925 |
+| mod-minimizer-pcg-xor-hash | 1.600 | 14.02 | 1142 | 7.97 | 1303 | 0.998 | 0.989 | 0.742 | 0.924 |
+| xor-hash | 1.944 | 4.50 | 1443 | 7.33 | 1599 | 0.998 | **0.992** | **0.786** | 0.926 |
+| xor-pcg-hash | 2.010 | 4.85 | 1455 | 6.92 | 1595 | 0.999 | 0.991 | 0.731 | 0.926 |
+| native | 2.072 | 4.97 | 1453 | 7.05 | 1593 | 0.999 | 0.991 | 0.716 | 0.926 |
 
-mod-minimizer orders are only run at `w=10` here, not `w=50` -- see
-"mod-minimizer is only relevant when `w < k`" below.
+`greedymini` has the lowest density of the six orders with no accuracy cost
+(its `frac_correct`/`frac_correct_in_repeat` are competitive with the best of
+the rest). `xor-hash` has the best raw accuracy, particularly in-repeat.
+mod-minimizer orders reach the lowest densities but cost roughly 3x the
+build time of the hash-based orders -- expected, since `sketch_mod_minimizer`
+scans `w` monotone deques per t-mer rather than one circular buffer. Build
+peak RSS tracks density inversely (fewer, lower-density minimizers -> a
+smaller index hash table); map-time RSS differences are smaller since most
+of that memory is the read set, not the index.
 
-At `w=10`: `greedymini` has the lowest density of all six orders with no
-accuracy cost; mod-minimizer orders are similarly low-density.
-
-At `w=50`: `greedymini` again gives the best density *and* the best overall
-and in-repeat accuracy -- consistent with (a small-scale echo of) Winnowmap's
-own finding that a better order matters more as sampling gets sparser.
-
-`greedymini` uses `orders/GreedyMini/w10_k15_canonical.gm` at **both** window
-sizes (gm_k=15, matching `-k 15` exactly, generated with the
+`greedymini` uses `orders/GreedyMini/w10_k15_canonical.gm` (gm_k=15,
+matching `-k 15` exactly, generated with the
 [GreedyMini](https://github.com/OrensteinLab/GreedyMini) tool's `-mode
 expected -w 10 -k 15`, per `orders/README.md`'s "Regenerating a `.gm`
-table"). A GreedyMini table's validity only requires `gm_k == k`, independent
-of `w`, so the same table is a well-defined order at any window size -- but
-its *density-optimality* was specifically targeted at `w=10` (the `-w 10` in
-its generation command); at `w=50` it's a valid rank table, not a
-`w=50`-optimized one, so read its `w=50` density edge over the other orders
-as "still a good order at this window size" rather than "provably optimal
-for it". There is no separate `w50_k15` table, and no
-`mod-minimizer-greedymini` for minimap2, unlike kraken2/sshash -- the latter
-would need a second, differently-sized GreedyMini table (gm_k == the
+table" -- i.e. generated for, and used at, this same `w=10`). There is no
+`mod-minimizer-greedymini` for minimap2, unlike kraken2/sshash -- it would
+need a second, differently-sized GreedyMini table (gm_k == the
 mod-minimizer `t`, not `k`) just for that one variant, so it was dropped
 instead of adding that second table.
 
-### mod-minimizer is only relevant when `w < k`
+### Synthetic dataset (`smoke`, ~300kb + 20kb repeat)
 
-mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024) improves on a classic
-minimizer's density bound specifically in the regime where the sampled
-substring (`k`) is large *relative to* the window (`w`) -- i.e. `w < k`.
-With our own `k=15`, that means `w=10` is in-regime and `w=50` is not, so
-the sweep (`lib/orders.sh`'s `order_relevant_for_w`) skips
-`mod-minimizer-*` at `w=50` rather than report numbers for a use outside
-the scheme's own design regime -- there's no results row for it above at
-that window size, and none should be expected.
+Same six orders/seed, on the small built-in dataset (fast iteration, not a
+source of accuracy conclusions -- see "Datasets" above):
 
-While debugging an earlier, out-of-regime `w=50` run of mod-minimizer,
-two real bugs were found and fixed in `minimap2/order.cpp`'s
+| order | density_factor | build time (s) | build peak RSS (MB) | map time (s) | map peak RSS (MB) | frac_mapped | frac_correct | frac_correct_in_repeat | mean_identity |
+|---|---|---|---|---|---|---|---|---|---|
+| **greedymini** | **1.514** | 0.04 | 7.0 | 0.06 | 15.3 | 0.995 | 0.969 | **0.796** | 0.999 |
+| mod-minimizer-xor-hash | 1.559 | 0.05 | 5.0 | 0.08 | 13.2 | **1.000** | 0.966 | 0.741 | 0.999 |
+| mod-minimizer-pcg-xor-hash | 1.580 | 0.06 | 5.0 | 0.08 | 19.3 | 0.995 | 0.966 | 0.778 | 0.999 |
+| xor-hash | 1.912 | 0.04 | 5.0 | 0.05 | 13.2 | 0.995 | 0.959 | 0.722 | 0.999 |
+| xor-pcg-hash | 2.000 | 0.04 | 5.0 | 0.05 | 17.3 | 0.995 | 0.954 | 0.685 | 0.999 |
+| native | 2.058 | 0.05 | 5.0 | 0.06 | 15.7 | 0.995 | **0.964** | 0.759 | 0.999 |
+
+Same density ordering as the real chromosome (greedymini < mod-minimizer <
+xor-hash <~ xor-pcg-hash < native); build/map times here are all under a
+tenth of a second and dominated by process startup, not a meaningful
+timing signal at this scale -- the chm13_chrX table above is the one to
+read for time/memory comparisons.
+
+### mod-minimizer's known limitation
+
+Two real bugs were found and fixed in `minimap2/order.cpp`'s
 `sketch_mod_minimizer` (see that file's git history): a tie-break that
 compared `(residue - window_start) % w` instead of the true (unreduced)
 t-mer offset -- wrong on any rank tie, and ties are common with xor-hash's
 weak avalanche -- and a per-residue deque capacity formula that could
 silently overflow its fixed-size backing array for large `w`. Both are
 fixed and verified against a brute-force reference (see the commit for the
-exact Python cross-check) across several `(w,k,t,seed)` combinations; they
-apply regardless of `w`, so they remain fixed for the in-regime `w=10`
-numbers above too.
+exact Python cross-check) across several `(w,k,t,seed)` combinations.
 
-Independently of regime, a **third, unfixed, fundamental issue** remains:
-the mod-minimizer scheme's "reduce the winning t-mer's position mod w" rule
-is provably not reverse-complement symmetric (the two t-mer offsets under
-strand reversal sum to a fixed constant, but reducing each mod `w`
-independently doesn't generally land on mirrored l-mer slots). Measured
-directly (build an index from a 3kb real-genome sequence, query with its own
-reverse complement): mod-minimizer-xor-hash shared only 4 of 140 minimizer
-keys between the two strands, versus ~90%+ for xor-hash/native/greedymini,
-which use per-locus canonical parsing and don't have this issue. This is the
-same property `orders/README.md`'s "mod-minimizer" section already documents
-sshash working around with a dual-probe/"regular parsing" fallback --
-**not yet ported to minimap2**. It has little visible effect at `w=10`
+A **third, unfixed, fundamental issue** remains: the mod-minimizer scheme's
+"reduce the winning t-mer's position mod w" rule is provably not
+reverse-complement symmetric (the two t-mer offsets under strand reversal
+sum to a fixed constant, but reducing each mod `w` independently doesn't
+generally land on mirrored l-mer slots). Measured directly (build an index
+from a 3kb real-genome sequence, query with its own reverse complement):
+mod-minimizer-xor-hash shared only 4 of 140 minimizer keys between the two
+strands, versus ~90%+ for xor-hash/native/greedymini, which use per-locus
+canonical parsing and don't have this issue. This is the same property
+`orders/README.md`'s "mod-minimizer" section already documents sshash
+working around with a dual-probe/"regular parsing" fallback -- **not yet
+ported to minimap2**. It has little visible effect at this harness's `w=10`
 (there's enough redundant minimizer coverage that mapping still mostly
-succeeds), which is why the `w=10` numbers above look reasonable; a sparser,
-in-regime setting (e.g. larger `k` at the same `w`) could still expose it.
-**Treat every mod-minimizer-\* result here as provisional** until that
-fallback is ported.
+succeeds), which is why the numbers above look reasonable; a sparser
+setting (larger `k`, still `w < k`) could still expose it. **Treat every
+mod-minimizer-\* result here as provisional** until that fallback is
+ported.
