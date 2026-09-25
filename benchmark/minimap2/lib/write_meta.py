@@ -49,8 +49,9 @@ def main(argv=None) -> int:
     ap.add_argument("--dataset", default="smoke")
     ap.add_argument("--build-time", type=Path, required=True)
     ap.add_argument("--map-time", type=Path, required=True)
-    ap.add_argument("--num-kmers", type=int, default=None, help="denominator for density_factor: genome length")
-    ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d")
+    ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d (informational only -- NOT the density_factor numerator, see below)")
+    ap.add_argument("--avg-occurrences", type=float, default=None, help="'average occurrences' from minimap2 -d's stat line (distinct minimizers undercount total selected positions whenever a minimizer repeats -- see mm_idx_stat in index.c)")
+    ap.add_argument("--avg-spacing", type=float, default=None, help="'average spacing' from minimap2 -d's stat line: genome_len / total_occurrences -- the correct density_factor input")
     ap.add_argument("--accuracy", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
@@ -65,9 +66,22 @@ def main(argv=None) -> int:
         "build": parse_time_v(args.build_time),
         "map": parse_time_v(args.map_time),
         "distinct_minimizers": args.density,
+        "avg_occurrences": args.avg_occurrences,
     }
-    if args.num_kmers and args.density:
-        meta["density_factor"] = round(args.density / args.num_kmers * (args.w + 1), 6)
+    if args.avg_spacing:
+        # density = total_occurrences / genome_len = 1 / avg_spacing (mm_idx_stat
+        # prints avg_spacing = genome_len / total_occurrences directly);
+        # density_factor = density * (w+1). NOT distinct_minimizers/genome_len:
+        # "distinct minimizers" collapses every repeated occurrence of the same
+        # minimizer key to one count, so it always undercounts total selected
+        # positions whenever the genome has any repeat content -- and it
+        # undercounts *more* for an order that's *better* at consistently
+        # re-selecting the same minimizer across a repeat's copies (exactly
+        # the property these custom orders are supposed to have), which can
+        # push a distinct-minimizer-based ratio below the proven theoretical
+        # minimum of density_factor=1 (every scheme must select at least
+        # 1 per w+1-window). Using avg_spacing avoids this entirely.
+        meta["density_factor"] = round((args.w + 1) / args.avg_spacing, 6)
     if args.accuracy.is_file():
         meta["accuracy"] = json.loads(args.accuracy.read_text())
 

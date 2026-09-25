@@ -52,3 +52,18 @@ build_order_flags() {
 }
 
 order_dir_name() { echo "$1"; }
+
+# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024) is only motivated when
+# the sampled substring (k) is large *relative to* the window (w) -- that's
+# the regime its density bound improves on a classic minimizer in. At w>=k
+# (e.g. w=50 with our own k=15) there's no such rationale, so the sweep
+# skips mod-minimizer-* there rather than report numbers for a use outside
+# the scheme's own design regime (independent of, and in addition to, the
+# cross-strand-symmetry limitation noted in minimap2/order.cpp).
+order_relevant_for_w() {
+  local order="$1"
+  if order_is_mod "$order" && [ "$W" -ge "$K" ]; then
+    return 1
+  fi
+  return 0
+}

@@ -12,7 +12,7 @@ from pathlib import Path
 
 FIELDS = [
     "dataset", "order", "seed", "k", "w", "mod_t",
-    "distinct_minimizers", "density_factor",
+    "distinct_minimizers", "avg_occurrences", "density_factor",
     "build_wall_time_sec", "build_peak_rss_kb",
     "map_wall_time_sec", "map_peak_rss_kb",
     "n_reads", "n_reads_in_repeat", "frac_mapped",
@@ -34,6 +34,7 @@ def flatten(meta: dict) -> dict:
         "w": meta.get("w"),
         "mod_t": meta.get("mod_t"),
         "distinct_minimizers": meta.get("distinct_minimizers"),
+        "avg_occurrences": meta.get("avg_occurrences"),
         "density_factor": meta.get("density_factor"),
         "build_wall_time_sec": build.get("wall_time_sec"),
         "build_peak_rss_kb": build.get("peak_rss_kb"),

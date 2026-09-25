@@ -43,17 +43,27 @@ run_one() {
     return 1
   fi
 
+  # "distinct minimizers" is NOT the density_factor numerator -- it collapses
+  # every repeated occurrence of the same minimizer key down to one count,
+  # so it always undercounts total selected positions on a genome with any
+  # repeat content (see mm_idx_stat in index.c: it separately tracks `sum`,
+  # the true total-occurrences count, and prints it only via "average
+  # occurrences"/"average spacing", not directly). Use "average spacing"
+  # (genome_len / total_occurrences) for density_factor instead --
+  # write_meta.py's own comment has the full reasoning.
   local density
   density=$(grep -o 'distinct minimizers: [0-9]*' "$build_log" | grep -o '[0-9]*' | head -1)
-  local genome_len
-  genome_len=$(grep -o 'total length: [0-9]*' "$build_log" | grep -o '[0-9]*' | head -1)
+  local avg_occ
+  avg_occ=$(grep -o 'average occurrences: [0-9.]*' "$build_log" | grep -o '[0-9.]*$' | head -1)
+  local avg_spacing
+  avg_spacing=$(grep -o 'average spacing: [0-9.]*' "$build_log" | grep -o '[0-9.]*$' | head -1)
 
   "$PYTHON" "$HERE_DIR/lib/score_accuracy.py" --paf "$paf" --truth "$truth" --json-out "$acc_json" >&2
 
   "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
     --order "$order" --seed "$seed" --k "$K" --w "$W" --mod-t "$MOD_T" --dataset "$DATASET" \
     --build-time "$build_time" --map-time "$map_time" \
-    --density "${density:-0}" --num-kmers "${genome_len:-0}" \
+    --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \
     --accuracy "$acc_json" --out "$meta_json" >/dev/null
 
   echo "  -> $meta_json"
