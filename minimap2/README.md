@@ -25,7 +25,10 @@ Same order menu as the other three apps (see
 the cross-app CLI-flag table): `xor-hash`, `xor-pcg-hash`, `greedymini`
 (binary alphabet + on-the-fly projection only -- no DNA-alphabet backend, no
 Extend-k: the table's `gm_k` must equal `-k` exactly), and
-`mod-minimizer-{xor-hash,pcg-xor-hash,greedymini}`.
+`mod-minimizer-{xor-hash,pcg-xor-hash}`. No `mod-minimizer-greedymini` here
+(unlike kraken2/sshash) -- dropped to avoid needing a second,
+differently-sized GreedyMini table (`gm_k` == the mod-minimizer `t`, not
+`k`) just for that one variant.
 
 ```bash
 ./minimap2 -a ref.fa reads.fq                                                    # native, unchanged
@@ -34,10 +37,8 @@ Extend-k: the table's `gm_k` must equal `-k` exactly), and
 ./minimap2 -a --minimizer-order greedymini \
     --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # needs -k 15 -w 10 (or matching gm_k)
 
-# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): any base order as O_t
+# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): xor-hash or xor-pcg-hash as O_t
 ./minimap2 -a --minimizer-order mod-minimizer-xor-hash --order-seed 42 --mod-t 5 ref.fa reads.fq
-./minimap2 -a --minimizer-order mod-minimizer-greedymini \
-    --greedymini-file ../orders/GreedyMini/w10_k5_canonical.gm --mod-t 5 ref.fa reads.fq  # table's gm_k must equal --mod-t
 ```
 
 Long-only flags (`--minimizer-order`, `--order-seed`, `--greedymini-file`,
@@ -64,8 +65,7 @@ and never becomes the value actually stored in the index.
   `mappy` Python bindings) does not support a custom order -- only the CLI
   path through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this
   way are always native-order.
-- `greedymini`/`mod-minimizer-greedymini` require a table whose `gm_k`
-  matches exactly (`-k` for the former, `--mod-t` for the latter) --
+- `greedymini` requires a table whose `gm_k` matches `-k` exactly --
   Extend-k (a table built for a shorter length than it's used at) isn't
   supported here, unlike kraken2/kmc/sshash.
 

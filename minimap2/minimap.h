@@ -87,8 +87,7 @@ typedef enum {
 	MM_ORDER_XOR_PCG_HASH,      // pcg_rxs_m_xs64(kmer ^ seed)
 	MM_ORDER_GREEDYMINI,        // GreedyMini UHS rank table (binary alphabet + projection)
 	MM_ORDER_MOD_XOR_HASH,      // mod-minimizer, O_t = xor-hash
-	MM_ORDER_MOD_PCG_XOR_HASH,  // mod-minimizer, O_t = xor-pcg-hash
-	MM_ORDER_MOD_GREEDYMINI     // mod-minimizer, O_t = greedymini
+	MM_ORDER_MOD_PCG_XOR_HASH   // mod-minimizer, O_t = xor-pcg-hash
 } mm_order_kind_t;
 
 typedef struct {

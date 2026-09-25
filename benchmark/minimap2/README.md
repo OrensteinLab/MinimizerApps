@@ -1,7 +1,8 @@
 # minimap2 benchmark harness
 
 Compares minimap2's minimizer orders (native, xor-hash, xor-pcg-hash,
-greedymini, and mod-minimizer-{xor-hash,pcg-xor-hash,greedymini}; see
+greedymini, and mod-minimizer-{xor-hash,pcg-xor-hash} -- no
+mod-minimizer-greedymini here, unlike kraken2/sshash; see
 [`orders/README.md`](../../orders/README.md)) the way Jain et al. 2020
 ("Weighted minimizer sampling improves long read mapping" -- Winnowmap,
 Bioinformatics 36(Supp_1):i111-i118) evaluated Winnowmap's weighted
@@ -72,7 +73,7 @@ never clobbered by `.env`.
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed]`, `sweep [orders...]`, `export`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
 | `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution) + `config.yaml` seed loading |
-| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS`, `DEFAULT_ORDERS` -- greedymini variants excluded until their `.gm` tables are supplied) |
+| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`; no `mod-minimizer-greedymini` -- see README below) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (order, seed) run: build, map, score, `meta.json` |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
@@ -99,9 +100,10 @@ cd benchmark/minimap2
 ```
 
 Latest sweep (413 real pbsim2 ONT reads, 8x depth, `k=15 w=10 mod-t=5`,
-one seed): mod-minimizer orders land furthest below the ~2.0 random-order
-density baseline *without* sacrificing accuracy -- `mod-minimizer-pcg-xor-hash`
-is in fact the best of all five orders on both accuracy metrics here:
+one seed): every alternative order lands below the ~2.0 random-order density
+baseline without sacrificing accuracy. `greedymini` -- the real
+`w10_k15_canonical.gm` table, gm_k=15 matching `-k 15` exactly -- comes out
+**lowest density of all six orders**, tied for the best in-repeat accuracy:
 
 | order | density_factor | frac_correct | frac_correct_in_repeat |
 |---|---|---|---|
@@ -109,15 +111,14 @@ is in fact the best of all five orders on both accuracy metrics here:
 | xor-hash | 1.784 | 0.959 | 0.722 |
 | xor-pcg-hash | 1.867 | 0.954 | 0.685 |
 | mod-minimizer-xor-hash | 1.466 | 0.964 | 0.741 |
-| mod-minimizer-pcg-xor-hash | 1.491 | **0.969** | **0.796** |
+| mod-minimizer-pcg-xor-hash | 1.491 | 0.969 | **0.796** |
+| greedymini | **1.413** | 0.966 | **0.796** |
 
-`greedymini` and `mod-minimizer-greedymini` are excluded from `list`/`sweep`
-until `orders/GreedyMini/w10_k15_canonical.gm` (k=15,w=10, matching this
-harness's fixed k/w) and a `gm_k=5` table for the mod-minimizer case are
-supplied; `lib/orders.sh`'s `order_gm_file()` documents the expected
-filenames. Run them directly once available:
-
-```bash
-./minimap2_bench.sh run greedymini
-./minimap2_bench.sh run mod-minimizer-greedymini
-```
+`greedymini` uses `orders/GreedyMini/w10_k15_canonical.gm` (gm_k=15, matching
+this harness's fixed k=15/w=10 exactly, generated with the
+[GreedyMini](https://github.com/OrensteinLab/GreedyMini) tool's `-mode
+expected -w 10 -k 15`, per `orders/README.md`'s "Regenerating a `.gm`
+table"). There is no `mod-minimizer-greedymini` for minimap2, unlike
+kraken2/sshash -- it would need a second, differently-sized GreedyMini
+table (gm_k == the mod-minimizer `t`, not `k`) just for that one variant,
+so it was dropped instead of adding that second table.

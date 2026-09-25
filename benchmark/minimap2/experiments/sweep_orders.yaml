@@ -21,9 +21,9 @@ configs:
   - order: native
   - order: xor-hash
   - order: xor-pcg-hash
+  - order: greedymini
   - order: mod-minimizer-xor-hash
   - order: mod-minimizer-pcg-xor-hash
-  # Deferred until orders/GreedyMini/w10_k15_canonical.gm (and a gm_k=5
-  # table for the mod-minimizer case) are supplied:
-  # - order: greedymini
-  # - order: mod-minimizer-greedymini
+  # No mod-minimizer-greedymini for minimap2 (unlike kraken2/sshash) -- would
+  # need a second, differently-sized GreedyMini table (gm_k == t, not k)
+  # just for that one variant; dropped instead.

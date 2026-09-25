@@ -2,11 +2,11 @@
 # Sanity/regression tests for the custom minimizer order integration
 # (order.h/order.cpp). See the plan's "Sanity checks / tests" section.
 #
-# greedymini and mod-minimizer-greedymini are intentionally NOT covered here
-# yet -- they need a real GreedyMini table (orders/GreedyMini/w10_k15_*,
-# gm_k=5 for the mod-minimizer case) that hasn't been supplied yet. They were
-# smoke-tested manually during development (see the commit message) and will
-# get their own coverage once those tables land.
+# greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
+# this script's fixed -k 15 -w 10 exactly). There is no mod-minimizer-
+# greedymini for minimap2 (unlike kraken2/sshash) -- it would need a second,
+# differently-sized table (gm_k == the mod-minimizer t, not k) just for that
+# one variant, so it was dropped instead of adding that second table.
 #
 # Usage: ./test_order.sh (run from minimap2/, after `make`)
 set -u
@@ -23,19 +23,22 @@ bad()  { fail=$((fail+1)); echo "  [FAIL] $1"; }
 
 ORDERS_SEEDED="xor-hash xor-pcg-hash"
 ORDERS_MOD="mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash"
+ALL_TEST_ORDERS="native $ORDERS_SEEDED greedymini $ORDERS_MOD"
 SEED=42
 MOD_T=5
+GM_FILE="$(cd .. && pwd)/orders/GreedyMini/w10_k15_canonical.gm"
 
 order_flags() {
 	case "$1" in
 		native) echo "" ;;
+		greedymini) echo "--minimizer-order greedymini --greedymini-file $GM_FILE" ;;
 		mod-minimizer-*) echo "--minimizer-order $1 --order-seed $SEED --mod-t $MOD_T" ;;
 		*) echo "--minimizer-order $1 --order-seed $SEED" ;;
 	esac
 }
 
 echo "== 1. determinism: same order+seed, repeated runs -> identical output =="
-for o in native $ORDERS_SEEDED $ORDERS_MOD; do
+for o in $ALL_TEST_ORDERS; do
 	f=$(order_flags "$o")
 	$BIN -a $f "$REF" "$QRY" > "$TMP/r1_$o.sam" 2>/dev/null
 	$BIN -a $f "$REF" "$QRY" > "$TMP/r2_$o.sam" 2>/dev/null
@@ -44,7 +47,7 @@ done
 
 echo "== 2. density: each order shows a plausible, non-degenerate minimizer count =="
 declare -A density
-for o in native $ORDERS_SEEDED $ORDERS_MOD; do
+for o in $ALL_TEST_ORDERS; do
 	f=$(order_flags "$o")
 	n=$($BIN -a $f "$REF" "$QRY" 2>&1 >/dev/null | grep -o 'distinct minimizers: [0-9]*' | grep -o '[0-9]*')
 	density[$o]=$n
@@ -61,7 +64,7 @@ echo "  native=${density[native]} xor-hash=${density[xor-hash]} xor-pcg-hash=${d
 echo "  mod-minimizer-xor-hash=${density[mod-minimizer-xor-hash]} mod-minimizer-pcg-xor-hash=${density[mod-minimizer-pcg-xor-hash]}"
 
 echo "== 3. .mmi round-trip: dump+reload maps identically to a fresh build+map =="
-for o in native $ORDERS_SEEDED $ORDERS_MOD; do
+for o in $ALL_TEST_ORDERS; do
 	f=$(order_flags "$o")
 	$BIN -a $f "$REF" "$QRY" > "$TMP/direct_$o.sam" 2>/dev/null
 	$BIN -d "$TMP/$o.mmi" $f "$REF" >/dev/null 2>&1
@@ -97,7 +100,7 @@ else
 fi
 
 echo "== 6. -H (HPC) smoke test for each order =="
-for o in native $ORDERS_SEEDED $ORDERS_MOD; do
+for o in $ALL_TEST_ORDERS; do
 	f=$(order_flags "$o")
 	if $BIN -a -H $f "$REF" "$QRY" > "$TMP/hpc_$o.sam" 2>"$TMP/hpc_$o.err"; then
 		ok "-H builds+maps: $o"

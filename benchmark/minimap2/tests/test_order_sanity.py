@@ -1,15 +1,14 @@
 """Offline sanity/equivalence tests for the minimap2 order benchmark harness.
 Mirrors benchmark/sshash/tests/test_order_sanity.py's pattern: build under
-every (non-greedymini) order on a small local dataset, and assert the orders
-don't silently diverge from a shared invariant -- here, that they agree on
-the *set of reads mapped* (an order changes which minimizers get sampled,
-not whether the underlying alignment problem is solvable), even though
-their minimizer counts and exact identity differ.
+every order on a small local dataset, and assert the orders don't silently
+diverge from a shared invariant -- here, that they agree on the *set of
+reads mapped* (an order changes which minimizers get sampled, not whether
+the underlying alignment problem is solvable), even though their minimizer
+counts and exact identity differ.
 
-greedymini / mod-minimizer-greedymini are excluded until a real
-orders/GreedyMini/w10_k15_canonical.gm (and a gm_k=5 table for the
-mod-minimizer case) is supplied -- see README.md's "Default dataset" and
-lib/orders.sh's DEFAULT_ORDERS.
+greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
+this test's fixed -k 15 -w 10). No mod-minimizer-greedymini for minimap2
+(unlike kraken2/sshash) -- see README.md.
 
 Run with: python3.11 -m pytest benchmark/minimap2/tests -q
 (needs a python3 new enough for these type hints -- see lib/constants.sh's
@@ -29,7 +28,8 @@ REPO_ROOT = HERE.parent.parent
 MINIMAP2_BIN = REPO_ROOT / "minimap2" / "minimap2"
 DATA_DIR = HERE / "_test_data"
 
-ORDERS = ["native", "xor-hash", "xor-pcg-hash", "mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash"]
+GM_FILE = REPO_ROOT / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
+ORDERS = ["native", "xor-hash", "xor-pcg-hash", "greedymini", "mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash"]
 
 
 @pytest.fixture(scope="module")
@@ -47,6 +47,8 @@ def dataset(tmp_path_factory):
 def _order_flags(order: str) -> list[str]:
     if order == "native":
         return []
+    if order == "greedymini":
+        return ["--minimizer-order", "greedymini", "--greedymini-file", str(GM_FILE)]
     flags = ["--minimizer-order", order, "--order-seed", "42"]
     if order.startswith("mod-minimizer-"):
         flags += ["--mod-t", "5"]

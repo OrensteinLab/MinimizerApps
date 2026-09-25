@@ -78,7 +78,7 @@ struct mm_order_s {
 	mm_order_kind_t kind;
 	uint64_t seed;
 	int t;
-	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI / MOD_GREEDYMINI only
+	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI only
 };
 
 namespace {
@@ -90,11 +90,11 @@ void set_err(char *errbuf, size_t n, const char *msg) {
 }
 
 bool is_mod_kind(mm_order_kind_t k) {
-	return k == MM_ORDER_MOD_XOR_HASH || k == MM_ORDER_MOD_PCG_XOR_HASH || k == MM_ORDER_MOD_GREEDYMINI;
+	return k == MM_ORDER_MOD_XOR_HASH || k == MM_ORDER_MOD_PCG_XOR_HASH;
 }
 
 bool needs_gm_kind(mm_order_kind_t k) {
-	return k == MM_ORDER_GREEDYMINI || k == MM_ORDER_MOD_GREEDYMINI;
+	return k == MM_ORDER_GREEDYMINI;
 }
 
 // Dual-orientation GreedyMini rank (binary alphabet + on-the-fly projection,
@@ -145,7 +145,6 @@ uint64_t order_rank_tmer(const mm_order_t *ord, uint64_t canon_t, int t) {
 	switch (ord->kind) {
 		case MM_ORDER_MOD_XOR_HASH:     return canon_t ^ ord->seed;
 		case MM_ORDER_MOD_PCG_XOR_HASH: return pcg_rxs_m_xs64(canon_t ^ ord->seed);
-		case MM_ORDER_MOD_GREEDYMINI:   return greedymini_rank(canon_t, t, *ord->gm);
 		default:                        assert(0 && "order_rank_tmer: unexpected kind"); return canon_t;
 	}
 }
@@ -491,7 +490,6 @@ extern "C" void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *s
 			return;
 		case MM_ORDER_MOD_XOR_HASH:
 		case MM_ORDER_MOD_PCG_XOR_HASH:
-		case MM_ORDER_MOD_GREEDYMINI:
 			sketch_mod_minimizer(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		default:
@@ -581,7 +579,6 @@ extern "C" const char *mm_order_kind_name(mm_order_kind_t kind)
 		case MM_ORDER_GREEDYMINI:        return "greedymini";
 		case MM_ORDER_MOD_XOR_HASH:      return "mod-minimizer-xor-hash";
 		case MM_ORDER_MOD_PCG_XOR_HASH:  return "mod-minimizer-pcg-xor-hash";
-		case MM_ORDER_MOD_GREEDYMINI:    return "mod-minimizer-greedymini";
 	}
 	return "unknown";
 }
@@ -597,7 +594,6 @@ extern "C" int mm_order_parse_kind(const char *s, mm_order_kind_t *out)
 		{ "greedymini",                 MM_ORDER_GREEDYMINI },
 		{ "mod-minimizer-xor-hash",     MM_ORDER_MOD_XOR_HASH },
 		{ "mod-minimizer-pcg-xor-hash", MM_ORDER_MOD_PCG_XOR_HASH },
-		{ "mod-minimizer-greedymini",   MM_ORDER_MOD_GREEDYMINI },
 	};
 	for (const Entry &e : table)
 		if (std::strcmp(s, e.name) == 0) { *out = e.kind; return 0; }

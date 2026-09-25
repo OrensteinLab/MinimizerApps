@@ -3,16 +3,15 @@
 # benchmark/sshash/lib/orders.sh's shape (see orders/README.md for the
 # CLI-flag-mapping table across all four apps).
 
-ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini"
-
-# Orders runnable without a GreedyMini table (greedymini itself deferred
-# until orders/GreedyMini/w10_k15_canonical.gm and a gm_k=5 table for
-# mod-minimizer-greedymini are supplied -- see README.md).
-DEFAULT_ORDERS="native,xor-hash,xor-pcg-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash"
+# No mod-minimizer-greedymini for minimap2 (unlike kraken2/sshash) -- would
+# need a second, differently-sized GreedyMini table (gm_k == the
+# mod-minimizer t, not k) just for that one variant; dropped instead.
+ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash"
+DEFAULT_ORDERS="$ALL_ORDERS"
 
 order_needs_gm() {
   case "$1" in
-    greedymini|mod-minimizer-greedymini) return 0 ;;
+    greedymini) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -28,7 +27,6 @@ order_gm_file() {
   # $1: order name. Only meaningful when order_needs_gm.
   case "$1" in
     greedymini) echo "$GM_DIR/w10_k15_canonical.gm" ;;
-    mod-minimizer-greedymini) echo "$GM_DIR/w10_k5_canonical.gm" ;;
     *) echo "" ;;
   esac
 }

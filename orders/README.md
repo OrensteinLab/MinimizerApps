@@ -107,10 +107,12 @@ kmc ...                                                        # no -or/-co: kmc
 ./minimap2 -a --minimizer-order greedymini \
     --greedymini-file orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq       # binary alphabet only, no Extend-k: gm_k must equal -k
 
-# mod-minimizer: O_t is any base order + --mod-t (minimap2's own -k/-w already match the paper's/kraken2's/sshash's m/w notation directly)
+# mod-minimizer: O_t is xor-hash or xor-pcg-hash + --mod-t (minimap2's own
+# -k/-w already match the paper's/kraken2's/sshash's m/w notation directly).
+# No mod-minimizer-greedymini for minimap2 (unlike kraken2/sshash) -- dropped
+# to avoid needing a second, differently-sized GreedyMini table (gm_k == the
+# mod-minimizer t, not k) just for this one variant.
 ./minimap2 -a --minimizer-order mod-minimizer-xor-hash --order-seed SEED --mod-t T ref.fa reads.fq
-./minimap2 -a --minimizer-order mod-minimizer-greedymini \
-    --greedymini-file orders/GreedyMini/w10_k5_canonical.gm --mod-t 5 ref.fa reads.fq  # table's gm_k must equal --mod-t
 ```
 
 ### CLI flag mapping
@@ -121,7 +123,7 @@ kmc ...                                                        # no -or/-co: kmc
 | RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` | `--minimizer-order xor-hash --order-seed SEED` |
 | RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` | `--minimizer-order xor-pcg-hash --order-seed SEED` |
 | GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `--minimizer-order greedymini --greedymini-file FILE.gm` (binary alphabet only, no Extend-k) |
-| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above | `--minimizer-order mod-minimizer-{xor-hash,pcg-xor-hash,greedymini} --mod-t T [--greedymini-file FILE.gm]` |
+| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above | `--minimizer-order mod-minimizer-{xor-hash,pcg-xor-hash} --mod-t T` (no `-greedymini` variant, unlike the other three apps — see the minimap2 usage block above) |
 
 ## Regenerating a `.gm` table
 

@@ -19,11 +19,10 @@ extern "C" {
 #endif
 
 // Materializes conf into a ready-to-use order context: loads the GreedyMini
-// table from disk when conf->kind is MM_ORDER_GREEDYMINI or
-// MM_ORDER_MOD_GREEDYMINI, validates conf->t for MOD_* kinds. Returns NULL
-// and writes a human-readable message into errbuf (always NUL-terminated)
-// on failure; conf->greedymini_file only needs to stay valid for the
-// duration of this call.
+// table from disk when conf->kind is MM_ORDER_GREEDYMINI, validates conf->t
+// for MOD_* kinds. Returns NULL and writes a human-readable message into
+// errbuf (always NUL-terminated) on failure; conf->greedymini_file only
+// needs to stay valid for the duration of this call.
 mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, size_t errbuf_len);
 
 // minimap2's own native invertible hash (sketch.c), exported (was file-local
