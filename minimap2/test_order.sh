@@ -143,6 +143,16 @@ r=4; k=15; w=10
 t=$(( r + (k - r) % w ))
 if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
 
+echo "== 10. mod-minimizer at a large window (w > 16): regression test for a stale kraken2-derived"
+echo "   assert that bounded w itself by ModResidueDeque::kMaxCap instead of only per-residue capacity =="
+for o in $ORDERS_MOD; do
+	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$MOD_T" -w 50 "$REF" "$QRY" > "$TMP/w50_$o.sam" 2>"$TMP/w50_$o.err"; then
+		ok "-w 50 builds+maps: $o"
+	else
+		bad "-w 50 builds+maps: $o ($(tail -1 "$TMP/w50_$o.err"))"
+	fi
+done
+
 echo
 echo "== summary: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

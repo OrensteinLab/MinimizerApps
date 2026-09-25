@@ -287,6 +287,27 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // residues' fronts, an O(w) op per output position -- the same complexity
 // class as native mm_sketch()'s own rescan branch, not a new source of
 // redundant work.
+//
+// KNOWN LIMITATION, not fixed here: this canonical single-pass approach
+// (ranking t-mers via min(fwd,rc), same as kraken2::ModSampler) is NOT
+// reverse-complement symmetric, because "reduce the winning t-mer's position
+// mod w" does not commute with mirroring a window end-to-end (verified: for
+// a window mapped under strand reversal, the two i-offsets sum to a fixed
+// constant `tmer_span-1`, but reducing each mod w independently does not
+// generally land on mirrored l-mer slots unless w happens to divide that
+// constant a particular way). Concretely: building an index from one strand
+// and querying with the reverse complement of the *same* physical sequence
+// can select largely disjoint sets of minimizers -- measured on a 3kb
+// real-genome test, a mod-minimizer-xor-hash mapping between forward and
+// reverse-complement copies of the same 3kb sequence shared only 4 of 140
+// minimizer keys, versus ~90% overlap for xor-hash/native/greedymini's
+// per-locus canonical-parsing designs, which don't have this issue. This is
+// the same property sshash's own mod-minimizer implementation works around
+// with a dual-probe/"regular parsing" fallback (orders/README.md's
+// "mod-minimizer" section, sshash/include/util.hpp's
+// compute_mod_minimizer_single_strand doc comment) -- not yet ported here;
+// mod-minimizer-* order results should be treated as unreliable for
+// cross-strand mapping until it is.
 // ---------------------------------------------------------------------------
 
 void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int len,
@@ -294,16 +315,28 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 {
 	const int t = ord->t;
 	assert(t > 0 && t < k);
-	assert(w >= 1 && w <= ModResidueDeque::kMaxCap);
+	assert(w > 0 && w < 256); // same bound native mm_sketch() itself asserts
 	const int tmer_span = w + k - t;
-	const int per_residue = tmer_span / w + 4;
-	assert(per_residue <= ModResidueDeque::kMaxCap);
-
+	// Each residue-class deque's `cap` bounds ModResidueDeque's own
+	// fixed-size backing array (data[kMaxCap], mod_residue_deque.h).
+	// kraken2::ModSampler (which this was ported from) sizes it as
+	// tmer_span/w+4 -- but ModResidueDeque::push_back has NO bounds check
+	// against `cap`: once size reaches cap, the next push_back silently
+	// wraps its write index onto data[head], corrupting front() (the
+	// selection result) instead of erroring. A run of push_monotone calls
+	// with strictly increasing ranks (nothing to pop) longer than that
+	// formula's estimate hits exactly this, and empirically does happen --
+	// found via a w=50 benchmark run collapsing to ~71% reads mapped
+	// (mod-minimizer-xor-hash on real chrX data) where tmer_span/w+4 = 5
+	// was too tight. Since the backing array is a fixed 16 slots regardless
+	// of `cap` (kraken2 itself never exercises large-w configurations where
+	// its own formula would be this tight), just always use the full
+	// kMaxCap instead of a formula that under-provisions here.
 	const uint64_t t_mask = (1ULL << (2 * t)) - 1, t_shift1 = (uint64_t)(2 * (t - 1));
 	const uint64_t k_mask = (1ULL << (2 * k)) - 1, k_shift1 = (uint64_t)(2 * (k - 1));
 
 	std::vector<ModResidueDeque> deques(w);
-	for (int a = 0; a < w; ++a) { deques[a].clear(); deques[a].cap = per_residue; }
+	for (int a = 0; a < w; ++a) { deques[a].clear(); deques[a].cap = ModResidueDeque::kMaxCap; }
 
 	struct LEntry { uint64_t kmer; uint32_t span; uint64_t y; int valid; };
 	std::vector<LEntry> lring(w);
@@ -379,20 +412,38 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		if (win < 0 || lmers_stored < w || ot < win + tmer_span - 1) continue;
 
 		const int wm = (int)(win % w);
-		uint64_t best_rank = UINT64_MAX; int best_p = -1;
+		// Tie-break by the TRUE absolute t-mer position (smallest wins --
+		// the paper's "prefer smallest i", i = pos-win), not `(a-wm)%w`:
+		// that's only equal to the true offset when pos-win < w. Since
+		// tmer_span = w+k-t is always > w (k>t always), a residue class's
+		// front can legitimately be more than one window-width ahead, and
+		// comparing the mod-w-reduced offset instead of the real one picks
+		// the wrong winner on a tie -- and ties are common with xor-hash's
+		// weak avalanche. Worse, the wrong comparison depends on `win`
+		// itself (via wm), i.e. on *where the current scan started*, not
+		// just on window content -- so the same physical repeat could tie-
+		// break differently between an index build (scanning a whole
+		// contig from position 0) and a query (scanning a read from its
+		// own position 0), silently breaking the seed match. Found via a
+		// w=50 benchmark run on real chrX data collapsing to ~71% reads
+		// mapped; verified fixed against a brute-force reference for
+		// several (w,k,t,seed) combinations, including this exact case.
+		uint64_t best_rank = UINT64_MAX; int best_a = -1; ssize_t best_pos = -1;
 		for (int a = 0; a < w; ++a) {
 			ModResidueDeque &dq = deques[(size_t)a];
 			while (!dq.empty() && dq.front().pos < win) dq.pop_front();
 			if (dq.empty()) continue;
-			int pp = a - wm;
-			if (pp < 0) pp += w;
 			const uint64_t r = dq.front().rank;
-			if (best_p < 0 || r < best_rank || (r == best_rank && pp < best_p)) { best_rank = r; best_p = pp; }
+			const ssize_t pos = dq.front().pos;
+			if (best_a < 0 || r < best_rank || (r == best_rank && pos < best_pos)) {
+				best_rank = r; best_pos = pos; best_a = a;
+			}
 		}
-		if (best_p >= 0) {
+		if (best_a >= 0) {
+			const int best_p = ((best_a - wm) % w + w) % w;
 			const ssize_t abs_ord = win + best_p;
 			if (abs_ord != last_emitted) {
-				const size_t sel = (size_t)((wm + best_p) % w);
+				const size_t sel = (size_t)best_a;
 				if (lring[sel].valid) {
 					mm128_t out;
 					out.x = (mm_hash64(lring[sel].kmer, k_mask) << 8) | lring[sel].span;

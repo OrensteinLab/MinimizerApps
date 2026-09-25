@@ -15,7 +15,10 @@ FIELDS = [
     "distinct_minimizers", "density_factor",
     "build_wall_time_sec", "build_peak_rss_kb",
     "map_wall_time_sec", "map_peak_rss_kb",
-    "n_reads", "frac_mapped", "frac_correct", "frac_correct_in_repeat", "mean_identity",
+    "n_reads", "n_reads_in_repeat", "frac_mapped",
+    "frac_correct", "frac_correct_in_repeat", "frac_incorrectly_mapped",
+    "frac_correct_strict50", "frac_correct_strict50_in_repeat",
+    "mean_identity",
 ]
 
 
@@ -37,9 +40,13 @@ def flatten(meta: dict) -> dict:
         "map_wall_time_sec": mapp.get("wall_time_sec"),
         "map_peak_rss_kb": mapp.get("peak_rss_kb"),
         "n_reads": acc.get("n_reads"),
+        "n_reads_in_repeat": acc.get("n_reads_in_repeat"),
         "frac_mapped": acc.get("frac_mapped"),
         "frac_correct": acc.get("frac_correct"),
         "frac_correct_in_repeat": acc.get("frac_correct_in_repeat"),
+        "frac_incorrectly_mapped": acc.get("frac_incorrectly_mapped"),
+        "frac_correct_strict50": acc.get("frac_correct_strict50"),
+        "frac_correct_strict50_in_repeat": acc.get("frac_correct_strict50_in_repeat"),
         "mean_identity": acc.get("mean_identity"),
     }
 
@@ -51,7 +58,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     rows = []
-    for meta_path in sorted((args.results_dir / "runs").glob("*/*/meta.json")):
+    for meta_path in sorted((args.results_dir / "runs").glob("**/meta.json")):
         meta = json.loads(meta_path.read_text())
         rows.append(flatten(meta))
 

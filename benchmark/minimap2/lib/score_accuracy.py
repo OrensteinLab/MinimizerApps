@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
-"""Score a PAF file against truth.tsv (see make_dataset.py): for each read,
-find its primary alignment (tp:A:P) and check whether it overlaps the read's
-true origin by at least `--min-overlap-frac` of the true span. Reports
-overall and repeat-region-only accuracy (the paper's own headline
-comparison) plus mean per-base identity (from PAF's de:f: tag, when mapped).
+"""Score a PAF file against truth.tsv (see make_dataset.py/pbsim_reads.py):
+for each read, find its primary alignment (tp:A:P) and check whether it
+overlaps the read's true origin, at two thresholds:
+
+  - "correct_lit": overlap >= 10% of the UNION of the true and reported
+    intervals -- the exact criterion both Winnowmap (Jain et al. 2020, "We
+    followed a similar criteria previously used by Li (2018)") and minimap2
+    (Li 2018, "the overlap length is >=10% of the true interval length" --
+    Winnowmap's own restatement uses the union, which is what's implemented
+    here) use, so this number is comparable to published minimap2/Winnowmap
+    accuracy figures.
+  - "correct_strict": overlap >= 50% of the true span -- this repo's
+    original, stricter threshold, kept for continuity with earlier smoke-scale
+    runs (see benchmark/minimap2/README.md's first sweep table).
+
+Reports both overall and repeat-region-only (the papers' own headline
+comparison -- Winnowmap's Table 3 restricts to reads sampled from the
+centromeric repeat array) plus mean per-base identity (from PAF's de:f:/dv:f:
+tag, when mapped).
 """
 from __future__ import annotations
 
@@ -70,7 +84,6 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--paf", required=True, type=Path)
     ap.add_argument("--truth", required=True, type=Path)
-    ap.add_argument("--min-overlap-frac", type=float, default=0.5)
     ap.add_argument("--json-out", type=Path)
     args = ap.parse_args(argv)
 
@@ -79,7 +92,8 @@ def main(argv=None) -> int:
 
     n_total = len(truth)
     n_repeat = sum(1 for t in truth.values() if t["in_repeat"])
-    n_mapped = n_correct = n_correct_repeat = 0
+    n_mapped = n_correct_lit = n_correct_lit_repeat = 0
+    n_correct_strict = n_correct_strict_repeat = 0
     identities = []
     for rid, t in truth.items():
         a = aligned.get(rid)
@@ -90,21 +104,40 @@ def main(argv=None) -> int:
             identities.append(1.0 - a["de"])
         ov = overlap_len(a["tstart"], a["tend"], t["start"], t["end"])
         true_span = t["end"] - t["start"]
-        correct = true_span > 0 and ov / true_span >= args.min_overlap_frac
-        if correct:
-            n_correct += 1
+        aligned_span = a["tend"] - a["tstart"]
+        union_span = true_span + aligned_span - ov
+
+        correct_lit = union_span > 0 and ov / union_span >= 0.10
+        correct_strict = true_span > 0 and ov / true_span >= 0.50
+
+        if correct_lit:
+            n_correct_lit += 1
             if t["in_repeat"]:
-                n_correct_repeat += 1
+                n_correct_lit_repeat += 1
+        if correct_strict:
+            n_correct_strict += 1
+            if t["in_repeat"]:
+                n_correct_strict_repeat += 1
+
+    def frac(n, d):
+        return round(n / d, 4) if d else None
 
     result = {
         "n_reads": n_total,
         "n_reads_in_repeat": n_repeat,
         "n_mapped": n_mapped,
-        "n_correct": n_correct,
-        "n_correct_in_repeat": n_correct_repeat,
-        "frac_mapped": round(n_mapped / n_total, 4) if n_total else None,
-        "frac_correct": round(n_correct / n_total, 4) if n_total else None,
-        "frac_correct_in_repeat": round(n_correct_repeat / n_repeat, 4) if n_repeat else None,
+        "frac_mapped": frac(n_mapped, n_total),
+        # Literature criterion (>=10% overlap of the union) -- comparable to
+        # published minimap2/Winnowmap numbers.
+        "n_correct": n_correct_lit,
+        "n_correct_in_repeat": n_correct_lit_repeat,
+        "frac_correct": frac(n_correct_lit, n_total),
+        "frac_correct_in_repeat": frac(n_correct_lit_repeat, n_repeat),
+        "frac_incorrectly_mapped": frac(n_mapped - n_correct_lit, n_total),
+        # This repo's original stricter threshold (>=50% of the true span),
+        # kept for continuity with earlier smoke-scale runs.
+        "frac_correct_strict50": frac(n_correct_strict, n_total),
+        "frac_correct_strict50_in_repeat": frac(n_correct_strict_repeat, n_repeat),
         "mean_identity": round(sum(identities) / len(identities), 4) if identities else None,
     }
     print(json.dumps(result, indent=2))

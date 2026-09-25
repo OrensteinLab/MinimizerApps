@@ -4,7 +4,7 @@ set -uo pipefail
 
 run_one() {
   local order="$1" seed="${2:-0}"
-  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$order"
+  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/k${K}_w${W}/$order"
   mkdir -p "$run_dir"
 
   local data_dir="$MINIMAP2_DATA_DIR/$DATASET"
