@@ -96,7 +96,8 @@ def default_orders() -> str:
             "orders",
             "native,xor-hash,xor-pcg-hash,greedymini,"
             "mod-minimizer-native-hash,mod-minimizer-xor-hash,"
-            "mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini",
+            "mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,"
+            "mod-minimizer-greedymini-v2",
         )
     )
 
@@ -111,7 +112,33 @@ def default_gm_file() -> Path:
 
 
 def mod_t_gm_file() -> Path:
-    """mod-minimizer-greedymini's O_t table (t=11, no CLI override -- see
+    """mod-minimizer-greedymini's O_t table for t=11 (no CLI override -- see
     lib/orders.sh::order_gm_file)."""
     name = str(_cfg().get("defaults", {}).get("mod_t_gm_file", "w21_k11_canonical.gm"))
     return gm_dir() / name
+
+
+def mod_t_gm_file_t10() -> Path:
+    """mod-minimizer-greedymini's O_t table for t=10."""
+    name = str(_cfg().get("defaults", {}).get("mod_t_gm_file_t10", "w22_k10_canonical.gm"))
+    return gm_dir() / name
+
+
+def mod_t_gm_labels() -> dict[str, str]:
+    """The labeled GreedyMini table-variant registry (config.yaml's
+    top-level mod_t_gm_labels map): label -> filename. Lets scripts.orders'
+    ORDERS enumerate registered variants directly, instead of needing a
+    matching manual edit alongside every new config.yaml line."""
+    return dict(_cfg().get("mod_t_gm_labels", {}) or {})
+
+
+def mod_t_gm_label_file(label: str) -> Path:
+    """gm file for a labeled mod-minimizer-greedymini variant (e.g. "v2" for
+    order "mod-minimizer-greedymini-v2"), from config.yaml's top-level
+    mod_t_gm_labels map -- register a new variant by adding a line there, not
+    by touching this function (mirrors lib/orders.sh's mod_t_gm_label_file)."""
+    labels = _cfg().get("mod_t_gm_labels", {}) or {}
+    name = labels.get(label)
+    if name is None:
+        _die(f"unknown GreedyMini label '{label}' (add it to config.yaml's mod_t_gm_labels)")
+    return gm_dir() / str(name)

@@ -9,7 +9,7 @@
 # sshash/include/custom_order_hasher.hpp::parse_order_name), so this file
 # just needs to also thread `--t-length` through for them.
 
-ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini"
+ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,mod-minimizer-greedymini-v2"
 
 order_dir_name() {
   case "$1" in
@@ -21,34 +21,52 @@ order_dir_name() {
     mod-minimizer-xor-hash) echo "mod_minimizer_xor_hash" ;;
     mod-minimizer-pcg-xor-hash) echo "mod_minimizer_pcg_xor_hash" ;;
     mod-minimizer-greedymini) echo "mod_minimizer_greedymini" ;;
+    # Labeled table variant (see config.yaml's mod_t_gm_labels): any
+    # "mod-minimizer-greedymini-<label>" gets its own dir, generically -- no
+    # new case needed here to register a new label.
+    mod-minimizer-greedymini-*) echo "mod_minimizer_greedymini_${1#mod-minimizer-greedymini-}" ;;
     *) die "unknown order: $1 (see orders/README.md)" ;;
   esac
 }
 
 # t values to sweep for order `$1`, space-separated, or the sentinel "-" for
 # orders with no t at all (the 4 base orders):
-#   - mod-minimizer-greedymini is fixed at t=11 (matches w21_k11_canonical.gm's
-#     own gm_k exactly, no Extend-k needed there).
+#   - mod-minimizer-greedymini sweeps both t=10 (config.yaml's mod_t_gm_file_t10)
+#     and t=11 (mod_t_gm_file, matches w21_k11_canonical.gm's own gm_k exactly,
+#     no Extend-k needed there) -- same as the 3 hash-based orders below.
+#   - a labeled variant (mod-minimizer-greedymini-<label>, config.yaml's
+#     mod_t_gm_labels) is fixed at t=11, matching the convention so far.
 #   - the 3 hash-based mod-minimizer orders sweep both t=10 (reproduces the
 #     mod-minimizer paper's own published Human/GRCh38 numbers) and t=11
 #     (matches the GreedyMini t-order table's length, for a fair comparison
 #     against mod-minimizer-greedymini).
 order_t_values() {
   case "$1" in
-    mod-minimizer-greedymini) echo "11" ;;
+    mod-minimizer-greedymini) echo "10 11" ;;
+    mod-minimizer-greedymini-*) echo "11" ;;
     mod-minimizer-*) echo "10 11" ;;
     *) echo "-" ;;
   esac
 }
 
-# GreedyMini table to use for order `$1`. `$2` is the CLI/config override for
-# plain greedymini only (--greedy-mini-file) -- mod-minimizer-greedymini's
-# O_t table always comes from config.yaml's mod_t_gm_file (no CLI override,
-# to avoid ambiguity when both orders run in the same sweep).
+# GreedyMini table to use for order `$1` at t-length `$3` (blank/irrelevant
+# for plain greedymini). `$2` is the CLI/config override for plain greedymini
+# only (--greedy-mini-file) -- mod-minimizer-greedymini's O_t table always
+# comes from config.yaml (mod_t_gm_file/mod_t_gm_file_t10/mod_t_gm_labels, no
+# CLI override, to avoid ambiguity when several such orders run in the same
+# sweep).
 order_gm_file() {
   case "$1" in
     greedymini) echo "${2:-$DEFAULT_GM_FILE}" ;;
-    mod-minimizer-greedymini) echo "$MOD_T_GM_FILE" ;;
+    mod-minimizer-greedymini)
+      case "$3" in
+        10) echo "$MOD_T_GM_FILE_T10" ;;
+        *) echo "$MOD_T_GM_FILE" ;;
+      esac
+      ;;
+    # Labeled table variant: looked up from config.yaml's mod_t_gm_labels by
+    # label, generically -- register a new label there, not a new case here.
+    mod-minimizer-greedymini-*) mod_t_gm_label_file "${1#mod-minimizer-greedymini-}" ;;
     *) echo "" ;;
   esac
 }
@@ -79,9 +97,12 @@ build_order_flags() {
       [[ -n "$t_len" ]] || die "order $order requires a t value (see order_t_values)"
       ORDER_FLAGS+=(-O "$order" --t-length "$t_len")
       ;;
-    mod-minimizer-greedymini)
+    mod-minimizer-greedymini|mod-minimizer-greedymini-*)
+      # A labeled variant (e.g. mod-minimizer-greedymini-v2) is still plain
+      # mod-minimizer-greedymini as far as sshash's own -O parser is
+      # concerned -- only --greedy-mini-file differs; see order_gm_file.
       [[ -n "$t_len" ]] || die "order $order requires a t value (see order_t_values)"
-      [[ -n "$gm_file" ]] || gm_file="$MOD_T_GM_FILE"
+      [[ -n "$gm_file" ]] || die "order $order requires a gm_file (see order_gm_file)"
       [[ -f "$gm_file" ]] || die "GreedyMini table not found: $gm_file"
       ORDER_FLAGS+=(-O mod-minimizer-greedymini --greedy-mini-file "$gm_file" --t-length "$t_len")
       ;;
