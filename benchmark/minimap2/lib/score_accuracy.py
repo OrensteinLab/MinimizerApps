@@ -34,6 +34,7 @@ def load_truth(path: Path) -> dict[str, dict]:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             truth[row["read_id"]] = {
+                "contig": row["true_contig"],
                 "start": int(row["true_start"]),
                 "end": int(row["true_end"]),
                 "strand": row["true_strand"],
@@ -51,7 +52,7 @@ def parse_paf_primary(path: Path) -> dict[str, dict]:
             cols = line.rstrip("\n").split("\t")
             if len(cols) < 12:
                 continue
-            qname, _qlen, _qs, _qe, strand, _tname, _tlen, tstart, tend = cols[:9]
+            qname, _qlen, _qs, _qe, strand, tname, _tlen, tstart, tend = cols[:9]
             tags = {}
             for tag in cols[12:]:
                 parts = tag.split(":", 2)
@@ -67,6 +68,7 @@ def parse_paf_primary(path: Path) -> dict[str, dict]:
             # chaining/minimizer matches alone) -- prefer de, fall back to dv.
             div = tags.get("de", tags.get("dv"))
             best[qname] = {
+                "tname": tname,
                 "tstart": int(tstart),
                 "tend": int(tend),
                 "strand": strand,
@@ -102,13 +104,20 @@ def main(argv=None) -> int:
         n_mapped += 1
         if a["de"] is not None:
             identities.append(1.0 - a["de"])
-        ov = overlap_len(a["tstart"], a["tend"], t["start"], t["end"])
+        # A read whose primary alignment lands on a *different* contig than
+        # its true origin is wrong regardless of coordinate overlap -- e.g.
+        # grch38_wg has 195 sequences, so two contigs can easily share a
+        # coordinate range. Single-contig datasets (smoke, chm13_chrX) never
+        # hit this (there's only one contig to land on), which is exactly
+        # why it went unnoticed until a real multi-contig genome was added.
+        same_contig = a["tname"] == t["contig"]
+        ov = overlap_len(a["tstart"], a["tend"], t["start"], t["end"]) if same_contig else 0
         true_span = t["end"] - t["start"]
         aligned_span = a["tend"] - a["tstart"]
         union_span = true_span + aligned_span - ov
 
-        correct_lit = union_span > 0 and ov / union_span >= 0.10
-        correct_strict = true_span > 0 and ov / true_span >= 0.50
+        correct_lit = same_contig and union_span > 0 and ov / union_span >= 0.10
+        correct_strict = same_contig and true_span > 0 and ov / true_span >= 0.50
 
         if correct_lit:
             n_correct_lit += 1

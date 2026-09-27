@@ -27,9 +27,21 @@ run_one() {
   local acc_json="$run_dir/accuracy.json"
   local meta_json="$run_dir/meta.json"
 
+  # -x map-pb: the preset both Winnowmap's own paper (Jain et al. 2020) and
+  # minimap2's own docs recommend for PacBio reads -- every dataset here is
+  # PacBio-simulated (see lib/pbsim_reads.py). Beyond scoring/chaining
+  # defaults tuned for PacBio's error profile, this enables HPC
+  # (homopolymer-compressed) k-mers (`-H`), which we'd otherwise silently
+  # never turn on despite benchmarking exactly the read type it's meant
+  # for. -k/-w passed *after* still win (confirmed via `-d` build log's own
+  # "kmer size: $K; skip: $W" report) -- only k/w/H need to be at build
+  # time (baked into the index); the other -x map-pb effects (scoring,
+  # chaining bandwidth, etc.) are map-time parameters and must be repeated
+  # on the map invocation too, where the loaded index's own k/w/H silently
+  # win over the preset's (a harmless, expected stderr warning).
   echo "== [$order] building index (k=$K w=$W ${ORDER_FLAGS[*]:-}) ==" >&2
   if ! /usr/bin/time -v -o "$build_time" \
-      "$MINIMAP2_BIN" -d "$mmi" -k "$K" -w "$W" "${ORDER_FLAGS[@]}" -t "$THREADS" "$genome" 2> "$build_log"; then
+      "$MINIMAP2_BIN" -d "$mmi" -x map-pb -k "$K" -w "$W" "${ORDER_FLAGS[@]}" -t "$THREADS" "$genome" 2> "$build_log"; then
     echo "  build FAILED, see $build_log" >&2
     tail -5 "$build_log" >&2
     return 1
@@ -37,7 +49,7 @@ run_one() {
 
   echo "== [$order] mapping ${reads##*/} ==" >&2
   if ! /usr/bin/time -v -o "$map_time" \
-      "$MINIMAP2_BIN" -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
+      "$MINIMAP2_BIN" -x map-pb -c -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
     echo "  map FAILED, see $map_log" >&2
     tail -5 "$map_log" >&2
     return 1

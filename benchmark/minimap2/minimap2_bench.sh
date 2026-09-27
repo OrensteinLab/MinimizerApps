@@ -47,7 +47,7 @@ cmd_pbsim_reads() {
   local model_path="$model"
   [ -f "$model_path" ] || model_path="$(dirname "$PBSIM")/../data/$model"
   "$PYTHON" lib/pbsim_reads.py --dataset-dir "$MINIMAP2_DATA_DIR/$DATASET" \
-    --pbsim-bin "$PBSIM" --model "$model_path" --depth "$depth"
+    --pbsim-bin "$PBSIM" --samtools "$SAMTOOLS" --model "$model_path" --depth "$depth"
 }
 
 cmd_sweep() {
@@ -71,7 +71,7 @@ cmd_sweep() {
 
 cmd_export() {
   "$PYTHON" lib/export.py --results-dir "$MINIMAP2_RESULTS_DIR" \
-    --out "$MINIMAP2_RESULTS_DIR/minimap2_runs.csv"
+    --data-dir "$MINIMAP2_DATA_DIR" --samtools "$SAMTOOLS"
 }
 
 cmd_list() {
