@@ -88,18 +88,33 @@ load_bench_config() {
   local gm_dir
   gm_dir="$(_config_scalar paths gm_dir)"
   gm_dir="${gm_dir:-../../orders/GreedyMini}"
-  local gm_dir_abs
-  gm_dir_abs="$(cd "$BENCHMARK_DIR" && cd "$gm_dir" && pwd)"
+  GM_DIR_ABS="$(cd "$BENCHMARK_DIR" && cd "$gm_dir" && pwd)"
 
   local default_gm
   default_gm="$(_config_scalar defaults gm_file)"
   default_gm="${default_gm:-w11_k15_canonical.gm}"
-  DEFAULT_GM_FILE="$gm_dir_abs/$default_gm"
+  DEFAULT_GM_FILE="$GM_DIR_ABS/$default_gm"
 
-  # mod-minimizer-greedymini's O_t table (t=11), separate from plain
+  # mod-minimizer-greedymini's O_t table for t=11, separate from plain
   # greedymini's own (Extend-k'd) table above -- see config.yaml.
   local mod_t_gm
   mod_t_gm="$(_config_scalar defaults mod_t_gm_file)"
   mod_t_gm="${mod_t_gm:-w21_k11_canonical.gm}"
-  MOD_T_GM_FILE="$gm_dir_abs/$mod_t_gm"
+  MOD_T_GM_FILE="$GM_DIR_ABS/$mod_t_gm"
+
+  # ...and for t=10.
+  local mod_t_gm_t10
+  mod_t_gm_t10="$(_config_scalar defaults mod_t_gm_file_t10)"
+  mod_t_gm_t10="${mod_t_gm_t10:-w22_k10_canonical.gm}"
+  MOD_T_GM_FILE_T10="$GM_DIR_ABS/$mod_t_gm_t10"
+}
+
+# gm file for a "mod-minimizer-greedymini-<label>" variant, from config.yaml's
+# top-level mod_t_gm_labels map -- register a new variant by adding a line
+# there, not by touching this function.
+mod_t_gm_label_file() {
+  local label="$1" file
+  file="$(_config_scalar mod_t_gm_labels "$label")"
+  [[ -n "$file" ]] || die "unknown GreedyMini label '$label' (add it to config.yaml's mod_t_gm_labels)"
+  echo "$GM_DIR_ABS/$file"
 }

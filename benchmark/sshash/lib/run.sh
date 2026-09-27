@@ -210,18 +210,46 @@ run_schemes() {
   orders_list="$(resolve_orders)"
   IFS=',' read -r -a order_arr <<<"$orders_list"
 
+  # A mod-minimizer-* order is unconditionally run under "regular" modality
+  # (see build_order_flags), regardless of -M; its {metric}_ratio columns
+  # (scripts/export.py) need a same-modality "native" run to divide by. Make
+  # sure one exists per dataset/seed whenever this sweep includes any
+  # mod-minimizer-* order -- independent of whatever -M was passed for the
+  # rest of the sweep -- instead of silently leaving those columns blank
+  # until someone remembers to run `-O native -M regular` by hand.
+  local needs_native_regular=0 o
+  for o in "${order_arr[@]}"; do
+    [[ "$(trim "$o")" == mod-minimizer-* ]] && needs_native_regular=1 && break
+  done
+  # ...unless the sweep already explicitly builds "native" under "regular"
+  # itself (e.g. `-O all -M regular`, where every non-mod-minimizer order,
+  # including native, takes modality "$MODALITY" == regular below) -- then
+  # the per-order loop's own native/regular run already covers it, and
+  # injecting a second one here would just be identical, wasted work under
+  # --force (the default skip-if-exists behavior masks it otherwise).
+  if [[ "$needs_native_regular" == 1 && "${MODALITY:-canonical}" == "regular" ]]; then
+    for o in "${order_arr[@]}"; do
+      [[ "$(trim "$o")" == "native" ]] && needs_native_regular=0 && break
+    done
+  fi
+
   local ds order i seed t_val gm_file
   for ds in "${ds_arr[@]}"; do
     ds="$(trim "$ds")"
     [[ -n "$ds" ]] || continue
     for ((i = 0; i < N_SEEDS; i++)); do
       seed="${BENCH_SEEDS[$i]}"
+      if [[ "$needs_native_regular" == 1 ]]; then
+        run_one "$ds" "$K" "$M" "native" "" "$seed" "$i" "" "regular"
+      fi
       for order in "${order_arr[@]}"; do
         order="$(trim "$order")"
         [[ -n "$order" ]] || continue
-        gm_file="$(order_gm_file "$order" "$GM_FILE")"
         for t_val in $(order_t_values "$order"); do
           [[ "$t_val" == "-" ]] && t_val=""
+          # gm_file depends on t (e.g. mod-minimizer-greedymini's t=10 vs
+          # t=11 use different tables), so it's resolved per t, not per order.
+          gm_file="$(order_gm_file "$order" "$GM_FILE" "$t_val")"
           run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "$t_val" "${MODALITY:-canonical}"
         done
       done

@@ -281,6 +281,14 @@ RUN_FIELDS = (
 )
 
 
+# Datasets that are real runs on disk (so --dataset-file/-d smoke sweeps work
+# for local smoke testing, see README "Smoke testing") but never belong in
+# the shipped CSV/XLSX reports -- excluded here, not by hand-editing the
+# exported files, so every export (CLI, `run`'s automatic export, re-export)
+# stays consistent.
+EXCLUDED_DATASETS = frozenset({"smoke"})
+
+
 def iter_run_dirs(runs_root: Path) -> list[Path]:
     if not runs_root.is_dir():
         return []
@@ -1065,7 +1073,7 @@ def index_rows() -> list[dict]:
         row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order/scheme; a mod-minimizer-* order is always regular regardless of this flag."),
         row("all", "scheme", "minimizer (classical, per-locus-canonicalized) or mod-minimizer (wider t-mer scan) -- see scripts/export.py:scheme_and_order"),
         row("all", "order", "base order/hash within scheme, normalized so the same base order has the same name under either scheme (sshash's own CLI names diverge, e.g. xor-pcg-hash vs mod-minimizer-pcg-xor-hash): native-hash | xor-hash | pcg-xor-hash | greedymini"),
-        row("all", "t", "t-mer length for mod-minimizer's inner order O_t (blank for the 4 base orders); 10 reproduces the mod-minimizer paper's own published numbers, 11 matches the GreedyMini t-order table's own length (fixed for mod-minimizer-greedymini)"),
+        row("all", "t", "t-mer length for mod-minimizer's inner order O_t (blank for the 4 base orders); 10 reproduces the mod-minimizer paper's own published numbers, 11 matches the GreedyMini t-order table's own length (a labeled table variant, e.g. mod-minimizer-greedymini-v2, is fixed at t=11)"),
         row("all", "num_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
         row("summary/runs", "bits_per_kmer", "index_bytes_on_disk * 8 / num_kmers"),
@@ -1114,8 +1122,12 @@ ORDER_DESCRIPTIONS = {
         "cli": "-O mod-minimizer-pcg-xor-hash --t-length T -s SEED",
     },
     "mod-minimizer-greedymini": {
-        "description": "Mod-minimizer: ranks t-mers (t=11) by the GreedyMini w21_k11 rank table, samples the m-mer at the winning t-mer's position mod w",
-        "cli": "-O mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/w21_k11_canonical.gm --t-length 11 -s SEED",
+        "description": "Mod-minimizer: ranks t-mers by the GreedyMini w21_k11 (t=11) or w22_k10 (t=10) rank table, samples the m-mer at the winning t-mer's position mod w",
+        "cli": "-O mod-minimizer-greedymini --greedy-mini-file FILE.gm --t-length T -s SEED",
+    },
+    "mod-minimizer-greedymini-v2": {
+        "description": "Mod-minimizer: like mod-minimizer-greedymini, but ranks t-mers (t=11) by an alternate/updated GreedyMini w21_k11 rank table -- an A/B comparison against the original table (config.yaml's mod_t_gm_labels)",
+        "cli": "-O mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/w21_k11_canonical_v2.gm --t-length 11 -s SEED",
     },
 }
 
@@ -1140,9 +1152,10 @@ def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) 
     dataset is pure duplication): the order's description/CLI/w/expected
     density_factor, plus each dataset's particular (measured, mean/std over
     seeds) density_factor pivoted into its own columns (see
-    orders_field_order). t is None (blank) for the 4 base orders and
-    mod-minimizer-greedymini (fixed at t=11 -- see orders/README.md), and 10
-    or 11 for the 3 hash-based mod-minimizer orders (see
+    orders_field_order). t is None (blank) for the 4 base orders and a
+    labeled table variant like mod-minimizer-greedymini-v2 (fixed at t=11 --
+    see orders/README.md), and 10 or 11 for the 3 hash-based mod-minimizer
+    orders and mod-minimizer-greedymini itself (see
     scripts/orders.py::order_t_values). Raw minimizer_density isn't kept
     anywhere -- density_factor is enough."""
     expected = expected or {}
@@ -1269,7 +1282,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     rows: list[dict] = []
     for run_dir in iter_run_dirs(runs_root):
         row = load_run_row(run_dir, runs_root)
-        if row:
+        if row and row.get("dataset") not in EXCLUDED_DATASETS:
             rows.append(row)
     if not rows:
         die(f"no completed runs in {runs_root}")
