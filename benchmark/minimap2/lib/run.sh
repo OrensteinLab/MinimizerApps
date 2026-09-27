@@ -3,8 +3,8 @@
 set -uo pipefail
 
 run_one() {
-  local order="$1" seed="${2:-0}"
-  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/k${K}_w${W}/$order"
+  local order="$1" seed="${2:-0}" seed_idx="${3:-0}"
+  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/k${K}_w${W}/$order/$seed_idx"
   mkdir -p "$run_dir"
 
   local data_dir="$MINIMAP2_DATA_DIR/$DATASET"
@@ -61,7 +61,7 @@ run_one() {
   "$PYTHON" "$HERE_DIR/lib/score_accuracy.py" --paf "$paf" --truth "$truth" --json-out "$acc_json" >&2
 
   "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
-    --order "$order" --seed "$seed" --k "$K" --w "$W" --mod-t "$MOD_T" --dataset "$DATASET" \
+    --order "$order" --seed "$seed" --seed-idx "$seed_idx" --k "$K" --w "$W" --mod-t "$MOD_T" --dataset "$DATASET" \
     --build-time "$build_time" --map-time "$map_time" \
     --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \
     --accuracy "$acc_json" --out "$meta_json" >/dev/null

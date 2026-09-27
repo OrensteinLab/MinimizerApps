@@ -52,3 +52,13 @@ build_order_flags() {
 }
 
 order_dir_name() { echo "$1"; }
+
+# native has no order-dependent behavior at all; greedymini's ranks come
+# from its table file, not a seed. Every other order takes --order-seed and
+# should be swept across the full seed list, not just one.
+order_is_seed_dependent() {
+  case "$1" in
+    native) return 1 ;;
+    *) ! order_needs_gm "$1" ;;
+  esac
+}

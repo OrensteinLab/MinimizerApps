@@ -55,7 +55,8 @@ known ground truth (`truth.tsv`), 30% deliberately sampled from inside the
 repeat. Good for fast iteration and CI-scale sanity checks; too small and
 too artificial for real accuracy conclusions.
 
-**`chm13_chrX`**: the real dataset -- see "Results" below. To regenerate:
+**`chm13_chrX`**: the real dataset, matching Winnowmap's own D1 (Jain et al.
+2020: simulated PacBio reads against T2T CHM13 chrX). To regenerate:
 
 ```bash
 mkdir -p "$MINIMAP2_DATA_DIR/chm13_chrX" && cd "$MINIMAP2_DATA_DIR/chm13_chrX"
@@ -76,8 +77,7 @@ a conda env (`minimap2_bench`) with `pbsim2` (a real ONT/PacBio error-model
 simulator); once set up, `./minimap2_bench.sh pbsim-reads` replaces
 `reads.fa`/`truth.tsv` with pbsim2's own simulated reads (still sampled from
 the same genome+repeat, ground truth parsed straight from pbsim2's own
-`.maf` output) -- `lib/pbsim_reads.py`'s docstring has the details. This is
-what actually produced the numbers below.
+`.maf` output) -- `lib/pbsim_reads.py`'s docstring has the details.
 
 ## `.env` setup
 
@@ -98,12 +98,12 @@ never clobbered by `.env`.
 
 | Path | Role |
 |---|---|
-| `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed]`, `sweep [orders...]`, `export`, `list` |
+| `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
-| `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution) + `config.yaml` seed loading |
-| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`; no `mod-minimizer-greedymini` -- see README below) |
+| `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution) + `config.yaml` seed loading (`$ALL_SEEDS`) |
+| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`; no `mod-minimizer-greedymini`, see below); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
-| `lib/run.sh` | Single (order, seed) run: build, map, score, `meta.json` |
+| `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
 | `lib/export.py` | Aggregates every `runs/**/meta.json` into `minimap2_runs.csv` |
@@ -127,84 +127,15 @@ cd benchmark/minimap2
 /usr/bin/python3.11 -m pytest tests/ -q
 ```
 
-## Results
+## Known limitations
 
-Swept at `k=15, w=10` -- minimap2's own defaults, and mod-minimizer's actual
-design regime (it only improves on a classic minimizer's density bound when
-the sampled substring `k` is large *relative to* the window `w`, i.e. `w <
-k`; there is no `w=50`/other-window sweep in this harness).
+**mod-minimizer is only relevant when `w < k`**: it improves on a classic
+minimizer's density bound specifically in the regime where the sampled
+substring `k` is large *relative to* the window `w`. This harness's default
+sweep (`k=15, w=10`) is in that regime; don't expect the same benefit (or
+run it at all) for `w >= k`.
 
-### Real chromosome (T2T CHM13 chrX v0.7, 154.3 Mbp)
-
-`data/chm13_chrX/` -- the exact assembly and repeat-region coordinates
-Winnowmap's own D1/D3 evaluation used (Jain et al. 2020): downloaded from
-[github.com/marbl/CHM13](https://github.com/marbl/CHM13) (md5-verified), the
-centromeric repeat span (57,828,561-60,934,693) taken directly from that
-paper's Table 3 caption. 85,324 real pbsim2 PacBio-model reads (P6C4, 5x
-depth), 4 threads, single seed (`0x2545F4914F6CDD1D`) for the hash-based
-orders.
-
-| order | density_factor | build time (s) | build peak RSS (MB) | map time (s) | map peak RSS (MB) | frac_mapped | frac_correct | frac_correct_in_repeat | mean_identity |
-|---|---|---|---|---|---|---|---|---|---|
-| **greedymini** | **1.545** | 6.12 | 1124 | 5.92 | 1288 | 0.998 | **0.991** | **0.745** | 0.924 |
-| mod-minimizer-xor-hash | 1.567 | 14.04 | 1129 | 7.59 | 1294 | 0.998 | 0.989 | 0.745 | 0.925 |
-| mod-minimizer-pcg-xor-hash | 1.600 | 14.02 | 1142 | 7.97 | 1303 | 0.998 | 0.989 | 0.742 | 0.924 |
-| xor-hash | 1.944 | 4.50 | 1443 | 7.33 | 1599 | 0.998 | **0.992** | **0.786** | 0.926 |
-| xor-pcg-hash | 2.010 | 4.85 | 1455 | 6.92 | 1595 | 0.999 | 0.991 | 0.731 | 0.926 |
-| native | 2.072 | 4.97 | 1453 | 7.05 | 1593 | 0.999 | 0.991 | 0.716 | 0.926 |
-
-`greedymini` has the lowest density of the six orders with no accuracy cost
-(its `frac_correct`/`frac_correct_in_repeat` are competitive with the best of
-the rest). `xor-hash` has the best raw accuracy, particularly in-repeat.
-mod-minimizer orders reach the lowest densities but cost roughly 3x the
-build time of the hash-based orders -- expected, since `sketch_mod_minimizer`
-scans `w` monotone deques per t-mer rather than one circular buffer. Build
-peak RSS tracks density inversely (fewer, lower-density minimizers -> a
-smaller index hash table); map-time RSS differences are smaller since most
-of that memory is the read set, not the index.
-
-`greedymini` uses `orders/GreedyMini/w10_k15_canonical.gm` (gm_k=15,
-matching `-k 15` exactly, generated with the
-[GreedyMini](https://github.com/OrensteinLab/GreedyMini) tool's `-mode
-expected -w 10 -k 15`, per `orders/README.md`'s "Regenerating a `.gm`
-table" -- i.e. generated for, and used at, this same `w=10`). There is no
-`mod-minimizer-greedymini` for minimap2, unlike kraken2/sshash -- it would
-need a second, differently-sized GreedyMini table (gm_k == the
-mod-minimizer `t`, not `k`) just for that one variant, so it was dropped
-instead of adding that second table.
-
-### Synthetic dataset (`smoke`, ~300kb + 20kb repeat)
-
-Same six orders/seed, on the small built-in dataset (fast iteration, not a
-source of accuracy conclusions -- see "Datasets" above):
-
-| order | density_factor | build time (s) | build peak RSS (MB) | map time (s) | map peak RSS (MB) | frac_mapped | frac_correct | frac_correct_in_repeat | mean_identity |
-|---|---|---|---|---|---|---|---|---|---|
-| **greedymini** | **1.514** | 0.04 | 7.0 | 0.06 | 15.3 | 0.995 | 0.969 | **0.796** | 0.999 |
-| mod-minimizer-xor-hash | 1.559 | 0.05 | 5.0 | 0.08 | 13.2 | **1.000** | 0.966 | 0.741 | 0.999 |
-| mod-minimizer-pcg-xor-hash | 1.580 | 0.06 | 5.0 | 0.08 | 19.3 | 0.995 | 0.966 | 0.778 | 0.999 |
-| xor-hash | 1.912 | 0.04 | 5.0 | 0.05 | 13.2 | 0.995 | 0.959 | 0.722 | 0.999 |
-| xor-pcg-hash | 2.000 | 0.04 | 5.0 | 0.05 | 17.3 | 0.995 | 0.954 | 0.685 | 0.999 |
-| native | 2.058 | 0.05 | 5.0 | 0.06 | 15.7 | 0.995 | **0.964** | 0.759 | 0.999 |
-
-Same density ordering as the real chromosome (greedymini < mod-minimizer <
-xor-hash <~ xor-pcg-hash < native); build/map times here are all under a
-tenth of a second and dominated by process startup, not a meaningful
-timing signal at this scale -- the chm13_chrX table above is the one to
-read for time/memory comparisons.
-
-### mod-minimizer's known limitation
-
-Two real bugs were found and fixed in `minimap2/order.cpp`'s
-`sketch_mod_minimizer` (see that file's git history): a tie-break that
-compared `(residue - window_start) % w` instead of the true (unreduced)
-t-mer offset -- wrong on any rank tie, and ties are common with xor-hash's
-weak avalanche -- and a per-residue deque capacity formula that could
-silently overflow its fixed-size backing array for large `w`. Both are
-fixed and verified against a brute-force reference (see the commit for the
-exact Python cross-check) across several `(w,k,t,seed)` combinations.
-
-A **third, unfixed, fundamental issue** remains: the mod-minimizer scheme's
+**mod-minimizer's reverse-complement asymmetry (unfixed)**: the scheme's
 "reduce the winning t-mer's position mod w" rule is provably not
 reverse-complement symmetric (the two t-mer offsets under strand reversal
 sum to a fixed constant, but reducing each mod `w` independently doesn't
@@ -215,9 +146,15 @@ strands, versus ~90%+ for xor-hash/native/greedymini, which use per-locus
 canonical parsing and don't have this issue. This is the same property
 `orders/README.md`'s "mod-minimizer" section already documents sshash
 working around with a dual-probe/"regular parsing" fallback -- **not yet
-ported to minimap2**. It has little visible effect at this harness's `w=10`
-(there's enough redundant minimizer coverage that mapping still mostly
-succeeds), which is why the numbers above look reasonable; a sparser
-setting (larger `k`, still `w < k`) could still expose it. **Treat every
-mod-minimizer-\* result here as provisional** until that fallback is
-ported.
+ported to minimap2**. It has little visible effect at `w=10` (there's
+enough redundant minimizer coverage that mapping still mostly succeeds); a
+sparser, still-in-regime setting (larger `k`, same `w`) could expose it
+more. **Treat every mod-minimizer-\* result as provisional** until that
+fallback is ported.
+
+Two now-fixed bugs in `minimap2/order.cpp`'s `sketch_mod_minimizer` (see
+that file's git history for the exact fixes and brute-force cross-checks):
+a tie-break that compared `(residue - window_start) % w` instead of the
+true (unreduced) t-mer offset -- wrong on any rank tie, and ties are common
+with xor-hash's weak avalanche -- and a per-residue deque capacity formula
+that could silently overflow its fixed-size backing array for large `w`.

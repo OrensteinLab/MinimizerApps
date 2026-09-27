@@ -9,6 +9,7 @@ source lib/constants.sh
 source lib/orders.sh
 source lib/run.sh
 load_bench_env
+load_bench_config
 
 usage() {
   cat <<'EOF'
@@ -20,8 +21,10 @@ Commands:
                                 simulated reads (needs $PBSIM; see
                                 environment.yml/setup.sh). model defaults to
                                 R94.model (ONT); depth defaults to 8.
-  run <order> [seed]           Run one order (see lib/orders.sh ALL_ORDERS)
-  sweep [orders...]            Run every default order (or the given list)
+  run <order> [seed] [seed_idx] Run one order (see lib/orders.sh ALL_ORDERS)
+  sweep [orders...]            Run every default order (or the given list);
+                                seed-dependent orders (not native/greedymini)
+                                are swept across config.yaml's full seed list
   export                       Aggregate runs/**/meta.json -> minimap2_runs.csv
   list                         List orders sweep would run
 EOF
@@ -52,10 +55,16 @@ cmd_sweep() {
   if [ ${#orders[@]} -eq 0 ]; then
     IFS=',' read -r -a orders <<< "$DEFAULT_ORDERS"
   fi
-  local seed=${SWEEP_SEED:-0x2545F4914F6CDD1D}
   local fail=0
   for o in "${orders[@]}"; do
-    run_one "$o" "$seed" || fail=1
+    if order_is_seed_dependent "$o" && [ "${#ALL_SEEDS[@]}" -gt 0 ]; then
+      local i
+      for i in "${!ALL_SEEDS[@]}"; do
+        run_one "$o" "${ALL_SEEDS[$i]}" "$i" || fail=1
+      done
+    else
+      run_one "$o" "${ALL_SEEDS[0]:-0x2545F4914F6CDD1D}" 0 || fail=1
+    fi
   done
   return $fail
 }

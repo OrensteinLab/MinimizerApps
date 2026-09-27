@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 FIELDS = [
-    "dataset", "order", "seed", "k", "w", "mod_t",
+    "dataset", "order", "seed", "seed_idx", "k", "w", "mod_t",
     "distinct_minimizers", "avg_occurrences", "density_factor",
     "build_wall_time_sec", "build_peak_rss_kb",
     "map_wall_time_sec", "map_peak_rss_kb",
@@ -30,6 +30,7 @@ def flatten(meta: dict) -> dict:
         "dataset": meta.get("dataset"),
         "order": meta.get("order"),
         "seed": meta.get("seed"),
+        "seed_idx": meta.get("seed_idx"),
         "k": meta.get("k"),
         "w": meta.get("w"),
         "mod_t": meta.get("mod_t"),

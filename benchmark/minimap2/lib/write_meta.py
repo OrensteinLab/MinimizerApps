@@ -43,6 +43,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--order", required=True)
     ap.add_argument("--seed")
+    ap.add_argument("--seed-idx", type=int, default=0, help="index into config.yaml's shared seed list (0 for seed-independent orders: native, greedymini)")
     ap.add_argument("--k", type=int, required=True)
     ap.add_argument("--w", type=int, required=True)
     ap.add_argument("--mod-t", type=int, default=0)
@@ -60,6 +61,7 @@ def main(argv=None) -> int:
         "dataset": args.dataset,
         "order": args.order,
         "seed": args.seed,
+        "seed_idx": args.seed_idx,
         "k": args.k,
         "w": args.w,
         "mod_t": args.mod_t or None,
