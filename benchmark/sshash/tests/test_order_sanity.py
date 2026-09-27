@@ -29,8 +29,12 @@ SSHASH = repo_root() / "build" / "sshash"
 SAMPLE = repo_root() / "data" / "unitigs_stitched" / "salmonella_enterica_k31_ust.fa.gz"
 # Plain greedymini's table (gm_k=15, Extend-k'd up to l=m=21).
 GM_FILE = monorepo_root() / "orders" / "GreedyMini" / "w11_k15_canonical.gm"
-# mod-minimizer-greedymini's O_t table (t=11, no extend needed: gm_k=11=t).
+# mod-minimizer-greedymini's O_t tables: t=11 (no extend needed: gm_k=11=t)
+# and t=10 (gm_k=10=t); mod-minimizer-greedymini-v2 is a labeled A/B variant
+# of the t=11 table (config.yaml's mod_t_gm_labels) -- see scripts/orders.py.
 MOD_GM_FILE = monorepo_root() / "orders" / "GreedyMini" / "w21_k11_canonical.gm"
+MOD_GM_FILE_T10 = monorepo_root() / "orders" / "GreedyMini" / "w22_k10_canonical.gm"
+MOD_GM_FILE_V2 = monorepo_root() / "orders" / "GreedyMini" / "w21_k11_canonical_v2.gm"
 POS_TXT = BENCH_DIR / "data" / "queries" / "salmonella_enterica_k31_pos.txt"
 NEG_TXT = BENCH_DIR / "data" / "queries" / "salmonella_enterica_k31_neg.txt"
 # m=21 (up from the original 11): matches the mod-minimizer paper's own
@@ -47,14 +51,17 @@ SEEDS = {
     "mod-minimizer-xor-hash": 12,
     "mod-minimizer-pcg-xor-hash": 13,
     "mod-minimizer-greedymini": 14,
+    "mod-minimizer-greedymini-v2": 15,
 }
 
 
-def _gm_file_for(order: str) -> str | None:
+def _gm_file_for(order: str, t: int | None) -> str | None:
     if order == "greedymini":
         return str(GM_FILE)
     if order == "mod-minimizer-greedymini":
-        return str(MOD_GM_FILE)
+        return str(MOD_GM_FILE_T10) if t == 10 else str(MOD_GM_FILE)
+    if order == "mod-minimizer-greedymini-v2":
+        return str(MOD_GM_FILE_V2)
     return None
 
 
@@ -74,7 +81,7 @@ def _json_blob(text: str) -> dict:
 
 
 def _build(order: str, t: int | None, out_path: Path) -> dict:
-    flags = build_flags(order, SEEDS[order], _gm_file_for(order), t)
+    flags = build_flags(order, SEEDS[order], _gm_file_for(order, t), t)
     cmd = [str(SSHASH), "build", "-i", str(SAMPLE), "-k", str(K), "-m", str(M), "-t", "4", "--verbose", *flags, "-o", str(out_path)]
     rc, out = _run(cmd)
     assert rc == 0, f"build failed for order={_run_label(order, t)}: {out[-2000:]}"
@@ -104,12 +111,14 @@ def test_orders_module() -> None:
         "native", "xor-hash", "xor-pcg-hash", "greedymini",
         "mod-minimizer-native-hash", "mod-minimizer-xor-hash",
         "mod-minimizer-pcg-xor-hash", "mod-minimizer-greedymini",
+        "mod-minimizer-greedymini-v2",
     }
     assert build_flags("native", 1) == ["-s", "1"]
     assert build_flags("xor-hash", 42) == ["-O", "xor-hash", "-s", "42"]
     assert build_flags("mod-minimizer-xor-hash", 5, t=10) == ["-O", "mod-minimizer-xor-hash", "--t-length", "10", "-s", "5"]
     assert order_t_values("native") == (None,)
-    assert order_t_values("mod-minimizer-greedymini") == (11,)
+    assert order_t_values("mod-minimizer-greedymini") == (10, 11)
+    assert order_t_values("mod-minimizer-greedymini-v2") == (11,)
     assert order_t_values("mod-minimizer-xor-hash") == (10, 11)
     print("ok  orders module: flag mapping (incl. mod-minimizer-* + t)")
 

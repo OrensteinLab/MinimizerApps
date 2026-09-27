@@ -22,8 +22,15 @@ from scripts.config import (
     mod_t_gm_file,
     mod_t_gm_file_t10,
     mod_t_gm_label_file,
+    mod_t_gm_labels,
 )
 
+_GREEDYMINI_PREFIX = "mod-minimizer-greedymini-"
+
+# The last entry is derived from config.yaml's top-level mod_t_gm_labels map
+# (not hardcoded per label): registering a new labeled GreedyMini variant
+# there is enough to make it a real, argparse-accepted order name here too,
+# matching lib/orders.sh's own config-only registration on the bash side.
 ORDERS = (
     "native",
     "xor-hash",
@@ -33,8 +40,7 @@ ORDERS = (
     "mod-minimizer-xor-hash",
     "mod-minimizer-pcg-xor-hash",
     "mod-minimizer-greedymini",
-    "mod-minimizer-greedymini-v2",
-)
+) + tuple(f"{_GREEDYMINI_PREFIX}{label}" for label in mod_t_gm_labels())
 
 MOD_ORDERS = frozenset(o for o in ORDERS if o.startswith("mod-minimizer-"))
 
@@ -44,8 +50,6 @@ MOD_ORDERS = frozenset(o for o in ORDERS if o.startswith("mod-minimizer-"))
 # table's own length. A labeled table variant (mod-minimizer-greedymini-*,
 # e.g. "-v2") is fixed at t=11 instead -- see order_t_values.
 MOD_T_VALUES = (10, 11)
-
-_GREEDYMINI_PREFIX = "mod-minimizer-greedymini-"
 
 
 def order_dir_name(order: str) -> str:

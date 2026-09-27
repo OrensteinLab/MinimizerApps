@@ -281,6 +281,14 @@ RUN_FIELDS = (
 )
 
 
+# Datasets that are real runs on disk (so --dataset-file/-d smoke sweeps work
+# for local smoke testing, see README "Smoke testing") but never belong in
+# the shipped CSV/XLSX reports -- excluded here, not by hand-editing the
+# exported files, so every export (CLI, `run`'s automatic export, re-export)
+# stays consistent.
+EXCLUDED_DATASETS = frozenset({"smoke"})
+
+
 def iter_run_dirs(runs_root: Path) -> list[Path]:
     if not runs_root.is_dir():
         return []
@@ -1274,7 +1282,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     rows: list[dict] = []
     for run_dir in iter_run_dirs(runs_root):
         row = load_run_row(run_dir, runs_root)
-        if row:
+        if row and row.get("dataset") not in EXCLUDED_DATASETS:
             rows.append(row)
     if not rows:
         die(f"no completed runs in {runs_root}")

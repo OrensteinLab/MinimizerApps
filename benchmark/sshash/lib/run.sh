@@ -221,6 +221,17 @@ run_schemes() {
   for o in "${order_arr[@]}"; do
     [[ "$(trim "$o")" == mod-minimizer-* ]] && needs_native_regular=1 && break
   done
+  # ...unless the sweep already explicitly builds "native" under "regular"
+  # itself (e.g. `-O all -M regular`, where every non-mod-minimizer order,
+  # including native, takes modality "$MODALITY" == regular below) -- then
+  # the per-order loop's own native/regular run already covers it, and
+  # injecting a second one here would just be identical, wasted work under
+  # --force (the default skip-if-exists behavior masks it otherwise).
+  if [[ "$needs_native_regular" == 1 && "${MODALITY:-canonical}" == "regular" ]]; then
+    for o in "${order_arr[@]}"; do
+      [[ "$(trim "$o")" == "native" ]] && needs_native_regular=0 && break
+    done
+  fi
 
   local ds order i seed t_val gm_file
   for ds in "${ds_arr[@]}"; do
