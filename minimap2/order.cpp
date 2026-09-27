@@ -79,6 +79,13 @@ struct mm_order_s {
 	uint64_t seed;
 	int t;
 	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI only
+	// gm_dna_key_pext_mask(l, gm->gm_k()) precomputed once at load time (init
+	// or deserialize), not per candidate: l/gm_k are fixed for a whole
+	// build/map run, so recomputing this mask (a handful of shift/sub ops)
+	// on every single greedymini_rank() call -- twice, once per strand -- was
+	// pure waste. Only meaningful when gm is set; mm_order_clone's copy
+	// constructor carries it over for free.
+	uint64_t gm_key_mask = 0;
 };
 
 namespace {
@@ -97,6 +104,22 @@ bool needs_gm_kind(mm_order_kind_t k) {
 	return k == MM_ORDER_GREEDYMINI;
 }
 
+// Pop residue class `a`'s now-stale entries (pos < win) then peek its front,
+// if any survive. Popping here (not just during a full rescan) is required
+// regardless of the caller's fast/slow path choice below: ModResidueDeque
+// has a fixed-size backing array with no bounds check on overflow (see the
+// capacity comment above), so every residue must have its staleness swept
+// at least once per its own push cadence (every w steps) or it can grow
+// without bound.
+inline bool pop_stale_and_peek(ModResidueDeque &dq, ssize_t win,
+                                uint64_t *out_rank, ssize_t *out_pos) {
+	while (!dq.empty() && dq.front().pos < win) dq.pop_front();
+	if (dq.empty()) return false;
+	*out_rank = dq.front().rank;
+	*out_pos = dq.front().pos;
+	return true;
+}
+
 // Dual-orientation GreedyMini rank (binary alphabet + on-the-fly projection,
 // per the user's requirement -- no DNA-alphabet backend, no Extend-k: the
 // table's own gm_k must equal the ranked length exactly, checked in
@@ -106,14 +129,22 @@ bool needs_gm_kind(mm_order_kind_t k) {
 // GMRanker's Extend-k/gamma tiebreak *packing* -- only for *injectivity*,
 // which the PCG-scrambled tiebreak below provides directly from the shared
 // pcg_rxs_m_xs.h primitive instead of hand-rolled bit packing.
-uint64_t greedymini_rank(uint64_t lmer, int l, const GreedyMiniTable &tbl) {
+uint64_t greedymini_rank(uint64_t lmer, int l, const GreedyMiniTable &tbl, uint64_t key_mask) {
+	// key_mask == gm_dna_key_pext_mask(l, tbl.gm_k()), precomputed once by our
+	// caller (mm_order_init/mm_order_deserialize) instead of recomputed here
+	// on every call. gm_pext_odd(atcg, key_mask) is exactly
+	// gm_extract_dna_key_atcg(atcg, l, tbl.gm_k())'s own BMI2 path with that
+	// same mask (identical call), and -- since minimap2 never allows
+	// Extend-k (gm_k == l is checked at load time, so the offset term in
+	// gm_dna_key_pext_mask is always 0) -- also identical to its SWAR
+	// fallback path bit-for-bit, not just when BMI2 is enabled.
 	const uint64_t atcg = gm_acgt_to_atcg(lmer);
-	const uint32_t key_fwd = gm_extract_dna_key_atcg(atcg, l, tbl.gm_k());
+	const uint32_t key_fwd = (uint32_t)gm_pext_odd(atcg, key_mask);
 	uint16_t best = tbl.primary(key_fwd);
 	const uint64_t rc = dna_reverse_complement(lmer, (uint8_t)l);
 	if (rc != lmer) {
 		const uint64_t atcg_rc = gm_acgt_to_atcg(rc);
-		const uint32_t key_rc = gm_extract_dna_key_atcg(atcg_rc, l, tbl.gm_k());
+		const uint32_t key_rc = (uint32_t)gm_pext_odd(atcg_rc, key_mask);
 		const uint16_t p_rc = tbl.primary(key_rc);
 		if (p_rc < best) best = p_rc;
 	}
@@ -131,7 +162,7 @@ uint64_t order_rank(const mm_order_t *ord, uint64_t kmer, int k) {
 	switch (ord->kind) {
 		case MM_ORDER_XOR_HASH:     return kmer ^ ord->seed;
 		case MM_ORDER_XOR_PCG_HASH: return pcg_rxs_m_xs64(kmer ^ ord->seed);
-		case MM_ORDER_GREEDYMINI:   return greedymini_rank(kmer, k, *ord->gm);
+		case MM_ORDER_GREEDYMINI:   return greedymini_rank(kmer, k, *ord->gm, ord->gm_key_mask);
 		default:                    assert(0 && "order_rank: unexpected kind"); return kmer;
 	}
 }
@@ -346,6 +377,10 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	ssize_t run_pos = -1; // bases seen since the last reset (0-indexed once >=0)
 	int kmer_span = 0;
 	ssize_t win_start = -1;
+	// Persistent cached global best (across windows, not just within one),
+	// invalidated (best_a=-1) on reset and re-derived by a full rescan
+	// whenever it's found to have expired -- see the selection block below.
+	uint64_t best_rank = UINT64_MAX; int best_a = -1; ssize_t best_pos = -1;
 	ssize_t last_emitted = -1; // absolute l-mer ordinal last pushed, so a winner that
 	                           // stays the same across consecutive slides (the common
 	                           // case) is emitted once, same as native's own dedup
@@ -360,6 +395,7 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		if (c >= 4) { // ambiguous base: reset everything, same as native
 			for (int a = 0; a < w; ++a) { deques[a].clear(); lring[a].valid = 0; }
 			run_pos = -1; kmer_span = 0; win_start = -1; lmers_stored = 0;
+			best_a = -1; best_rank = UINT64_MAX; best_pos = -1;
 			tq.count = tq.front = 0;
 			continue;
 		}
@@ -428,15 +464,61 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		// w=50 benchmark run on real chrX data collapsing to ~71% reads
 		// mapped; verified fixed against a brute-force reference for
 		// several (w,k,t,seed) combinations, including this exact case.
-		uint64_t best_rank = UINT64_MAX; int best_a = -1; ssize_t best_pos = -1;
-		for (int a = 0; a < w; ++a) {
-			ModResidueDeque &dq = deques[(size_t)a];
-			while (!dq.empty() && dq.front().pos < win) dq.pop_front();
-			if (dq.empty()) continue;
-			const uint64_t r = dq.front().rank;
-			const ssize_t pos = dq.front().pos;
-			if (best_a < 0 || r < best_rank || (r == best_rank && pos < best_pos)) {
-				best_rank = r; best_pos = pos; best_a = a;
+		//
+		// Rescanning all w residues' fronts here every step made this whole
+		// function O(len*w) (a full argmin scan per base position), the
+		// actual reason mod-minimizer was so much slower than native/
+		// greedymini to build and map (see benchmark/minimap2's own
+		// numbers). A first attempt at fixing this (see git history) ported
+		// kraken2::ModSampler::finish_window's own expire_a/front_rank_[]
+		// caching (kraken2/src/mod_minimizer.h) -- but that only removes the
+		// O(w) *staleness-popping* cost; it still does its own O(w) argmin
+		// scan over the cached fronts every step, so it barely moved the
+		// needle in practice (measured).
+		//
+		// The real fix is to cache the *global* best (best_a/best_rank/
+		// best_pos above) across windows, not just each residue's own
+		// front, updated in true O(1) amortized time:
+		//  - The cached best can only stop being the correct answer for two
+		//    reasons: (a) it expires (best_pos < win, checked below with a
+		//    plain integer comparison -- no deque access needed at all), or
+		//    (b) a *new* push beats it. Only ONE residue is pushed into per
+		//    step (`ot % w`, computed above), and push_monotone only evicts
+		//    from the deque's *back* -- so no other residue's front can
+		//    possibly have improved since we last checked it. Checking just
+		//    `ot % w` against the cached best every step therefore catches
+		//    every possible improvement, including the "front == back,
+		//    evicted by a better push" case the kraken2-derived attempt
+		//    above missed (found via a brute-force cross-check that failed
+		//    on nearly every (w,k,t) combination except the ones this
+		//    benchmark actually runs; see validate_mod_minimizer.py).
+		//  - On expiry, a full O(w) rescan re-derives the true best from
+		//    scratch (same as the very first, unoptimized version) -- by
+		//    the standard sliding-window-minimum amortized argument, this
+		//    happens roughly once every ~w steps on average, not every
+		//    step, so total work stays O(len) amortized, not O(len*w).
+		// Every residue's own staleness still gets popped at least once per
+		// its own push cadence regardless of which path below runs (see
+		// pop_stale_and_peek's own comment on why that's required
+		// independent of the argmin-caching scheme). We keep our own
+		// absolute-position tie-break composed with this (not kraken2's
+		// mod-w-relative one, a separate, earlier bug fix).
+		if (win_start >= 0 && win == win_start + 1 && best_a >= 0 && best_pos >= win) {
+			uint64_t r; ssize_t pos;
+			if (pop_stale_and_peek(deques[(size_t)(ot % w)], win, &r, &pos)) {
+				if (r < best_rank || (r == best_rank && pos < best_pos)) {
+					best_rank = r; best_pos = pos; best_a = (int)(ot % w);
+				}
+			}
+		} else {
+			best_a = -1; best_rank = UINT64_MAX; best_pos = -1;
+			for (int a = 0; a < w; ++a) {
+				uint64_t r; ssize_t pos;
+				if (pop_stale_and_peek(deques[(size_t)a], win, &r, &pos)) {
+					if (best_a < 0 || r < best_rank || (r == best_rank && pos < best_pos)) {
+						best_rank = r; best_pos = pos; best_a = a;
+					}
+				}
 			}
 		}
 		if (best_a >= 0) {
@@ -455,7 +537,6 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 			win_start = win;
 		}
 	}
-	(void)win_start; // retained for readability/parity with the design comment; not re-read
 }
 
 } // namespace
@@ -517,6 +598,9 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 	ord->seed = conf->seed;
 	ord->t = conf->t;
 	ord->gm = gm;
+	// l == gm->gm_k() always here (Extend-k disallowed, checked above), so
+	// the mask needs no separately-tracked k/t.
+	if (gm) ord->gm_key_mask = gm_dna_key_pext_mask(gm->gm_k(), gm->gm_k());
 	return ord;
 }
 
@@ -618,6 +702,7 @@ extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, ch
 	ord->seed = seed;
 	ord->t = (int)t32;
 	ord->gm = gm;
+	if (gm) ord->gm_key_mask = gm_dna_key_pext_mask(gm->gm_k(), gm->gm_k());
 	return ord;
 }
 

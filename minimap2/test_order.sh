@@ -153,6 +153,16 @@ for o in $ORDERS_MOD; do
 	fi
 done
 
+echo "== 11. mod-minimizer O(1)-amortized selection: brute-force cross-validation =="
+PY=/usr/bin/python3.11
+command -v "$PY" >/dev/null 2>&1 || PY=python3
+if "$PY" validate_mod_minimizer.py >"$TMP/validate_mod_minimizer.out" 2>&1; then
+	ok "sketch_mod_minimizer matches brute-force reference ($($PY --version 2>&1))"
+else
+	bad "brute-force validation failed -- see $TMP/validate_mod_minimizer.out"
+	tail -20 "$TMP/validate_mod_minimizer.out" >&2
+fi
+
 echo
 echo "== summary: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

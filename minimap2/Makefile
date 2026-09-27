@@ -3,7 +3,9 @@ CXX?=		g++
 # order.cpp is the only C++ translation unit (the custom minimizer order
 # integration -- see order.h/order.cpp for why it can't be plain C); -I..
 # reaches common/minimizer-orders/'s shared headers from minimap2/order.cpp.
-CXXFLAGS=	-g -Wall -O2 -std=c++11
+# -march=native enables BMI2 pext used by greedymini_rank.h when available
+# (same flag kraken2/src/Makefile already uses for the same header).
+CXXFLAGS=	-g -Wall -O2 -std=c++11 -march=native
 CPPFLAGS=	-DHAVE_KALLOC
 INCLUDES=
 OBJS=		kthread.o kalloc.o misc.o bseq.o sketch.o sdust.o options.o index.o \
