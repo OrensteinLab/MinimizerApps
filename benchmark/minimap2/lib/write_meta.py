@@ -83,6 +83,15 @@ def main(argv=None) -> int:
         # push a distinct-minimizer-based ratio below the proven theoretical
         # minimum of density_factor=1 (every scheme must select at least
         # 1 per w+1-window). Using avg_spacing avoids this entirely.
+        #
+        # Same formula as benchmark/common/density.py's density_factor(n_selected,
+        # n_kmers, w) (= n_selected/n_kmers*(w+1) = (1/avg_spacing)*(w+1)), just
+        # applied to a different input shape -- minimap2's own build log exposes
+        # the ratio directly as avg_spacing, not separate n_selected/n_kmers
+        # counts, and re-deriving n_kmers from genome length here would be less
+        # accurate (minimap2 skips N-runs when sketching, so genome length isn't
+        # the true k-mer window count) for no benefit. Not a duplicate
+        # implementation, so it isn't routed through that shared function.
         meta["density_factor"] = round((args.w + 1) / args.avg_spacing, 6)
     if args.accuracy.is_file():
         meta["accuracy"] = json.loads(args.accuracy.read_text())
