@@ -30,11 +30,6 @@ indexing time (s), mapping time (s), memory usage (GB) -- nothing else.
 Values are the mean across seeds (n_seeds=1 for native/greedymini, which
 don't vary with seed; see lib/orders.sh's order_is_seed_dependent); memory is
 max(build_peak_rss, map_peak_rss) converted from KB to GB (binary, /2^20).
-PUBLISHED_TABLE2 adds the paper's own reference rows for Winnowmap and
-stock Minimap2 at both w=10 and w=50, for our two datasets that match the
-paper's own D1 (chm13_chrX) and D2 (grch38_wg) -- informational only, not
-computed here, and not something we can reproduce exactly (different genome
-patch version, read depth, hardware), but directly comparable in shape.
 
 density_factor itself is never recomputed here or anywhere else in this
 directory -- it's written once by write_meta.py (from minimap2 -d's own
@@ -68,21 +63,6 @@ RUN_FIELDS = [
 ]
 
 KB_PER_GB = 1024 * 1024  # binary GB, matching how peak_rss_kb itself is binary (ru_maxrss-derived)
-
-# Jain et al. 2020's own Table 2 (see module docstring), transcribed verbatim
-# -- (unmapped_pct, incorrect_pct, index_time_s, map_time_s, memory_gb).
-# "D1"/"D2" are the paper's own dataset names, matching our chm13_chrX/
-# grch38_wg respectively (see README.md's "Datasets" section for why).
-PUBLISHED_TABLE2 = {
-    ("chm13_chrX", 10, "Winnowmap (Jain 2020)"): (0.00, 0.06, 5.5, 107.6, 8.5),
-    ("chm13_chrX", 10, "Minimap2 (Jain 2020)"): (0.00, 0.14, 4.9, 26.5, 5.9),
-    ("chm13_chrX", 50, "Winnowmap (Jain 2020)"): (0.00, 0.06, 6.7, 34.8, 2.9),
-    ("chm13_chrX", 50, "Minimap2 (Jain 2020)"): (0.01, 0.77, 3.0, 32.8, 5.9),
-    ("grch38_wg", 10, "Winnowmap (Jain 2020)"): (0.00, 1.83, 67.6, 1292.6, 91.2),
-    ("grch38_wg", 10, "Minimap2 (Jain 2020)"): (0.00, 1.85, 55.4, 70.3, 11.1),
-    ("grch38_wg", 50, "Winnowmap (Jain 2020)"): (0.00, 1.81, 57.7, 92.2, 7.3),
-    ("grch38_wg", 50, "Minimap2 (Jain 2020)"): (0.02, 2.07, 40.1, 67.7, 8.7),
-}
 
 ORDER_SORT = [
     "native", "xor-hash", "xor-pcg-hash", "greedymini",
@@ -191,12 +171,6 @@ def summary_rows(runs: list[dict]) -> list[dict]:
             "index_time_s": round(_mean_std(index_time)[0], 1) if index_time else None,
             "map_time_s": round(_mean_std(map_time)[0], 1) if map_time else None,
             "memory_gb": round(_mean_std(memory_gb)[0], 1) if memory_gb else None,
-        })
-    for (dataset, w, order), (unmapped_pct, incorrect_pct, index_time, map_time, memory_gb) in PUBLISHED_TABLE2.items():
-        out.append({
-            "dataset": dataset, "w": w, "order": order,
-            "unmapped_pct": unmapped_pct, "incorrect_pct": incorrect_pct,
-            "index_time_s": index_time, "map_time_s": map_time, "memory_gb": memory_gb,
         })
     return sorted(out, key=lambda r: (r["dataset"] or "", r["w"] or 0, _order_rank(r["order"] or "")))
 

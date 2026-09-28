@@ -106,7 +106,7 @@ never clobbered by `.env`.
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
-| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{datasets,summary,runs}.csv`) plus `minimap2_results.xlsx` (`datasets`/`summary`/`runs`, category-band header + dataset dividers/merges; `summary` is Table-2-shaped -- dataset/w/method/unmapped%/incorrect%/index time/map time/memory(GB) -- with Winnowmap/Minimap2's own published D1/D2 numbers from Jain et al. 2020 added as reference rows; `smoke` excluded throughout) |
+| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{datasets,summary,runs}.csv`) plus `minimap2_results.xlsx` (`datasets`/`summary`/`runs`, category-band header + dataset dividers/merges; `summary` is Table-2-shaped (Jain et al. 2020) -- dataset/w/method/unmapped%/incorrect%/index time/map time/memory(GB); `smoke` excluded throughout) |
 | `experiments/sweep_orders.yaml` | Documents the default sweep's shape (see that file's own header for why it isn't wired through the shared YAML engine yet) |
 | `tests/test_order_sanity.py` | Offline pytest: every order builds/maps, densities are non-degenerate, mapped-read sets agree across orders |
 | `environment.yml`, `setup.sh` | Conda env for `pbsim2`/`samtools` (see "Default dataset" above) |
