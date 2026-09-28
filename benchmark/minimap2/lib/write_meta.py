@@ -48,6 +48,8 @@ def main(argv=None) -> int:
     ap.add_argument("--w", type=int, required=True)
     ap.add_argument("--mod-t", type=int, default=0)
     ap.add_argument("--dataset", default="smoke")
+    ap.add_argument("--mid-occ-cap", default="", help="-f value passed at map time (empty = minimap2's own per-index default)")
+    ap.add_argument("--mid-occ", default="", help="effective mid_occ minimap2 reported in its map log")
     ap.add_argument("--build-time", type=Path, required=True)
     ap.add_argument("--map-time", type=Path, required=True)
     ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d (informational only -- NOT the density_factor numerator, see below)")
@@ -65,6 +67,8 @@ def main(argv=None) -> int:
         "k": args.k,
         "w": args.w,
         "mod_t": args.mod_t or None,
+        "mid_occ_cap": int(args.mid_occ_cap) if args.mid_occ_cap else None,
+        "mid_occ": int(args.mid_occ) if args.mid_occ else None,
         "build": parse_time_v(args.build_time),
         "map": parse_time_v(args.map_time),
         "distinct_minimizers": args.density,

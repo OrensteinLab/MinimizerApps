@@ -30,6 +30,11 @@ MINIMAP2_BIN="${MINIMAP2_BIN:-$REPO_ROOT/minimap2/minimap2}"
 K=${K:-15}
 W=${W:-10}
 MOD_T=${MOD_T:-5}
+# Map-time repeat-filter cap (minimap2 -f INT, absolute). Empty = minimap2's
+# own per-index default (a quantile of that index's own occurrence counts, so
+# it drifts with the order); set e.g. MID_OCC=1244 (native's own value on
+# chm13_chrX) to hold it fixed across orders as a control.
+MID_OCC=${MID_OCC:-}
 DATASET=${DATASET:-smoke}
 GM_DIR=${GM_DIR:-"$REPO_ROOT/orders/GreedyMini"}
 N_SEEDS=${N_SEEDS:-1}

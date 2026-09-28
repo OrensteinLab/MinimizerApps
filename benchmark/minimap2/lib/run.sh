@@ -4,7 +4,12 @@ set -uo pipefail
 
 run_one() {
   local order="$1" seed="${2:-0}" seed_idx="${3:-0}"
-  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/k${K}_w${W}/$order/$seed_idx"
+  local cond="k${K}_w${W}" map_extra=()
+  if [ -n "${MID_OCC:-}" ]; then
+    cond="${cond}_f${MID_OCC}"
+    map_extra=(-f "$MID_OCC")
+  fi
+  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$cond/$order/$seed_idx"
   mkdir -p "$run_dir"
 
   local data_dir="$MINIMAP2_DATA_DIR/$DATASET"
@@ -49,7 +54,7 @@ run_one() {
 
   echo "== [$order] mapping ${reads##*/} ==" >&2
   if ! /usr/bin/time -v -o "$map_time" \
-      "$MINIMAP2_BIN" -x map-pb -c -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
+      "$MINIMAP2_BIN" -x map-pb -c "${map_extra[@]}" -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
     echo "  map FAILED, see $map_log" >&2
     tail -5 "$map_log" >&2
     return 1
@@ -70,10 +75,15 @@ run_one() {
   local avg_spacing
   avg_spacing=$(grep -o 'average spacing: [0-9.]*' "$build_log" | grep -o '[0-9.]*$' | head -1)
 
+  # Effective cap minimap2 actually used (its own default, or -f's value).
+  local mid_occ
+  mid_occ=$(grep -o 'mid_occ = [0-9]*' "$map_log" | grep -o '[0-9]*$' | head -1)
+
   "$PYTHON" "$HERE_DIR/lib/score_accuracy.py" --paf "$paf" --truth "$truth" --json-out "$acc_json" >&2
 
   "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
     --order "$order" --seed "$seed" --seed-idx "$seed_idx" --k "$K" --w "$W" --mod-t "$MOD_T" --dataset "$DATASET" \
+    --mid-occ-cap "${MID_OCC:-}" --mid-occ "${mid_occ:-}" \
     --build-time "$build_time" --map-time "$map_time" \
     --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \
     --accuracy "$acc_json" --out "$meta_json" >/dev/null

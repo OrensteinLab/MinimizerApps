@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import subprocess
 import sys
@@ -71,27 +72,41 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 from xlsx_util import col_letter, root_rels_xml, write_csv, xml_escape  # noqa: E402
 
+# Grouped so each row-1 category band is one contiguous span:
+# id/params -> density -> build -> map -> accuracy.
 RUN_FIELDS = [
-    "dataset", "order", "seed", "seed_idx", "k", "w", "mod_t",
-    "distinct_minimizers", "avg_occurrences", "density_factor",
+    "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "n_reads", "n_reads_in_repeat",
+    "density_factor", "distinct_minimizers", "avg_occurrences",
     "build_wall_time_sec", "build_peak_rss_gb",
-    "map_wall_time_sec", "map_peak_rss_gb",
-    "n_reads", "n_reads_in_repeat", "frac_mapped",
-    "frac_correct", "frac_correct_in_repeat", "frac_incorrectly_mapped",
+    "mid_occ", "map_wall_time_sec", "map_peak_rss_gb",
+    "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
 ]
+
+# mid_occ_cap: the map-time `-f` condition (lib/run.sh's MID_OCC) -- this
+# label for minimap2's own per-index default, else the fixed absolute cap.
+# Every per-block computation (native ratio, divider, merge, correlation) is
+# keyed on (dataset, mid_occ_cap), so a fixed-cap control never gets compared
+# against the other condition's native.
+DEFAULT_MID_OCC_CAP = "default"
 
 KB_PER_GB = 1024 * 1024  # binary GB, matching how peak_rss_kb itself is binary (ru_maxrss-derived)
 
 SUMMARY_METRICS = (
     "density_factor", "avg_occurrences",
-    "frac_mapped", "frac_correct", "frac_correct_in_repeat",
-    "frac_incorrectly_mapped", "frac_correct_strict50",
-    "frac_correct_strict50_in_repeat", "mean_identity",
     "build_wall_time_sec", "build_peak_rss_gb",
     "map_wall_time_sec", "map_peak_rss_gb",
+    "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
+    "frac_correct_strict50", "frac_correct_strict50_in_repeat",
+    "mean_identity",
 )
+
+# summary's correlation grid (below the table): Pearson r across each
+# dataset's orders (one point per order = its mean over seeds), via Excel's
+# own CORREL so the sheet stays live if values are edited.
+CORR_X = ("density_factor", "avg_occurrences")
+CORR_Y = ("build_wall_time_sec", "build_peak_rss_gb", "map_wall_time_sec", "map_peak_rss_gb")
 
 # A ratio < 1 (this order's mean below native's) means "better than native"
 # for these -- fewer/faster/smaller/less-mis-mapped.
@@ -196,12 +211,16 @@ def flatten(meta: dict) -> dict:
     mapp = meta.get("map") or {}
     return {
         "dataset": meta.get("dataset"),
+        "mid_occ_cap": meta.get("mid_occ_cap") or DEFAULT_MID_OCC_CAP,
+        "mid_occ": meta.get("mid_occ"),
         "order": meta.get("order"),
         "seed": meta.get("seed"),
         "seed_idx": meta.get("seed_idx"),
         "k": meta.get("k"),
         "w": meta.get("w"),
-        "mod_t": meta.get("mod_t"),
+        # run.sh passes --mod-t to every run, but it only means anything for
+        # the mod-minimizer orders -- blank elsewhere rather than a misleading 5.
+        "mod_t": meta.get("mod_t") if str(meta.get("order") or "").startswith("mod-minimizer-") else None,
         "distinct_minimizers": meta.get("distinct_minimizers"),
         "avg_occurrences": meta.get("avg_occurrences"),
         "density_factor": meta.get("density_factor"),
@@ -228,8 +247,28 @@ def load_runs(results_dir: Path) -> list[dict]:
         row = flatten(meta)
         if row.get("dataset") in EXCLUDED_DATASETS:
             continue
+        if row["mid_occ"] is None:
+            row["mid_occ"] = _map_log_mid_occ(meta_path.parent / "map.log")
         rows.append(row)
-    return sorted(rows, key=lambda r: (r["dataset"] or "", _order_rank(r["order"] or ""), int(r.get("seed_idx") or 0)))
+    return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r["order"] or ""), int(r.get("seed_idx") or 0)))
+
+
+def _map_log_mid_occ(map_log: Path) -> int | None:
+    """Runs from before write_meta.py recorded mid_occ: read minimap2's own
+    '[M::mm_mapopt_update::...] mid_occ = N' line instead."""
+    if not map_log.is_file():
+        return None
+    m = re.search(r"mid_occ = (\d+)", map_log.read_text(errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def _block(row: dict) -> tuple:
+    return (row.get("dataset"), row.get("mid_occ_cap"))
+
+
+def _block_sort_key(row: dict) -> tuple:
+    cap = row.get("mid_occ_cap")
+    return (row.get("dataset") or "", cap != DEFAULT_MID_OCC_CAP, str(cap))
 
 
 # ---------------------------------------------------------------------------
@@ -255,16 +294,20 @@ def _order_rank(order: str) -> int:
 def summary_rows(runs: list[dict]) -> list[dict]:
     groups: dict[tuple, list[dict]] = {}
     for r in runs:
-        key = (r.get("dataset"), r.get("k"), r.get("w"), r.get("order"))
+        key = (r.get("dataset"), r.get("k"), r.get("w"), r.get("mid_occ_cap"), r.get("order"))
         groups.setdefault(key, []).append(r)
 
     out = []
-    for (dataset, k, w, order), parts in groups.items():
+    for (dataset, k, w, cap, order), parts in groups.items():
+        mids = [p["mid_occ"] for p in parts if p.get("mid_occ") is not None]
         row = {
             "dataset": dataset,
             "k": k,
             "w": w,
+            "mid_occ_cap": cap,
             "order": order,
+            # effective cap (mean over seeds); informational, no std/ratio
+            "mid_occ_mean": round(statistics.mean(mids), 1) if mids else None,
             "n_seeds": len({p.get("seed_idx") for p in parts}),
             "n_reads": parts[0].get("n_reads"),
         }
@@ -274,7 +317,7 @@ def summary_rows(runs: list[dict]) -> list[dict]:
             row[f"{metric}_mean"] = round(mean, 6) if mean is not None else None
             row[f"{metric}_std"] = round(std, 6) if std is not None else None
         out.append(row)
-    return sorted(out, key=lambda r: (r["dataset"] or "", _order_rank(r["order"] or "")))
+    return sorted(out, key=lambda r: (*_block_sort_key(r), _order_rank(r["order"] or "")))
 
 
 def attach_native_ratios(summary: list[dict]) -> None:
@@ -282,9 +325,9 @@ def attach_native_ratios(summary: list[dict]) -> None:
     dataset (native = 1 exactly). native has no seed variance of its own, so
     it's an unambiguous, always-present baseline (unlike sshash, which needs
     a modality fallback -- this benchmark has no modality axis)."""
-    native_by_dataset = {r["dataset"]: r for r in summary if r.get("order") == "native"}
+    native_by_block = {_block(r): r for r in summary if r.get("order") == "native"}
     for r in summary:
-        base = native_by_dataset.get(r["dataset"])
+        base = native_by_block.get(_block(r))
         for metric in SUMMARY_METRICS:
             mean = r.get(f"{metric}_mean")
             base_mean = base.get(f"{metric}_mean") if base else None
@@ -293,8 +336,10 @@ def attach_native_ratios(summary: list[dict]) -> None:
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "w", "order", "n_seeds", "n_reads"]
+    fields = ["dataset", "k", "w", "mid_occ_cap", "order", "n_seeds", "n_reads"]
     for metric in SUMMARY_METRICS:
+        if metric == "map_wall_time_sec":
+            fields.append("mid_occ_mean")
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
 
@@ -390,7 +435,7 @@ def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) ->
     by_order: dict[str, dict[str, dict]] = {}
     for r in summary:
         order = r.get("order")
-        if order:
+        if order and r.get("mid_occ_cap") == DEFAULT_MID_OCC_CAP:
             by_order.setdefault(order, {})[r.get("dataset")] = r
 
     out = []
@@ -401,12 +446,14 @@ def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) ->
         info = ORDER_DESCRIPTIONS.get(order, {"description": "", "cli": ""})
         exp = expected.get(order, {})
         w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
+        k_val = next((r.get("k") for r in per_dataset.values() if r.get("k") is not None), None)
         row = {
             "order": order,
-            "t": _ORDER_T.get(order),
             "description": info["description"],
             "cli": info["cli"],
+            "k": k_val,
             "w": w_val,
+            "t": _ORDER_T.get(order),
             "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
             "expected_density_factor_std": _num(exp.get("density_factor_std")),
         }
@@ -419,7 +466,7 @@ def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) ->
 
 
 def orders_field_order(summary: list[dict]) -> list[str]:
-    fields = ["order", "t", "description", "cli", "w", "expected_density_factor_mean", "expected_density_factor_std"]
+    fields = ["order", "description", "cli", "k", "w", "t", "expected_density_factor_mean", "expected_density_factor_std"]
     for ds in summary_datasets(summary):
         fields.extend((f"{ds}_particular_density_factor_mean", f"{ds}_particular_density_factor_std"))
     return fields
@@ -432,13 +479,13 @@ def orders_field_order(summary: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _ID_FIELDS = frozenset({
-    "dataset", "order", "seed", "seed_idx", "k", "w", "mod_t", "n_seeds", "n_reads",
+    "dataset", "order", "seed", "seed_idx", "k", "w", "mod_t", "mid_occ_cap", "n_seeds", "n_reads", "n_reads_in_repeat",
 })
 _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
     "build_wall_time_sec": "build", "build_peak_rss_gb": "build",
-    "map_wall_time_sec": "map", "map_peak_rss_gb": "map",
-    "n_reads_in_repeat": "accuracy", "frac_mapped": "accuracy", "frac_correct": "accuracy",
+    "map_wall_time_sec": "map", "map_peak_rss_gb": "map", "mid_occ": "map",
+    "frac_mapped": "accuracy", "frac_correct": "accuracy",
     "frac_correct_in_repeat": "accuracy", "frac_incorrectly_mapped": "accuracy",
     "frac_correct_strict50": "accuracy", "frac_correct_strict50_in_repeat": "accuracy",
     "mean_identity": "accuracy",
@@ -457,7 +504,7 @@ def _field_category(field: str) -> str:
 
 
 def _orders_field_category(field: str) -> str:
-    if field in ("order", "t", "description", "cli", "w"):
+    if field in ("order", "description", "cli", "k", "w", "t"):
         return "order"
     if field.startswith("expected_density_factor"):
         return "expected (theoretical)"
@@ -494,7 +541,11 @@ DATA_START_ROW = 3
 # benchmark; dataset obviously repeats) -- merge vertically instead of
 # printing the same value on every row. 'order'/'seed'/'seed_idx' stay
 # unmerged so each row's own identity is always visible.
-XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "w"})
+XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "w", "mid_occ_cap", "n_reads", "n_reads_in_repeat", "mod_t"})
+# Merged only within one order's block (not just one dataset's): mod_t is
+# per-order (blank for non-mod orders), so two adjacent mod orders sharing
+# t=5 still each get their own merged cell.
+XLSX_PER_ORDER_MERGE_FIELDS = frozenset({"mod_t"})
 # Sheets with one row per (dataset, order[, seed]): get a divider (bottom
 # border) after each dataset's last row, and the vertical merge above.
 # 'datasets' is one row per dataset already, so it gets neither.
@@ -519,7 +570,7 @@ def _dataset_last_row_indices(rows: list[dict]) -> set[int]:
     ends -- where the divider border goes."""
     out: set[int] = set()
     for i, row in enumerate(rows):
-        if i == len(rows) - 1 or row.get("dataset") != rows[i + 1].get("dataset"):
+        if i == len(rows) - 1 or _block(row) != _block(rows[i + 1]):
             out.add(i)
     return out
 
@@ -527,6 +578,11 @@ def _dataset_last_row_indices(rows: list[dict]) -> set[int]:
 def _merge_rows_equal(rows: list[dict], i: int, j: int, field: str) -> bool:
     if rows[i].get("dataset") != rows[j].get("dataset"):
         return False
+    if field != "dataset" and _block(rows[i]) != _block(rows[j]):
+        return False
+    if field in XLSX_PER_ORDER_MERGE_FIELDS:
+        if rows[i].get("order") != rows[j].get("order") or rows[i].get(field) is None:
+            return False
     return rows[i].get(field) == rows[j].get(field)
 
 
@@ -630,6 +686,85 @@ def _color_scale_xml(fields: list[str], rows: list[dict]) -> str:
     return "".join(parts)
 
 
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    if len(xs) < 2:
+        return None
+    mx, my = statistics.mean(xs), statistics.mean(ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx == 0 or syy == 0:
+        return None
+    return sxy / (sxx * syy) ** 0.5
+
+
+def _correlation_block(fields: list[str], rows: list[dict], start_row: int) -> tuple[list[str], list[str], str]:
+    """summary's correlation grid, placed below the data table: per dataset,
+    one row per CORR_X metric, one column per CORR_Y metric, each cell an
+    Excel CORREL over that dataset's own row range (one point per order).
+    The Python-computed Pearson r is stored as the formula's cached value so
+    readers that don't recalculate still show it. Returns (row xml, merge
+    refs, conditional-formatting xml)."""
+    col = {name: i for i, name in enumerate(fields)}
+    xs = [f"{m}_mean" for m in CORR_X if f"{m}_mean" in col]
+    ys = [f"{m}_mean" for m in CORR_Y if f"{m}_mean" in col]
+    if not xs or not ys or not rows:
+        return [], [], ""
+
+    blocks: list[tuple[tuple, int, int]] = []  # ((dataset, cap), first idx, last idx)
+    for i, row in enumerate(rows):
+        if blocks and blocks[-1][0] == _block(row):
+            blocks[-1] = (blocks[-1][0], blocks[-1][1], i)
+        else:
+            blocks.append((_block(row), i, i))
+
+    out: list[str] = []
+    merges: list[str] = []
+    r = start_row
+    title = "correlation: Pearson r (CORREL) across each dataset's orders, one point per order's mean"
+    out.append(f'<row r="{r}">{_cell(title, 0, r, style=2)}</row>')
+    r += 1
+    header = [_cell("dataset", 0, r, style=2), _cell("mid_occ_cap", 1, r, style=2), _cell("x \\ y", 2, r, style=2)]
+    header += [_cell(y, 3 + j, r, style=2) for j, y in enumerate(ys)]
+    out.append(f'<row r="{r}">{"".join(header)}</row>')
+    r += 1
+    grid_first = r
+    for (dataset, cap), i1, i2 in blocks:
+        r1, r2 = DATA_START_ROW + i1, DATA_START_ROW + i2
+        for xi, x in enumerate(xs):
+            last = xi == len(xs) - 1
+            base, num = (1, 4) if last else (0, 3)
+            cells = [
+                _cell(dataset if xi == 0 else None, 0, r, style=base),
+                _cell(cap if xi == 0 else None, 1, r, style=base),
+                _cell(x, 2, r, style=base),
+            ]
+            xl = col_letter(col[x] + 1)
+            xv = [_num(rows[i].get(x)) for i in range(i1, i2 + 1)]
+            for j, y in enumerate(ys):
+                yl = col_letter(col[y] + 1)
+                yv = [_num(rows[i].get(y)) for i in range(i1, i2 + 1)]
+                pairs = [(a, b) for a, b in zip(xv, yv) if a is not None and b is not None]
+                rho = _pearson([a for a, _ in pairs], [b for _, b in pairs])
+                ref = f"{col_letter(4 + j)}{r}"
+                cached = f"<v>{round(rho, 6)}</v>" if rho is not None else ""
+                cells.append(f'<c r="{ref}" s="{num}"><f>CORREL({xl}{r1}:{xl}{r2},{yl}{r1}:{yl}{r2})</f>{cached}</c>')
+            out.append(f'<row r="{r}">{"".join(cells)}</row>')
+            r += 1
+        if len(xs) > 1:
+            merges.append(f"A{r - len(xs)}:A{r - 1}")
+            merges.append(f"B{r - len(xs)}:B{r - 1}")
+    sqref = f"D{grid_first}:{col_letter(3 + len(ys))}{r - 1}"
+    cf = (
+        f'<conditionalFormatting sqref="{sqref}">'
+        f'<cfRule type="colorScale" priority="{len(fields) + 1}"><colorScale>'
+        '<cfvo type="num" val="-1"/><cfvo type="num" val="0"/><cfvo type="num" val="1"/>'
+        '<color rgb="FF5A8AC6"/><color rgb="FFFFFFFF"/><color rgb="FFF8696B"/>'
+        "</colorScale></cfRule></conditionalFormatting>"
+    )
+    return out, merges, cf
+
+
 def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
     xml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
@@ -676,6 +811,11 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
                 value = None if skipped else row.get(h)
                 cells.append(_cell(value, c, r_i, style=style))
             xml.append(f'<row r="{r_i}">{"".join(cells)}</row>')
+    corr_cf = ""
+    if raw_name == "summary" and fields and rows:
+        corr_rows, corr_merges, corr_cf = _correlation_block(fields, rows, DATA_START_ROW + len(rows) + 1)
+        xml.extend(corr_rows)
+        merge_refs.extend(corr_merges)
     xml.append("</sheetData>")
     if merge_refs:
         xml.append(_xlsx_merges_xml(merge_refs))
@@ -683,6 +823,8 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
         cs = _color_scale_xml(fields, rows)
         if cs:
             xml.append(cs)
+    if corr_cf:
+        xml.append(corr_cf)
     xml.append("</worksheet>")
     return "\n".join(xml)
 
@@ -706,10 +848,13 @@ def _xlsx_styles_xml() -> str:
         '<border><left/><right/><top/><bottom style="medium"><color auto="1"/></bottom><diagonal/></border>'
         "</borders>"
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        '<cellXfs count="3">'
+        '<cellXfs count="5">'
         '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
         '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'
         '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+        # 3/4: correlation grid cells, "0.00" (built-in numFmt 2), plain / divider
+        '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+        '<xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
         "</cellXfs>"
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
         "</styleSheet>"

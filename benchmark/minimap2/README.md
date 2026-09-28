@@ -100,13 +100,13 @@ never clobbered by `.env`.
 |---|---|
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
-| `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution) + `config.yaml` seed loading (`$ALL_SEEDS`) |
+| `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
 | `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`; no `mod-minimizer-greedymini`, see below); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
-| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 4 sheets, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring; `smoke` excluded throughout) |
+| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 4 sheets, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus a per-dataset `CORREL` grid below `summary`'s table (density_factor/avg_occurrences vs. build/map time/memory); `smoke` excluded throughout) |
 | `lib/expected_density.py` | Theoretical expected `density_factor` per order (Monte Carlo on i.i.d. random DNA); feeds `orders` sheet's `expected_density_factor_mean/std`, cached to `minimap2_density_expected_orders.csv` |
 | `experiments/sweep_orders.yaml` | Documents the default sweep's shape (see that file's own header for why it isn't wired through the shared YAML engine yet) |
 | `tests/test_order_sanity.py` | Offline pytest: every order builds/maps, densities are non-degenerate, mapped-read sets agree across orders |
@@ -121,6 +121,7 @@ cd benchmark/minimap2
 ./minimap2_bench.sh list                   # orders the default sweep covers
 ./minimap2_bench.sh sweep                  # build+map+score every default order
 ./minimap2_bench.sh run xor-pcg-hash 0x123  # just one order/seed
+MID_OCC=1244 ./minimap2_bench.sh sweep    # same sweep, map-time repeat cap fixed (-f 1244) for every order
 ./minimap2_bench.sh export                 # -> $MINIMAP2_RESULTS_DIR/minimap2_{datasets,summary,orders,runs}.csv + minimap2_results.xlsx
 
 # offline sanity tests (needs a python3 new enough for these type hints --
