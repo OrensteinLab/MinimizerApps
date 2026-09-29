@@ -15,9 +15,15 @@ reads originating inside a long, near-identical repeat.
 Per (dataset, order) run, from `minimap2 -d` (index build) and a plain
 mapping pass:
 
-- **Minimizer density**: `density_factor = (w+1) / average_spacing`, where
-  `average_spacing` (genome length / total minimizer occurrences) is parsed
-  directly from minimap2's own `-d` stderr. This is total *occurrences*, not
+- **Minimizer density**: `density_factor = total_occurrences * (w+1) /
+  n_hpc_kmers`, on minimap2's own sketching scale: `-x map-pb` turns on HPC,
+  so minimizers are picked over homopolymer-compressed k-mers, and
+  `n_hpc_kmers` counts exactly those (`lib/hpc_kmers.py`: compressed length
+  minus k-1 per N-free segment). minimap2 `-d`'s own "average spacing"
+  divides by the *raw* length instead, understating density by the genome's
+  compression ratio (~0.70 on human) plus N gaps -- kept only as the runs
+  sheet's `density_factor_raw_bp`. total_occurrences (distinct minimizers x
+  average occurrences, both from minimap2's `-d` stderr) is total *occurrences*, not
   `distinct minimizers` (also parsed, reported separately as
   `distinct_minimizers`/`avg_occurrences`, informational only) -- distinct
   minimizers collapses every repeated occurrence of the same minimizer key
@@ -107,6 +113,7 @@ never clobbered by `.env`.
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
 | `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{overview,datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 5 sheets; `overview` = per-column legend, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus a per-block `CORREL` grid below `summary`'s table (density_factor/avg_occurrences vs. total/build/map time and memory, r > 0.8 highlighted); `smoke` excluded throughout) |
+| `lib/hpc_kmers.py` | Counts the HPC k-mers minimap2 sketches per genome (density_factor's denominator), cached as `genome.fa.hpc_k<k>.json` |
 | `lib/expected_density.py` | Theoretical expected `density_factor` per order (Monte Carlo on i.i.d. random DNA); feeds `orders` sheet's `expected_density_factor_mean/std`, cached to `minimap2_density_expected_orders.csv` |
 | `experiments/sweep_orders.yaml` | Documents the default sweep's shape (see that file's own header for why it isn't wired through the shared YAML engine yet) |
 | `tests/test_order_sanity.py` | Offline pytest: every order builds/maps, densities are non-degenerate, mapped-read sets agree across orders |

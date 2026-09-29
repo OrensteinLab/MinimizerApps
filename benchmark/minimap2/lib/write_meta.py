@@ -54,7 +54,7 @@ def main(argv=None) -> int:
     ap.add_argument("--map-time", type=Path, required=True)
     ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d (informational only -- NOT the density_factor numerator, see below)")
     ap.add_argument("--avg-occurrences", type=float, default=None, help="'average occurrences' from minimap2 -d's stat line (distinct minimizers undercount total selected positions whenever a minimizer repeats -- see mm_idx_stat in index.c)")
-    ap.add_argument("--avg-spacing", type=float, default=None, help="'average spacing' from minimap2 -d's stat line: genome_len / total_occurrences -- the correct density_factor input")
+    ap.add_argument("--avg-spacing", type=float, default=None, help="'average spacing' from minimap2 -d's stat line: genome_len / total_occurrences; gives meta.json's raw-bp-scale density_factor (export.py rescales it to minimap2's HPC-k-mer scale via lib/hpc_kmers.py)")
     ap.add_argument("--accuracy", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)

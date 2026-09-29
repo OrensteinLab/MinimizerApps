@@ -46,19 +46,17 @@ expected_density.py), reusing benchmark/common/density.py's shared
 primitives -- the same ones order.cpp's own C++ is built on -- rather than
 re-deriving minimap2's order formulas a third time; cached to
 minimap2_density_expected_orders.csv since it's a pure function of k/w/t
-(independent of any actual run). Expected and particular density diverge
-more than a first guess might suggest, and not from any bug: real genomic
-sequence has far more homopolymer/low-complexity content than i.i.d. random
-chance produces, so HPC (`-x map-pb`, which lib/run.sh always passes --
-see that file's own comment) compresses real data much more than it
-compresses the synthetic random stream this Monte Carlo simulation uses.
+(independent of any actual run).
 
-density_factor itself is never recomputed here or anywhere else in this
-directory -- it's written once by write_meta.py (from minimap2 -d's own
-"average spacing" stat) and only aggregated (mean/std) below. See
-write_meta.py's own comment for why that isn't routed through
-benchmark/common/density.py's density_factor(n_selected, n_kmers, w): same
-formula, different (non-overlapping) input shape.
+density_factor is on minimap2's own sketching scale: lib/run.sh always passes
+`-x map-pb`, i.e. HPC, so minimap2 picks minimizers over homopolymer-
+compressed k-mers. density_factor = total occurrences * (w+1) / n_hpc_kmers,
+where n_hpc_kmers counts the compressed k-mers minimap2 actually sketches
+(lib/hpc_kmers.py) -- same scale as the Monte Carlo expected value, which
+also compresses first. write_meta.py's meta.json density_factor instead
+divides by the *raw* length (minimap2 -d's "average spacing"), understating
+it by the genome's compression ratio (~0.70 on human) and any N gaps; that's
+kept as density_factor_raw_bp in the runs sheet only.
 """
 from __future__ import annotations
 
@@ -74,11 +72,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 from xlsx_util import col_letter, root_rels_xml, write_csv, xml_escape  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hpc_kmers import hpc_kmers  # noqa: E402
+
 # Grouped so each row-1 category band is one contiguous span:
 # id/params -> density -> total -> build -> map -> accuracy.
 RUN_FIELDS = [
     "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "n_reads", "n_reads_in_repeat",
-    "density_factor", "distinct_minimizers", "avg_occurrences",
+    "density_factor", "density_factor_raw_bp", "distinct_minimizers", "avg_occurrences",
     "total_wall_time_sec",
     "build_wall_time_sec", "build_peak_rss_gb",
     "mid_occ", "map_wall_time_sec", "map_peak_rss_gb",
@@ -236,7 +237,10 @@ def flatten(meta: dict) -> dict:
         "mod_t": meta.get("mod_t") if str(meta.get("order") or "").startswith("mod-minimizer-") else None,
         "distinct_minimizers": meta.get("distinct_minimizers"),
         "avg_occurrences": meta.get("avg_occurrences"),
+        # raw-bp scale as written by write_meta.py; attach_hpc_density()
+        # overwrites density_factor with the HPC-k-mer scale
         "density_factor": meta.get("density_factor"),
+        "density_factor_raw_bp": meta.get("density_factor"),
         "total_wall_time_sec": _total_time(build.get("wall_time_sec"), mapp.get("wall_time_sec")),
         "build_wall_time_sec": build.get("wall_time_sec"),
         "build_peak_rss_gb": _kb_to_gb(build.get("peak_rss_kb")),
@@ -265,6 +269,18 @@ def load_runs(results_dir: Path) -> list[dict]:
             row["mid_occ"] = _map_log_mid_occ(meta_path.parent / "map.log")
         rows.append(row)
     return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r["order"] or ""), int(r.get("seed_idx") or 0)))
+
+
+def attach_hpc_density(runs: list[dict], hpc: dict[str, int]) -> None:
+    """density_factor on the HPC-k-mer scale (see the module docstring):
+    total occurrences = distinct_minimizers * avg_occurrences, both straight
+    from minimap2 -d's own mm_idx_stat line. Datasets whose n_hpc_kmers is
+    unknown keep the raw-bp value."""
+    for r in runs:
+        n_hpc = hpc.get(r.get("dataset"))
+        distinct, avg_occ, w = _num(r.get("distinct_minimizers")), _num(r.get("avg_occurrences")), _num(r.get("w"), int)
+        if n_hpc and distinct and avg_occ and w:
+            r["density_factor"] = round(distinct * avg_occ * (w + 1) / n_hpc, 6)
 
 
 def _map_log_mid_occ(map_log: Path) -> int | None:
@@ -397,7 +413,7 @@ def _repeat_bp(path: Path) -> tuple[int, int] | None:
     return n, total
 
 
-def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str]) -> list[dict]:
+def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str], k: int) -> list[dict]:
     out = []
     for name in sorted(dataset_names):
         d = data_dir / name
@@ -407,6 +423,8 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str]) 
             "description": DATASET_DESCRIPTIONS.get(name, ""),
             "n_contigs": None,
             "genome_len_bp": None,
+            "hpc_len_bp": None,
+            "n_hpc_kmers": None,
             "n_reads": None,
             "n_repeat_regions": None,
             "repeat_bp": None,
@@ -416,6 +434,9 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str]) 
             lines = fai.read_text().splitlines()
             row["n_contigs"] = len(lines)
             row["genome_len_bp"] = sum(int(line.split("\t")[1]) for line in lines if line.strip())
+        if genome.is_file():
+            hpc = hpc_kmers(genome, k)
+            row["hpc_len_bp"], row["n_hpc_kmers"] = hpc["hpc_bp"], hpc["n_hpc_kmers"]
         n_reads = _count_lines(d / "truth.tsv")
         if n_reads is not None:
             row["n_reads"] = max(0, n_reads - 1)  # minus header
@@ -428,7 +449,7 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str]) 
 
 def dataset_field_order() -> list[str]:
     return [
-        "dataset", "description", "n_contigs", "genome_len_bp",
+        "dataset", "description", "n_contigs", "genome_len_bp", "hpc_len_bp", "n_hpc_kmers",
         "n_reads", "n_repeat_regions", "repeat_bp",
     ]
 
@@ -497,6 +518,7 @@ _ID_FIELDS = frozenset({
 })
 _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
+    "density_factor_raw_bp": "density",
     "total_wall_time_sec": "total",
     "build_wall_time_sec": "build", "build_peak_rss_gb": "build",
     "map_wall_time_sec": "map", "map_peak_rss_gb": "map", "mid_occ": "map",
@@ -552,7 +574,8 @@ def overview_rows() -> list[dict]:
         row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini, 5 otherwise)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "simulated reads in the dataset / of those, reads whose true origin overlaps repeats.bed (D1: centromeric DXZ1 array; D2: a chr9 segmental duplication pair)"),
         # --- density
-        row("summary/runs/orders", "density_factor", "particular (measured) density: (w+1) / average_spacing, where average_spacing = genome length / total minimizer occurrences, from minimap2 -d's own stats; 1 = theoretical minimum, ~2 = random order"),
+        row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_hpc_kmers. -x map-pb turns on HPC, so minimap2 picks minimizers over homopolymer-compressed k-mers -- same scale as expected_density_factor; 1 = theoretical minimum, ~2 = random order"),
+        row("runs", "density_factor_raw_bp", "same occurrences over the raw genome length instead ((w+1) / minimap2 -d's 'average spacing'): understates density by the genome's HPC compression ratio (hpc_len_bp / genome_len_bp, ~0.70 on human) and N gaps -- informational only"),
         row("runs", "distinct_minimizers", "distinct minimizer keys in the index (informational; undercounts selected positions whenever a minimizer repeats, so not used for density)"),
         row("summary/runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density orders are higher here"),
         # --- total / build / map
@@ -577,6 +600,7 @@ def overview_rows() -> list[dict]:
         row("orders", "expected_density_factor_mean/std", "theoretical density_factor: Monte Carlo on i.i.d. random DNA (HPC-modeled), mean/std over the 5 seeds -- see lib/expected_density.py"),
         row("orders", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap)"),
         row("datasets", "n_contigs / genome_len_bp / n_reads / n_repeat_regions / repeat_bp", "read off disk: genome.fa.fai, truth.tsv, repeats.bed"),
+        row("datasets", "hpc_len_bp / n_hpc_kmers", "genome length after homopolymer compression (N gaps excluded) / compressed k-mers minimap2 sketches (per N-free segment: hpc length - k + 1) -- lib/hpc_kmers.py, cached next to genome.fa"),
         # --- mid_occ algorithm
         row("mid_occ (algorithm)", "what it filters", "at map time each read minimizer is looked up in the index; each hit becomes a chaining anchor. A minimizer with more than mid_occ reference occurrences is dropped (seed.c mm_collect_matches), and one repeated > mid_occ times within the read itself and > 1% of its minimizers is dropped too (mm_seed_mz_flt). Bases covered by dropped minimizers count as rep_len, which lowers MAPQ"),
         row("mid_occ (algorithm)", "rescue", "if mid_occ < max_max_occ (4095, -U), inside each run of dropped minimizers the lowest-occurrence ones are kept, ~1 per 500 bp of read (--occ-dist, mm_seed_select); never above 4095. Active on D1 (mid_occ ~1244-1440); off on D2 (mid_occ ~9465-15000 > 4095: a hard cutoff)"),
@@ -1037,14 +1061,15 @@ def main(argv=None) -> int:
     data_dir = args.data_dir or Path(os.environ.get("MINIMAP2_DATA_DIR", args.results_dir.parent / "data"))
     samtools = args.samtools or os.environ.get("SAMTOOLS") or "samtools"
     dataset_names = {r["dataset"] for r in runs if r.get("dataset")}
-    datasets = dataset_rows(data_dir, samtools, dataset_names)
+    k_val = next((r.get("k") for r in runs if r.get("k") is not None), 15)
+    datasets = dataset_rows(data_dir, samtools, dataset_names, int(k_val))
+    attach_hpc_density(runs, {d["dataset"]: d["n_hpc_kmers"] for d in datasets})
     summary = summary_rows(runs)
     attach_native_ratios(summary)
 
     minimap2_bench_dir = Path(__file__).resolve().parents[1]
     repo_root = Path(__file__).resolve().parents[3]
     gm_file = args.gm_file or (repo_root / "orders" / "GreedyMini" / "w10_k15_canonical.gm")
-    k_val = next((r.get("k") for r in runs if r.get("k") is not None), 15)
     w_val = next((r.get("w") for r in runs if r.get("w") is not None), 10)
     mod_t_val = next((r.get("mod_t") for r in runs if r.get("mod_t")), 5)
     seeds = _load_seeds(minimap2_bench_dir)
