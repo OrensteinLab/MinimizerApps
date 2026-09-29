@@ -106,7 +106,7 @@ never clobbered by `.env`.
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
-| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 4 sheets, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus a per-dataset `CORREL` grid below `summary`'s table (density_factor/avg_occurrences vs. build/map time/memory); `smoke` excluded throughout) |
+| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{overview,datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 5 sheets; `overview` = per-column legend, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus a per-block `CORREL` grid below `summary`'s table (density_factor/avg_occurrences vs. total/build/map time and memory, r > 0.8 highlighted); `smoke` excluded throughout) |
 | `lib/expected_density.py` | Theoretical expected `density_factor` per order (Monte Carlo on i.i.d. random DNA); feeds `orders` sheet's `expected_density_factor_mean/std`, cached to `minimap2_density_expected_orders.csv` |
 | `experiments/sweep_orders.yaml` | Documents the default sweep's shape (see that file's own header for why it isn't wired through the shared YAML engine yet) |
 | `tests/test_order_sanity.py` | Offline pytest: every order builds/maps, densities are non-degenerate, mapped-read sets agree across orders |
@@ -122,7 +122,7 @@ cd benchmark/minimap2
 ./minimap2_bench.sh sweep                  # build+map+score every default order
 ./minimap2_bench.sh run xor-pcg-hash 0x123  # just one order/seed
 MID_OCC=1244 ./minimap2_bench.sh sweep    # same sweep, map-time repeat cap fixed (-f 1244) for every order
-./minimap2_bench.sh export                 # -> $MINIMAP2_RESULTS_DIR/minimap2_{datasets,summary,orders,runs}.csv + minimap2_results.xlsx
+./minimap2_bench.sh export                 # -> $MINIMAP2_RESULTS_DIR/minimap2_{overview,datasets,summary,orders,runs}.csv + minimap2_results.xlsx
 
 # offline sanity tests (needs a python3 new enough for these type hints --
 # system python3 here is 3.6; use the conda env's or /usr/bin/python3.11)

@@ -4,9 +4,11 @@ mirroring sshash's/kmc's own export.py layout (a lighter version: no
 buckets/space-breakdown sheets, no equivalence hard-fail gate -- minimap2's
 benchmark doesn't have those concepts). Writes, under --results-dir:
 
-- minimap2_datasets.csv, minimap2_summary.csv, minimap2_orders.csv,
-  minimap2_runs.csv -- one CSV per sheet, same rows as the XLSX below
-- minimap2_results.xlsx -- datasets, summary, orders, runs, with sshash's
+- minimap2_overview.csv, minimap2_datasets.csv, minimap2_summary.csv,
+  minimap2_orders.csv, minimap2_runs.csv -- one CSV per sheet, same rows as
+  the XLSX below
+- minimap2_results.xlsx -- overview (per-column legend, like sshash's own
+  'index' sheet), datasets, summary, orders, runs, with sshash's
   own layout conventions: a category band (row 1) grouping columns into
   sections, vertical merges on columns that repeat within a dataset's
   block (dataset/k/w), a bottom-border divider after each dataset's last
@@ -73,10 +75,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 from xlsx_util import col_letter, root_rels_xml, write_csv, xml_escape  # noqa: E402
 
 # Grouped so each row-1 category band is one contiguous span:
-# id/params -> density -> build -> map -> accuracy.
+# id/params -> density -> total -> build -> map -> accuracy.
 RUN_FIELDS = [
     "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "n_reads", "n_reads_in_repeat",
     "density_factor", "distinct_minimizers", "avg_occurrences",
+    "total_wall_time_sec",
     "build_wall_time_sec", "build_peak_rss_gb",
     "mid_occ", "map_wall_time_sec", "map_peak_rss_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
@@ -95,6 +98,7 @@ KB_PER_GB = 1024 * 1024  # binary GB, matching how peak_rss_kb itself is binary 
 
 SUMMARY_METRICS = (
     "density_factor", "avg_occurrences",
+    "total_wall_time_sec",
     "build_wall_time_sec", "build_peak_rss_gb",
     "map_wall_time_sec", "map_peak_rss_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
@@ -106,13 +110,15 @@ SUMMARY_METRICS = (
 # dataset's orders (one point per order = its mean over seeds), via Excel's
 # own CORREL so the sheet stays live if values are edited.
 CORR_X = ("density_factor", "avg_occurrences")
-CORR_Y = ("build_wall_time_sec", "build_peak_rss_gb", "map_wall_time_sec", "map_peak_rss_gb")
+CORR_HIGHLIGHT_ABOVE = 0.8  # grid cells with r > this get a green fill
+CORR_Y = ("total_wall_time_sec", "build_wall_time_sec", "build_peak_rss_gb", "map_wall_time_sec", "map_peak_rss_gb")
 
 # A ratio < 1 (this order's mean below native's) means "better than native"
 # for these -- fewer/faster/smaller/less-mis-mapped.
 LOWER_IS_BETTER = frozenset({
     "density_factor", "avg_occurrences",
     "frac_incorrectly_mapped",
+    "total_wall_time_sec",
     "build_wall_time_sec", "build_peak_rss_gb",
     "map_wall_time_sec", "map_peak_rss_gb",
 })
@@ -205,6 +211,13 @@ def _kb_to_gb(kb) -> float | None:
     return round(kb / KB_PER_GB, 3) if kb is not None else None
 
 
+def _total_time(build_sec, map_sec) -> float | None:
+    """Index build + mapping wall time: the end-to-end cost of one run."""
+    if build_sec is None or map_sec is None:
+        return None
+    return round(build_sec + map_sec, 2)
+
+
 def flatten(meta: dict) -> dict:
     acc = meta.get("accuracy") or {}
     build = meta.get("build") or {}
@@ -224,6 +237,7 @@ def flatten(meta: dict) -> dict:
         "distinct_minimizers": meta.get("distinct_minimizers"),
         "avg_occurrences": meta.get("avg_occurrences"),
         "density_factor": meta.get("density_factor"),
+        "total_wall_time_sec": _total_time(build.get("wall_time_sec"), mapp.get("wall_time_sec")),
         "build_wall_time_sec": build.get("wall_time_sec"),
         "build_peak_rss_gb": _kb_to_gb(build.get("peak_rss_kb")),
         "map_wall_time_sec": mapp.get("wall_time_sec"),
@@ -483,6 +497,7 @@ _ID_FIELDS = frozenset({
 })
 _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
+    "total_wall_time_sec": "total",
     "build_wall_time_sec": "build", "build_peak_rss_gb": "build",
     "map_wall_time_sec": "map", "map_peak_rss_gb": "map", "mid_occ": "map",
     "frac_mapped": "accuracy", "frac_correct": "accuracy",
@@ -514,8 +529,66 @@ def _orders_field_category(field: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# overview -- one row per column (or column family), sheet/column/meaning,
+# same shape as sshash's own scripts/export.py:index_rows.
+# ---------------------------------------------------------------------------
+
+OVERVIEW_FIELDS = ["sheet", "column", "meaning"]
+
+
+def overview_rows() -> list[dict]:
+    def row(sheet: str, column: str, meaning: str) -> dict:
+        return {"sheet": sheet, "column": column, "meaning": meaning}
+
+    return [
+        # --- id / params
+        row("all", "dataset", "chm13_chrX = Winnowmap's D1 (CHM13 chrX v0.7), grch38_wg = Winnowmap's D2 (GRCh38 whole genome); both with PBSIM2-simulated PacBio reads (see datasets sheet)"),
+        row("all", "k / w", "minimizer k-mer length and window size (k=15, w=10 -- minimap2's own map-pb/map-ont default window); HPC (homopolymer-compressed) k-mers on via -x map-pb"),
+        row("summary/runs", "mid_occ_cap", "map-time repeat-filter condition: 'default' = minimap2 picks mid_occ itself per index; a number = fixed with -f <N> for every order (set to native's own default value, so all orders filter repeats by the same rule). Each (dataset, mid_occ_cap) is its own block: own native baseline, divider, correlation rows"),
+        row("all", "order", "minimizer order: native (minimap2's own hash) | xor-hash | xor-pcg-hash | greedymini | mod-minimizer-xor-hash | mod-minimizer-pcg-xor-hash -- see orders sheet"),
+        row("runs", "mod_t", "t-mer length of mod-minimizer's inner order (5); blank for non-mod orders, merged across each order's seeds"),
+        row("runs", "seed / seed_idx", "order seed (XOR key / PCG tiebreak) and its index in config.yaml's shared seed list; native and greedymini are seed-independent, so run once (seed_idx 0)"),
+        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini, 5 otherwise)"),
+        row("summary/runs", "n_reads / n_reads_in_repeat", "simulated reads in the dataset / of those, reads whose true origin overlaps repeats.bed (D1: centromeric DXZ1 array; D2: a chr9 segmental duplication pair)"),
+        # --- density
+        row("summary/runs/orders", "density_factor", "particular (measured) density: (w+1) / average_spacing, where average_spacing = genome length / total minimizer occurrences, from minimap2 -d's own stats; 1 = theoretical minimum, ~2 = random order"),
+        row("runs", "distinct_minimizers", "distinct minimizer keys in the index (informational; undercounts selected positions whenever a minimizer repeats, so not used for density)"),
+        row("summary/runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density orders are higher here"),
+        # --- total / build / map
+        row("summary/runs", "total_wall_time_sec", "build_wall_time_sec + map_wall_time_sec: end-to-end cost of one run"),
+        row("summary/runs", "build_wall_time_sec / build_peak_rss_gb", "index build (minimap2 -d -x map-pb -k 15 -w 10 -t 16): wall time and peak memory (GB = 1024^3 bytes), from /usr/bin/time -v"),
+        row("summary/runs", "mid_occ (summary: mid_occ_mean)", "effective repeat-filter threshold minimap2 used when mapping (its own '[M::mm_mapopt_update] mid_occ = N' log line): any minimizer occurring > mid_occ times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below"),
+        row("summary/runs", "map_wall_time_sec / map_peak_rss_gb", "mapping (minimap2 -x map-pb -c -t 16 [-f cap]): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
+        # --- accuracy
+        row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads"),
+        row("summary/runs", "frac_correct", "reads whose primary alignment is on the true contig and overlaps the true interval by >= 10% of their union / n_reads -- the Winnowmap / minimap2 papers' own criterion"),
+        row("summary/runs", "frac_incorrectly_mapped", "mapped but not correct (frac_correct criterion) / n_reads"),
+        row("summary/runs", "frac_correct_in_repeat", "frac_correct restricted to the n_reads_in_repeat reads (the Winnowmap paper's headline comparison)"),
+        row("summary/runs", "frac_correct_strict50[_in_repeat]", "stricter variant: overlap >= 50% of the true span (overall / in-repeat)"),
+        row("summary/runs", "mean_identity", "mean of 1 - de (gap-compressed per-base divergence from PAF's de:f: tag, dv:f: fallback) over primary alignments"),
+        # --- summary aggregates
+        row("summary", "{metric}_mean / {metric}_std", "mean / sample standard deviation over the row's n_seeds runs (std = 0 when n_seeds = 1)"),
+        row("summary", "{metric}_ratio", "this order's mean / native's mean in the same (dataset, mid_occ_cap) block (native = 1, white). Colored green = better than native, red = worse; direction is per metric -- lower is better for density/avg_occurrences/time/memory/frac_incorrectly_mapped, higher is better for frac_mapped/frac_correct*/mean_identity"),
+        row("summary", "correlation grid (below the table)", f"per (dataset, mid_occ_cap) block: Pearson r via Excel CORREL over that block's 6 order means, rows = density_factor_mean / avg_occurrences_mean, columns = total / build / map time and memory means; cells with r > {CORR_HIGHLIGHT_ABOVE} are green. Only 6 points per r -- a trend indicator, not a significance test"),
+        # --- orders / datasets
+        row("orders", "description / cli", "what the order does and the minimap2 flags that select it"),
+        row("orders", "t", "mod-minimizer t-mer length (blank for non-mod orders)"),
+        row("orders", "expected_density_factor_mean/std", "theoretical density_factor: Monte Carlo on i.i.d. random DNA (HPC-modeled), mean/std over the 5 seeds -- see lib/expected_density.py"),
+        row("orders", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap)"),
+        row("datasets", "n_contigs / genome_len_bp / n_reads / n_repeat_regions / repeat_bp", "read off disk: genome.fa.fai, truth.tsv, repeats.bed"),
+        # --- mid_occ algorithm
+        row("mid_occ (algorithm)", "what it filters", "at map time each read minimizer is looked up in the index; each hit becomes a chaining anchor. A minimizer with more than mid_occ reference occurrences is dropped (seed.c mm_collect_matches), and one repeated > mid_occ times within the read itself and > 1% of its minimizers is dropped too (mm_seed_mz_flt). Bases covered by dropped minimizers count as rep_len, which lowers MAPQ"),
+        row("mid_occ (algorithm)", "rescue", "if mid_occ < max_max_occ (4095, -U), inside each run of dropped minimizers the lowest-occurrence ones are kept, ~1 per 500 bp of read (--occ-dist, mm_seed_select); never above 4095. Active on D1 (mid_occ ~1244-1440); off on D2 (mid_occ ~9465-15000 > 4095: a hard cutoff)"),
+        row("mid_occ (algorithm)", "default value", "without -f, mid_occ = occurrence count at the top 0.02% (-f 2e-4) of the index's distinct minimizers, clamped to [10, 1e6] (index.c mm_idx_cal_max_occ) -- so it's computed per index, per order"),
+        row("mid_occ (algorithm)", "why it drifts with the order", "a lower-density order has fewer distinct minimizers, each occurring more often (higher avg_occurrences), so the same 0.02% quantile lands higher (D1: native 1244 vs greedymini 1417; D2: 9465 vs 13305). More repetitive hits then pass, adding chaining work without changing where reads map; fixing -f to native's value (mid_occ_cap) removes this confound"),
+    ]
+
+
 def sheet_categories(raw_name: str, fields: list[str]) -> list[str] | None:
     """One category label per field, for the row-1 band; None to skip it."""
+    if raw_name == "overview":
+        return ["reference"] * len(fields)
     if raw_name in ("runs", "summary"):
         return [_field_category(f) for f in fields]
     if raw_name == "orders":
@@ -550,6 +623,8 @@ XLSX_PER_ORDER_MERGE_FIELDS = frozenset({"mod_t"})
 # border) after each dataset's last row, and the vertical merge above.
 # 'datasets' is one row per dataset already, so it gets neither.
 XLSX_DATASET_BORDER_SHEETS = frozenset({"summary", "runs"})
+# Explicit column widths, for text-heavy sheets only.
+XLSX_COL_WIDTHS = {"overview": (20, 42, 160)}
 
 
 def _cell(value, col: int, row: int, *, style: int = 0) -> str:
@@ -755,12 +830,12 @@ def _correlation_block(fields: list[str], rows: list[dict], start_row: int) -> t
             merges.append(f"A{r - len(xs)}:A{r - 1}")
             merges.append(f"B{r - len(xs)}:B{r - 1}")
     sqref = f"D{grid_first}:{col_letter(3 + len(ys))}{r - 1}"
+    # No color scale here -- just flag strong positive correlation (dxfId 0 =
+    # the green fill in _xlsx_styles_xml's <dxfs>).
     cf = (
         f'<conditionalFormatting sqref="{sqref}">'
-        f'<cfRule type="colorScale" priority="{len(fields) + 1}"><colorScale>'
-        '<cfvo type="num" val="-1"/><cfvo type="num" val="0"/><cfvo type="num" val="1"/>'
-        '<color rgb="FF5A8AC6"/><color rgb="FFFFFFFF"/><color rgb="FFF8696B"/>'
-        "</colorScale></cfRule></conditionalFormatting>"
+        f'<cfRule type="cellIs" dxfId="0" priority="{len(fields) + 1}" operator="greaterThan">'
+        f"<formula>{CORR_HIGHLIGHT_ABOVE}</formula></cfRule></conditionalFormatting>"
     )
     return out, merges, cf
 
@@ -778,6 +853,12 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
             'activePane="bottomLeft" state="frozen"/>'
             "</sheetView></sheetViews>"
         )
+    if raw_name in XLSX_COL_WIDTHS:
+        cols = "".join(
+            f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>'
+            for i, w in enumerate(XLSX_COL_WIDTHS[raw_name], start=1)
+        )
+        xml.append(f"<cols>{cols}</cols>")
     xml.append("<sheetData>")
     merge_refs: list[str] = []
     if fields:
@@ -857,6 +938,9 @@ def _xlsx_styles_xml() -> str:
         '<xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
         "</cellXfs>"
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+        # dxf 0: green fill, for the correlation grid's r > CORR_HIGHLIGHT_ABOVE rule
+        '<dxfs count="1"><dxf><font><color rgb="FF006100"/></font>'
+        '<fill><patternFill><bgColor rgb="FFC6EFCE"/></patternFill></fill></dxf></dxfs>'
         "</styleSheet>"
     )
 
@@ -972,6 +1056,7 @@ def main(argv=None) -> int:
     )
     orders = orders_rows(summary, expected)
 
+    write_csv(args.results_dir / "minimap2_overview.csv", OVERVIEW_FIELDS, overview_rows())
     write_csv(args.results_dir / "minimap2_datasets.csv", dataset_field_order(), datasets)
     write_csv(args.results_dir / "minimap2_summary.csv", summary_field_order(), summary)
     write_csv(args.results_dir / "minimap2_runs.csv", RUN_FIELDS, runs)
@@ -979,6 +1064,7 @@ def main(argv=None) -> int:
     print(f"wrote {len(datasets)} dataset row(s), {len(summary)} summary row(s), {len(runs)} run row(s), {len(orders)} order row(s) under {args.results_dir}")
 
     write_xlsx(args.results_dir / "minimap2_results.xlsx", [
+        ("overview", OVERVIEW_FIELDS, overview_rows()),
         ("datasets", dataset_field_order(), datasets),
         ("summary", summary_field_order(), summary),
         ("orders", orders_field_order(summary), orders),
