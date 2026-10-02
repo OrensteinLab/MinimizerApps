@@ -39,26 +39,17 @@ A GreedyMini table can be looked up two ways:
 
 kraken2 only ever uses the binary backend in practice: its `gm_k` values make a `4^gm_k` DNA-alphabet table impractically large. kmc supports both, with binary as the default backend (flipped from an earlier DNA-expanded default); `_dna.gm` tables and `-ode` opt into the DNA-alphabet backend for a binary-alphabet source. sshash's minimizer length `m` has no minimizer-length-specific compile-time cap (the practical bound is `Kmer::max_m=32`, `sshash/include/kmer.hpp`, for the 2-bit DNA alphabet this fork always builds with — `sshash/include/constants.hpp`'s `min_l`/`max_l` are unrelated, they size the skew index's bucket-size partitioning) — a `4^gm_k` DNA-alphabet table stays practical at that scale, but binary is still the default.
 
-## Extend-k: a table built for a shorter length, used at a longer one
+## Extend-k: a table built for a shorter length, used at a longer one (kraken2, kmc)
 
-A GreedyMini table's own `gm_k` need not equal the length `l` being ranked: when `l > gm_k`, `gm_k` bases decide the order (looked up in the table) and the remaining `l - gm_k` bases become a secondary tie-break folded in below the table's rank (`ext_bits`/`gamma_bits` in `common/minimizer-orders/greedymini_rank.h` and each app's own ranker — `kraken2::GMRanker`, `custom_order_hasher`). This is how kraken2 has always used tables shorter than its own minimizer length, and — since this feature — how sshash's `greedymini` order uses `orders/GreedyMini/w11_k15_canonical.gm` (`gm_k=15`) at `-m 21` (`l=21`, 6 bases of Extend-k).
+A GreedyMini table's own `gm_k` need not equal the length `l` being ranked: when `l > gm_k`, `gm_k` bases decide the order (looked up in the table) and the remaining `l - gm_k` bases become a secondary tie-break folded in below the table's rank (`ext_bits`/`gamma_bits` in `common/minimizer-orders/greedymini_rank.h` and each app's own ranker — `kraken2::GMRanker`). sshash does not use Extend-k; it uses the centre extension below.
 
-## mod-minimizer
+## DNA -> binary projection polarity (sshash `--gm-projection`)
 
-sshash additionally supports the **mod-minimizer** (Groot Koerkamp & Pibiri, ["The mod-minimizer: a simple and efficient sampling algorithm for long k-mers"](https://doi.org/10.4230/LIPIcs.WABI.2024.11), WABI 2024) — a two-step sampling scheme with provably lower density than a plain (random) minimizer when the minimizer length `m` is large relative to the window `w = k-m+1`. Instead of directly ranking the `w` candidate m-mers, it ranks the more numerous **t-mers** (`t < m`) across the *whole* k-mer with a separate order **O_t** (any of the 4 base orders above), and reduces the winning t-mer's position mod `w` to pick which m-mer is sampled. This is the same algorithm as kraken2's own "Mod" sketching scheme below (both implement Groot Koerkamp & Pibiri's mod-sampling, and — since the incremental-iterator work — even share the `common/minimizer-orders/mod_residue_deque.h` primitive); sshash just exposes it as its own `mod-minimizer-*` orders rather than a separate scheme flag.
+The binary backend classifies every base into {A,T} vs {C,G} (the Sigma plane) and uses the Gamma plane as tie-break. The polarity of Sigma is a free choice: `at0-cg1` (default, the historical behaviour, bit-identical hashes) maps A,T->0 and C,G->1; `at1-cg0` flips every Sigma bit (Gamma untouched). The two are the same order up to a relabelling of table keys, so on i.i.d. uniform DNA the expected density is the same, but a table is not symmetric under key complement, so the *particular* density on a real (AT/CG-skewed) collection can differ. sshash only: `sshash build --gm-projection {at0-cg1,at1-cg0}` (stored in the index, `sshash query --verbose` prints it). Implemented in `sshash/include/custom_order_hasher.hpp`, not in the shared header. `sshash/test/test_gm_centre.cpp` checks that `hash()` stays injective in the m-mer and reverse-complement invariant for both polarities.
 
-The 4 base orders above each get a `mod-minimizer-*` counterpart, reusing that order as O_t:
+### sshash: centre extension of the table to the m-mer
 
-| Order | O_t | sshash CLI |
-|---|---|---|
-| mod-minimizer-native-hash | native | `-O mod-minimizer-native-hash --t-length T -s SEED` |
-| mod-minimizer-xor-hash | xor-hash | `-O mod-minimizer-xor-hash --t-length T -s SEED` |
-| mod-minimizer-pcg-xor-hash | xor-pcg-hash | `-O mod-minimizer-pcg-xor-hash --t-length T -s SEED` |
-| mod-minimizer-greedymini | greedymini | `-O mod-minimizer-greedymini --greedy-mini-file FILE.gm --t-length T -s SEED` |
-
-`t` has no single canonical value: the paper's own formula (`t = r + ((k-r) mod w)` for a small lower bound `r`, Definition 16) gives `t=10` for sshash's own tested regime (`k=31, m=21, w=11`) and is what reproduces the paper's published numbers; `t=11` instead matches `orders/GreedyMini/w21_k11_canonical.gm`'s own length exactly (no Extend-k needed for `mod-minimizer-greedymini`). The benchmark harness (`benchmark/sshash/`) sweeps both for the 3 hash-based orders, and now also for `mod-minimizer-greedymini` itself (`orders/GreedyMini/w22_k10_canonical.gm` at `t=10`, `w21_k11_canonical.gm` at `t=11`) -- a `mod-minimizer-greedymini-<label>` order (e.g. `-v2`) instead compares an alternate table at a fixed `t=11`, registered in `benchmark/sshash/config.yaml`'s `mod_t_gm_labels`.
-
-**Canonical (double-stranded) k-mers**: mod-sampling's position-selection rule isn't mirror-equivariant the way the classical per-locus-canonicalized scheme is (see `sshash/include/util.hpp`'s `compute_mod_minimizer_single_strand` doc comment for why, including a worked counterexample), so sshash falls back to its *original* mechanism for this instead — "regular parsing" from the 2022 SSHash paper (also still live in `jermp/sshash-lite`): construction keeps each k-mer's minimizer as whichever single strand the input was walked in, and Lookup "will first search for g and — only if not found — will also search for ĝ [effectively doubling the query time in the worst case]" (2022 paper, "Double Strandedness", quoted verbatim). This applies only to `mod-minimizer-*` orders — the other 3 orders keep sshash's newer single-probe "canonical parsing" scheme unchanged.
+sshash's `-O greedymini` (binary-alphabet tables only) extends an explicit canonical (mirror-symmetric) table of `gm_k`-mers to `m = gm_k + 2i`: write the m-mer as `xyz` with `|x| = |z| = i` and `|y| = gm_k`, rank the **binary projection of `y`** by the table (one lookup; strand invariant since `rc` maps `y` to its mirror and `rank[key] == rank[reverse(key)]`), then break ties by the lexicographic minimum of the projection of `xyz` and its reversal, and finally by the Gamma plane (so the hash stays injective on canonical m-mers). It needs `m - gm_k` even (at `m = 21` only the odd-`gm_k` tables `w11_k13` and `w11_k15`; an even `gm_k` is rejected with a clear error), the binary alphabet and a mirror-symmetric table (checked at configure time). On i.i.d. DNA at `m = 21, w = 11` it gives the tables' designed densities (1.592 / 1.524). The harness names the orders `greedymini-k13`, `greedymini-k15` (+ `-at1`).
 
 ## Usage
 
@@ -88,12 +79,7 @@ kmc ...                                                        # no -or/-co: kmc
 ./sshash build -i FILE -k 31 -m 21 -O xor-hash -s SEED ...
 ./sshash build -i FILE -k 31 -m 21 -O xor-pcg-hash -s SEED ...
 ./sshash build -i FILE -k 31 -m 21 -O greedymini \
-    --greedy-mini-file orders/GreedyMini/w11_k15_canonical.gm [--gm-alphabet binary|dna] ...
-
-# mod-minimizer (see "mod-minimizer" above): O_t is any base order + --t-length
-./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-xor-hash --t-length 10 -s SEED ...
-./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-greedymini \
-    --greedy-mini-file orders/GreedyMini/w21_k11_canonical.gm --t-length 11 -s SEED ...
+    --greedy-mini-file orders/GreedyMini/w11_k15_canonical.gm ...
 ```
 
 ### CLI flag mapping
@@ -103,8 +89,8 @@ kmc ...                                                        # no -or/-co: kmc
 | default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) |
 | RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
 | RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
-| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` |
-| mod-minimizer / Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-minimizer-{native-hash,xor-hash,pcg-xor-hash,greedymini} --t-length T [--greedy-mini-file FILE.gm]` — see "mod-minimizer" above |
+| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) |
+| Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a) |
 
 ## Regenerating a `.gm` table
 
