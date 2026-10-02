@@ -121,8 +121,8 @@ def compute_all_orders(
                         "density_factor_avg": None, "density_factor_std": None})
             continue
         out.append({"order": order, "m": m, "w": w, "n_seeds": len(vals),
-                    "density_factor_avg": round(statistics.mean(vals), 4),
-                    "density_factor_std": round(statistics.pstdev(vals), 4) if len(vals) > 1 else 0.0})
+                    "density_factor_avg": round(statistics.mean(vals), 8),
+                    "density_factor_std": round(statistics.pstdev(vals), 10) if len(vals) > 1 else 0.0})
     return out
 
 

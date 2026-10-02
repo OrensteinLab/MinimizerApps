@@ -28,7 +28,7 @@ INF_RANK = 0xFFFF
 def density_factor(n_selected: int, n_kmers: int, w: int) -> float | None:
     if n_kmers <= 0 or n_selected <= 0:
         return None
-    return round(n_selected / n_kmers * (w + 1), 6)
+    return round(n_selected / n_kmers * (w + 1), 10)
 
 
 def _sliding_runs(keys: list[int], w: int) -> tuple[int, int, int]:

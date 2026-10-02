@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import statistics
@@ -593,6 +594,17 @@ SUMMARY_METRICS = (
 )
 
 
+def _round_std(x: float | None) -> float | None:
+    """Round a standard deviation to at least 4 decimals and at least 4
+    significant digits, so a tiny std (a GreedyMini order's 1e-5 spread over
+    seeds) is not flattened to 0.0."""
+    if x is None:
+        return None
+    if x == 0:
+        return 0.0
+    return round(x, max(4, 3 - int(math.floor(math.log10(abs(x))))))
+
+
 def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
     if not values:
         return None, None
@@ -642,7 +654,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             vals = [float(p[metric]) for p in parts if p.get(metric) is not None]
             mean, std = _mean_std(vals)
             row[f"{metric}_mean"] = round(mean, 4) if mean is not None else None
-            row[f"{metric}_std"] = round(std, 4) if std is not None else None
+            row[f"{metric}_std"] = _round_std(std)
         out.append(row)
     return sorted(out, key=summary_sort_key)
 
@@ -722,6 +734,8 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
 def summary_field_order() -> list[str]:
     fields = ["dataset", "k", "m", "w", "modality", "order", "n_seeds", "n_kmers"]
     for metric in SUMMARY_METRICS:
+        if _METRIC_CATEGORY.get(metric) == "buckets":
+            continue  # shown in the buckets sheet (bucket_field_order), not repeated here
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
 
@@ -959,7 +973,7 @@ def _category_band_row(fields: Sequence[str], categories: Sequence[str]) -> tupl
     return f'<row r="1">{"".join(cells)}</row>', merges
 
 
-def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
+def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], drawing_rid: str | None = None) -> str:
     xml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -1012,6 +1026,8 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
         cs = _color_scale_xml(fields, rows)
         if cs:
             xml.append(cs)
+    if drawing_rid:
+        xml.append(f'<drawing r:id="{drawing_rid}"/>')
     xml.append("</worksheet>")
     return "\n".join(xml)
 
@@ -1045,14 +1061,160 @@ def _xlsx_styles_xml() -> str:
     )
 
 
-def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) -> None:
-    """Write a multi-sheet .xlsx without extra Python packages."""
+# ---------------------------------------------------------------------------
+# Charts (hand-written DrawingML, same package layout openpyxl emits)
+# ---------------------------------------------------------------------------
+
+CHART_GRID_COL0 = 10                 # first chart column (K): the raw table fills A..I
+CHART_PITCH = (9, 16)                # grid pitch in (columns, rows) -- room for one chart
+CHART_SIZE_EMU = (5_400_000, 2_880_000)
+CHART_ORDER_ORDER = (
+    "native", "xor-hash", "xor-pcg-hash",
+    "greedymini-k13", "greedymini-k15", "greedymini-k13-at1", "greedymini-k15-at1",
+)
+CHART_DATASET_ORDER = ("cod", "kestrel", "human")
+CHART_COLORS = {
+    "native": "7F7F7F", "xor-hash": "ED7D31", "xor-pcg-hash": "FFC000",
+    "greedymini-k13": "70AD47", "greedymini-k15": "4472C4",
+    "greedymini-k13-at1": "A9D18E", "greedymini-k15-at1": "8FAADC",
+}
+
+
+def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
+    """One chart per (dataset, order): number of buckets per bucket size (log-log
+    scatter) for the first seed, in a grid -- datasets down, orders across --
+    to the right of the raw table (rows of `bucket_hist` start at
+    XLSX_DATA_START_ROW). The aggregated '>4096' row is left out (it has no
+    size to plot)."""
+    sizes_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("bucket_size") + 1)
+    count_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("num_buckets") + 1)
+    blocks: dict[tuple, list[int]] = {}
+    first_seed: dict[tuple, int] = {}
+    for idx, r in enumerate(bucket_hist):
+        key = (r["dataset"], r["order"])
+        seed = int(r.get("seed_idx") or 0)
+        if key not in first_seed or seed < first_seed[key]:
+            first_seed[key] = seed
+            blocks[key] = []
+        if seed == first_seed[key] and not str(r["bucket_size"]).startswith(">"):
+            blocks[key].append(idx)
+    datasets = [d for d in CHART_DATASET_ORDER if any(k[0] == d for k in blocks)]
+    datasets += sorted({k[0] for k in blocks} - set(datasets))
+    orders = [o for o in CHART_ORDER_ORDER if any(k[1] == o for k in blocks)]
+    orders += sorted({k[1] for k in blocks} - set(orders))
+    charts = []
+    for i, ds in enumerate(datasets):
+        for j, o in enumerate(orders):
+            rows = blocks.get((ds, o))
+            if not rows:
+                continue
+            r0, r1 = XLSX_DATA_START_ROW + rows[0], XLSX_DATA_START_ROW + rows[-1]
+            charts.append({
+                "title": f"{ds} / {o} (seed {first_seed[(ds, o)]})",
+                "cat": f"${sizes_col}${r0}:${sizes_col}${r1}",
+                "val": f"${count_col}${r0}:${count_col}${r1}",
+                "col": CHART_GRID_COL0 + j * CHART_PITCH[0],
+                "row": 2 + i * CHART_PITCH[1],
+                "color": CHART_COLORS.get(o, "4472C4"),
+            })
+    return charts
+
+
+def _chart_text(text: str, size: int = 1000, bold: bool = False) -> str:
+    b = ' b="1"' if bold else ""
+    return (
+        '<tx><rich><a:bodyPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'
+        '<a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        f'<a:pPr><a:defRPr sz="{size}"{b}/></a:pPr><a:r><a:rPr lang="en-US" sz="{size}"{b}/>'
+        f"<a:t>{xml_escape(text)}</a:t></a:r></a:p></rich></tx>"
+    )
+
+
+def _chart_xml(sheet_name: str, chart: dict) -> str:
+    """Log-log scatter (one marker per bucket size): a bar histogram over the
+    hundreds of distinct sizes would squeeze the head of the distribution, where
+    the orders differ most, into a few pixels."""
+    sheet = "'" + sheet_name.replace("'", "''") + "'"
+    color = chart["color"]
+
+    def axis(ax_id: int, cross_id: int, pos: str, title: str, grid: bool) -> str:
+        return (
+            f'<valAx><axId val="{ax_id}"/><scaling><logBase val="10"/><orientation val="minMax"/></scaling>'
+            f'<delete val="0"/><axPos val="{pos}"/>{"<majorGridlines/>" if grid else ""}'
+            f'<title>{_chart_text(title, 900)}<overlay val="0"/></title>'
+            '<numFmt formatCode="General" sourceLinked="0"/><majorTickMark val="out"/><minorTickMark val="none"/>'
+            f'<tickLblPos val="nextTo"/><crossAx val="{cross_id}"/><crosses val="min"/>'
+            '<crossBetween val="midCat"/></valAx>'
+        )
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<chart><title>{_chart_text(chart["title"], 1000, True)}<overlay val="0"/></title>'
+        '<autoTitleDeleted val="0"/><plotArea><layout/>'
+        '<scatterChart><scatterStyle val="lineMarker"/><varyColors val="0"/>'
+        '<ser><idx val="0"/><order val="0"/><spPr><a:ln w="19050"><a:noFill/></a:ln></spPr>'
+        f'<marker><symbol val="circle"/><size val="4"/><spPr><a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+        f'<a:ln w="3175"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:ln></spPr></marker>'
+        f'<xVal><numRef><f>{sheet}!{chart["cat"]}</f></numRef></xVal>'
+        f'<yVal><numRef><f>{sheet}!{chart["val"]}</f></numRef></yVal><smooth val="0"/></ser>'
+        '<axId val="111"/><axId val="222"/></scatterChart>'
+        + axis(111, 222, "b", "bucket size (super-k-mers per sampled m-mer), log", False)
+        + axis(222, 111, "l", "buckets, log", True)
+        + '</plotArea><plotVisOnly val="1"/><dispBlanksAs val="gap"/></chart></chartSpace>'
+    )
+
+
+def _drawing_xml(charts: Sequence[dict]) -> str:
+    cx, cy = CHART_SIZE_EMU
+    anchors = []
+    for n, ch in enumerate(charts, start=1):
+        anchors.append(
+            f'<oneCellAnchor><from><col>{ch["col"]}</col><colOff>0</colOff><row>{ch["row"]}</row><rowOff>0</rowOff></from>'
+            f'<ext cx="{cx}" cy="{cy}"/><graphicFrame macro=""><nvGraphicFramePr><cNvPr id="{n + 1}" name="Chart {n}"/>'
+            '<cNvGraphicFramePr/></nvGraphicFramePr><xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xfrm>'
+            '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+            f'<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId{n}"/>'
+            "</a:graphicData></a:graphic></graphicFrame><clientData/></oneCellAnchor>"
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + "".join(anchors) + "</wsDr>"
+    )
+
+
+def _rels_xml(items: Sequence[tuple[str, str, str]]) -> str:
+    body = "".join(f'<Relationship Id="{i}" Type="{t}" Target="{tg}"/>' for i, t, tg in items)
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{body}</Relationships>"
+    )
+
+
+_REL_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def write_xlsx(
+    path: Path,
+    sheets: Sequence[tuple[str, list[str], list[dict]]],
+    charts: dict[str, list[dict]] | None = None,
+) -> None:
+    """Write a multi-sheet .xlsx without extra Python packages. `charts` maps a
+    sheet's raw name to its charts (dicts with title/cat/val/col/row/color,
+    see bucket_histogram_charts); each such sheet gets one drawing part."""
+    charts = charts or {}
     names: list[str] = []
     payloads: list[str] = []
     for raw_name, fields, rows in sheets:
         name = (raw_name or "Sheet")[:31]
         names.append(name)
-        payloads.append(_sheet_xml(raw_name, fields, rows))
+        payloads.append(_sheet_xml(raw_name, fields, rows, "rId1" if charts.get(raw_name) else None))
 
     sheet_refs, rels, overrides = [], [], [
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
@@ -1073,6 +1235,34 @@ def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) 
         overrides.append(
             f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         )
+
+    # drawing + chart parts of the sheets that have charts
+    extra_parts: list[tuple[str, str]] = []
+    chart_no = 0
+    for d_no, (i, (raw_name, _fields, _rows)) in enumerate(
+        [(i, sh) for i, sh in enumerate(sheets, start=1) if charts.get(sh[0])], start=1
+    ):
+        sheet_charts = charts[raw_name]
+        drawing_rels = []
+        for n, ch in enumerate(sheet_charts, start=1):
+            chart_no += 1
+            extra_parts.append((f"xl/charts/chart{chart_no}.xml", _chart_xml(names[i - 1], ch)))
+            drawing_rels.append((f"rId{n}", f"{_REL_BASE}/chart", f"../charts/chart{chart_no}.xml"))
+            overrides.append(
+                f'<Override PartName="/xl/charts/chart{chart_no}.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+            )
+        extra_parts.append((f"xl/drawings/drawing{d_no}.xml", _drawing_xml(sheet_charts)))
+        extra_parts.append((f"xl/drawings/_rels/drawing{d_no}.xml.rels", _rels_xml(drawing_rels)))
+        extra_parts.append((
+            f"xl/worksheets/_rels/sheet{i}.xml.rels",
+            _rels_xml([("rId1", f"{_REL_BASE}/drawing", f"../drawings/drawing{d_no}.xml")]),
+        ))
+        overrides.append(
+            f'<Override PartName="/xl/drawings/drawing{d_no}.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+        )
+
     rels_xml = "\n".join([*rels_head, *rels, "</Relationships>"])
     workbook = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -1096,7 +1286,9 @@ def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) 
         z.writestr("xl/styles.xml", _xlsx_styles_xml())
         for i, body in enumerate(payloads, start=1):
             z.writestr(f"xl/worksheets/sheet{i}.xml", body)
-    print(f"wrote {path} ({len(names)} sheets)")
+        for part, body in extra_parts:
+            z.writestr(part, body)
+    print(f"wrote {path} ({len(names)} sheets, {sum(len(v) for v in charts.values())} charts)")
 
 
 def index_rows() -> list[dict]:
@@ -1232,70 +1424,46 @@ def orders_field_order(summary: list[dict]) -> list[str]:
     return fields
 
 
+BUCKET_METRICS = (
+    "num_buckets",
+    "avg_bucket_size",
+    "max_bucket_size",
+    "kmers_in_skew_index_pct",
+    "skew_index_bits_per_kmer",
+    "mid_load_bits_per_kmer",
+    "control_codewords_bits_per_kmer",
+    "singleton_bucket_pct",
+    "kmers_in_singleton_bucket_pct",
+    "heavy_bucket_threshold",
+    "expected_bucket_cost",
+)
+
+
 def bucket_rows(summary: list[dict]) -> list[dict]:
     """Dedicated bucket/binning view (mean +/- std over seeds), per dataset x
     order -- see scripts/export.py:parse_bucket_stats. Explains why a
     lower-density order isn't automatically faster to query: fewer buckets
     (from lower density) means a larger *average* bucket, and a bigger share
-    of k-mers land in sshash's skew index (its structure for heavy buckets)."""
+    of k-mers land in sshash's skew index (its structure for heavy buckets).
+    These columns are the only place the bucket metrics are shown (the summary
+    sheet leaves them out)."""
     out = []
     for r in summary:
-        out.append(
-            {
-                "dataset": r.get("dataset"),
-                "modality": r.get("modality"),
-                "order": r.get("order"),
-                "n_seeds": r.get("n_seeds"),
-                "n_kmers": r.get("n_kmers"),
-                "num_buckets_mean": r.get("num_buckets_mean"),
-                "num_buckets_std": r.get("num_buckets_std"),
-                "avg_bucket_size_mean": r.get("avg_bucket_size_mean"),
-                "avg_bucket_size_std": r.get("avg_bucket_size_std"),
-                "avg_bucket_size_ratio": r.get("avg_bucket_size_ratio"),
-                "max_bucket_size_mean": r.get("max_bucket_size_mean"),
-                "max_bucket_size_std": r.get("max_bucket_size_std"),
-                "kmers_in_skew_index_pct_mean": r.get("kmers_in_skew_index_pct_mean"),
-                "kmers_in_skew_index_pct_std": r.get("kmers_in_skew_index_pct_std"),
-                "skew_index_bits_per_kmer_mean": r.get("skew_index_bits_per_kmer_mean"),
-                "skew_index_bits_per_kmer_std": r.get("skew_index_bits_per_kmer_std"),
-                "mid_load_bits_per_kmer_mean": r.get("mid_load_bits_per_kmer_mean"),
-                "control_codewords_bits_per_kmer_mean": r.get("control_codewords_bits_per_kmer_mean"),
-                "singleton_bucket_pct_mean": r.get("singleton_bucket_pct_mean"),
-                "kmers_in_singleton_bucket_pct_mean": r.get("kmers_in_singleton_bucket_pct_mean"),
-                "heavy_bucket_threshold_mean": r.get("heavy_bucket_threshold_mean"),
-                "expected_bucket_cost_mean": r.get("expected_bucket_cost_mean"),
-                "expected_bucket_cost_ratio": r.get("expected_bucket_cost_ratio"),
-            }
-        )
+        row = {k: r.get(k) for k in ("dataset", "modality", "order", "n_seeds", "n_kmers")}
+        for metric in BUCKET_METRICS:
+            row[f"{metric}_mean"] = r.get(f"{metric}_mean")
+            row[f"{metric}_std"] = r.get(f"{metric}_std")
+        row["expected_bucket_cost_ratio"] = r.get("expected_bucket_cost_ratio")
+        out.append(row)
     return out
 
 
 def bucket_field_order() -> list[str]:
-    return [
-        "dataset",
-        "modality",
-        "order",
-        "n_seeds",
-        "n_kmers",
-        "num_buckets_mean",
-        "num_buckets_std",
-        "avg_bucket_size_mean",
-        "avg_bucket_size_std",
-        "avg_bucket_size_ratio",
-        "max_bucket_size_mean",
-        "max_bucket_size_std",
-        "kmers_in_skew_index_pct_mean",
-        "kmers_in_skew_index_pct_std",
-        "skew_index_bits_per_kmer_mean",
-        "skew_index_bits_per_kmer_std",
-        "mid_load_bits_per_kmer_mean",
-        "control_codewords_bits_per_kmer_mean",
-        "singleton_bucket_pct_mean",
-        "kmers_in_singleton_bucket_pct_mean",
-        "heavy_bucket_threshold_mean",
-        "expected_bucket_cost_mean",
-        "expected_bucket_cost_ratio",
-    ]
+    fields = ["dataset", "modality", "order", "n_seeds", "n_kmers"]
+    for metric in BUCKET_METRICS:
+        fields.extend((f"{metric}_mean", f"{metric}_std"))
+    fields.append("expected_bucket_cost_ratio")
+    return fields
 
 
 def datasets_rows(rows: list[dict]) -> list[dict]:
@@ -1392,7 +1560,10 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         ("bucket_histogram", BUCKET_HISTOGRAM_FIELDS, bucket_hist),
         ("super_kmer_histogram", SUPER_KMER_HISTOGRAM_FIELDS, super_kmer_hist),
     ]
-    write_xlsx(out_root / "sshash_results.xlsx", sheets)
+    write_xlsx(
+        out_root / "sshash_results.xlsx", sheets,
+        charts={"bucket_histogram": bucket_histogram_charts(bucket_hist)},
+    )
 
     print(f"equivalence OK: {n_cmp} run(s) checked across {len({r['dataset'] for r in rows})} dataset(s)")
 
