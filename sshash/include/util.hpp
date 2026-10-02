@@ -160,13 +160,12 @@ struct build_configuration {
 
         , weighted(false)
         , verbose(true)
+        , bucket_stats(false)
 
         , tmp_dirname(constants::default_tmp_dirname)
 
         , order(custom_order_mode::NATIVE)
-        , gm_alphabet(GmAlphabet::BINARY)
-        , mod_minimizer(false)
-        , t(0)
+        , gm_proj(gm_projection::AT0_CG1)
         , regular_parsing(false)
 
     {}
@@ -181,6 +180,7 @@ struct build_configuration {
 
     bool weighted;
     bool verbose;
+    bool bucket_stats;  // also print the bucket-size and super-k-mer histograms (with --verbose)
 
     std::string tmp_dirname;
 
@@ -188,20 +188,11 @@ struct build_configuration {
        upstream's own mixer_64-based order unchanged. */
     custom_order_mode order;
     std::string greedy_mini_filename;  // required when order == GREEDYMINI
-    GmAlphabet gm_alphabet;
-
-    /* Mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): when true, the
-       minimizer of a kmer is not the smallest m-mer directly, but the m-mer
-       at the position mod-sampling selects using `order` as the order O_t on
-       t-mers (t < m). See util::compute_mod_minimizer_single_strand. */
-    bool mod_minimizer;
-    uint64_t t;  // t-mer length for O_t; only meaningful when mod_minimizer
+    gm_projection gm_proj;  // DNA->binary Sigma polarity
 
     /* Forces the two-probe "regular parsing" modality (see
-       util::compute_minimizer_single_strand) for a *non*-mod-minimizer
-       order -- an explicit comparison mode, not a production default.
-       mod_minimizer orders are always regular already, so this is a no-op
-       for them. */
+       util::compute_minimizer_single_strand) -- an explicit comparison mode,
+       not a production default. */
     bool regular_parsing;
 
     void print() const {
@@ -213,9 +204,10 @@ struct build_configuration {
                   << ", lambda = " << lambda                                  //
                   << ", weighted = " << (weighted ? "true" : "false")         //
                   << ", verbose = " << (verbose ? "true" : "false")           //
+                  << ", bucket_stats = " << (bucket_stats ? "true" : "false") //
                   << ", tmp_dirname = '" << tmp_dirname << "'"                //
-                  << ", order = '" << order_name(order, mod_minimizer) << "'"              //
-                  << (mod_minimizer ? ", t = " + std::to_string(t) : "")                    //
+                  << ", order = '" << custom_order_mode_name(order) << "'"              //
+                  << (order == custom_order_mode::GREEDYMINI ? std::string(", gm_projection = ") + gm_projection_name(gm_proj) : std::string()) //
                   << (regular_parsing ? ", regular_parsing = true" : "") << std::endl;      //
     }
 };
@@ -346,6 +338,25 @@ inline uint64_t canonical_mmer_at(Kmer window, [[maybe_unused]] Kmer const& kmer
 }
 
 /*
+    Hash of the canonical m-mer at locus i. For a strand-invariant order
+    (hasher.strand_invariant(): GreedyMini, hash(x) == hash(rc(x))) the raw
+    forward window is hashed directly and the canonicalization -- the min with
+    the reverse-complement window -- is skipped: it only matters for the VALUE
+    of a locus that turns out to be the minimum, which callers compute lazily
+    with canonical_mmer_at. Every other order hashes canonical_mmer_at(...).
+*/
+template <typename Kmer>
+inline uint64_t hash_mmer_at(hasher_type const& hasher, Kmer window, Kmer const& kmer_rc,
+                             const uint64_t k, const uint64_t m, const uint64_t i)  //
+{
+    if (hasher.strand_invariant()) {
+        window.take_chars(m);
+        return hasher.hash_gm(uint64_t(window));
+    }
+    return hasher.hash_plain(canonical_mmer_at<Kmer>(window, kmer_rc, k, m, i));
+}
+
+/*
     True if `kmer` is the canonical one of the pair (kmer, rc(kmer)). A kmer that
     equals its own reverse complement (possible only for even k) is deemed
     canonical, so that the answer is always well defined.
@@ -429,7 +440,7 @@ __attribute__((noinline)) minimizer_info resolve_tie(Kmer const& kmer, Kmer cons
     Kmer window = kmer;
     window.drop_chars(leftmost);
     for (uint64_t i = leftmost; i <= rightmost; ++i) {
-        if (hasher.hash(canonical_mmer_at<Kmer>(window, kmer_rc, k, m, i)) == min_hash) {
+        if (hash_mmer_at<Kmer>(hasher, window, kmer_rc, k, m, i) == min_hash) {
             assert(canonical_mmer_at<Kmer>(window, kmer_rc, k, m, i) == minimizer);
             const uint64_t dist = 2 * i > two_c ? 2 * i - two_c : two_c - 2 * i;
             if (dist < best_dist) {
@@ -447,9 +458,13 @@ __attribute__((noinline)) minimizer_info resolve_tie(Kmer const& kmer, Kmer cons
     return {minimizer, chosen};
 }
 
+/* The definition above, evaluated literally: the full hash of every locus. Slow for GreedyMini
+   (see compute_minimizer, which skips the tie-break of the loci that cannot win); the reference
+   the tests compare compute_minimizer and the iterators against. */
 template <typename Kmer>
-minimizer_info compute_minimizer(Kmer kmer, Kmer const& kmer_rc, const uint64_t k, const uint64_t m,
-                                 hasher_type const& hasher)  //
+__attribute__((always_inline)) inline minimizer_info compute_minimizer_reference(
+    Kmer kmer, Kmer const& kmer_rc, const uint64_t k, const uint64_t m,
+    hasher_type const& hasher)  //
 {
     assert(m <= Kmer::max_m);
     assert(m <= k);
@@ -457,21 +472,29 @@ minimizer_info compute_minimizer(Kmer kmer, Kmer const& kmer_rc, const uint64_t 
     auto kappa = [&](Kmer const& window, const uint64_t i) {
         return canonical_mmer_at<Kmer>(window, kmer_rc, k, m, i);
     };
+    const bool raw = hasher.strand_invariant();  // hash raw windows, canonicalize the winner only
 
     /* The first locus is peeled off the loop so that `min_hash` starts out at a
        real hash value: initializing it to invalid_uint64 would make an actual
        hash of invalid_uint64 register as a tie rather than as the minimum. */
     Kmer window = kmer;
-    uint64_t minimizer = kappa(window, 0);
-    uint64_t min_hash = hasher.hash(minimizer);
+    uint64_t minimizer = 0;
+    uint64_t min_hash = raw ? hash_mmer_at<Kmer>(hasher, window, kmer_rc, k, m, 0)
+                            : hasher.hash_plain(minimizer = kappa(window, 0));
     uint64_t leftmost = 0;
     uint64_t rightmost = 0;
     bool tie = false;
     window.drop_char();
 
     for (uint64_t i = 1; i != k - m + 1; ++i) {
-        uint64_t value = kappa(window, i);
-        uint64_t hash = hasher.hash(value);
+        uint64_t value = 0;
+        uint64_t hash;
+        if (raw) {
+            hash = hash_mmer_at<Kmer>(hasher, window, kmer_rc, k, m, i);
+        } else {
+            value = kappa(window, i);
+            hash = hasher.hash_plain(value);
+        }
         if (hash < min_hash) {  // leftmost
             min_hash = hash;
             minimizer = value;
@@ -484,6 +507,71 @@ minimizer_info compute_minimizer(Kmer kmer, Kmer const& kmer_rc, const uint64_t 
         }
         window.drop_char();
     }
+    if (raw) {
+        Kmer w = kmer;
+        w.drop_chars(leftmost);
+        minimizer = kappa(w, leftmost);
+    }
+
+    if (__builtin_expect(tie, false)) {
+        return resolve_tie(kmer, kmer_rc, k, m, hasher, min_hash, minimizer, leftmost, rightmost);
+    }
+    return {minimizer, leftmost};
+}
+
+/*
+    compute_minimizer_reference, but for a strand-invariant (GreedyMini) order the loci are first
+    ranked by the rank field of their hash (one table load each, from the Sigma plane of the whole
+    kmer) and only the loci sharing the minimum rank get a full hash: a hash is (rank, tie-break)
+    with the rank in its top bits, so the other loci cannot be the minimum. Same result, same
+    tie handling.
+*/
+template <typename Kmer>
+minimizer_info compute_minimizer(Kmer kmer, Kmer const& kmer_rc, const uint64_t k, const uint64_t m,
+                                 hasher_type const& hasher)  //
+{
+    if (!hasher.strand_invariant()) {
+        return compute_minimizer_reference<Kmer>(kmer, kmer_rc, k, m, hasher);
+    }
+    assert(m <= Kmer::max_m);
+    assert(m <= k);
+    assert(k <= 63);
+
+    uint64_t lo = uint64_t(kmer), hi = 0;
+    if constexpr (sizeof(kmer.bits) > 8) hi = uint64_t(kmer.bits >> 64);
+    const uint64_t sigma = hasher.sigma_of_kmer(lo, hi, int(k));
+    const uint64_t num_loci = k - m + 1;
+
+    uint16_t ranks[64];
+    uint16_t min_rank = 0xFFFF;
+    for (uint64_t i = 0; i != num_loci; ++i) {
+        ranks[i] = hasher.centre_rank(sigma, int(i));
+        min_rank = ranks[i] < min_rank ? ranks[i] : min_rank;
+    }
+
+    uint64_t min_hash = constants::invalid_uint64;
+    uint64_t leftmost = 0;
+    uint64_t rightmost = 0;
+    bool tie = false;
+    bool first = true;
+    Kmer window = kmer;
+    for (uint64_t i = 0; i != num_loci; ++i, window.drop_char()) {
+        if (ranks[i] != min_rank) continue;
+        const uint64_t hash = hash_mmer_at<Kmer>(hasher, window, kmer_rc, k, m, i);
+        if (first or hash < min_hash) {  // leftmost
+            first = false;
+            min_hash = hash;
+            leftmost = i;
+            rightmost = i;
+            tie = false;
+        } else if (hash == min_hash) {
+            rightmost = i;
+            tie = true;
+        }
+    }
+    Kmer w = kmer;
+    w.drop_chars(leftmost);
+    const uint64_t minimizer = canonical_mmer_at<Kmer>(w, kmer_rc, k, m, leftmost);
 
     if (__builtin_expect(tie, false)) {
         return resolve_tie(kmer, kmer_rc, k, m, hasher, min_hash, minimizer, leftmost, rightmost);
@@ -505,14 +593,14 @@ minimizer_info compute_minimizer(Kmer kmer, const uint64_t k, const uint64_t m,
     per-locus canonicalized) m-mer loci, leftmost on a tie -- the textbook
     minimizer scheme, and sshash's *regular parsing* modality (the 2022
     SSHash paper's original mechanism). build_configuration::regular_parsing
-    forces this (instead of compute_minimizer/minimizer_iterator) for a
-    non-mod-minimizer order, paired with dictionary::lookup's two-probe
-    fallback -- an explicit comparison point against mod-minimizer's own
-    (mandatory) two-probe path, same query architecture on both sides.
+    forces this (instead of compute_minimizer/minimizer_iterator), paired with
+    dictionary::lookup's two-probe fallback: construction keeps a kmer's
+    minimizer for whichever single strand it was walked in, and Lookup first
+    searches for g and, only if not found, for its reverse complement.
 
     Forward by construction (plain sliding-window argmin, leftmost tie-break
-    never revisits an abandoned locus), so unlike the mod-sampling schemes
-    below it needs no separate forwardness verification.
+    never revisits an abandoned locus), so it needs no separate forwardness
+    verification.
 */
 template <typename Kmer>
 minimizer_info compute_minimizer_single_strand(Kmer kmer, const uint64_t k, const uint64_t m,
@@ -546,124 +634,6 @@ minimizer_info compute_minimizer_single_strand(Kmer kmer, const uint64_t k, cons
 
     return {minimizer, pos};
 }
-
-/* The first `num_chars` characters of `window`, packed as a plain integer --
-   the substring handed to a rank/hash function when only its raw value (not
-   the Kmer type) is needed. Shared by compute_mod_minimizer_single_strand and
-   mod_minimizer_iterator (which extract a t-mer this same way). */
-template <typename Kmer>
-inline uint64_t take_chars_as_uint(Kmer const& window, uint64_t num_chars) {
-    Kmer prefix = window;
-    prefix.take_chars(num_chars);
-    return uint64_t(prefix);
-}
-
-/*
-    Mod-sampling (Groot Koerkamp & Pibiri, "The mod-minimizer: a simple and
-    efficient sampling algorithm for long k-mers", WABI 2024, Algorithm 6 /
-    Definition 7), specialised to sshash's own (k, m) model: the paper's
-    generic "k-mer being sampled" is sshash's m-mer, and its window count w is
-    sshash's derived w = k-m+1. Instead of directly ranking the w candidate
-    m-mers, mod-sampling ranks the (more numerous) t-mers (t < m) across the
-    *whole* kmer by a separate order `hasher` = O_t, and reduces the winning
-    t-mer's locus mod w to pick which m-mer is sampled:
-
-        o_min = +inf; p = +inf
-        for i = 0; i < k-t+1; i++:
-            o = O_t(kmer[i..i+t))
-            if o == o_min: p = min(p, i mod w)
-            elif o < o_min: o_min = o; p = i mod w
-        return p
-
-    (`k-t+1`, the number of t-mer loci in the whole kmer, is the paper's
-    `w+k-t` after substituting w=k-m+1.) The sampled minimizer is the m-mer at
-    position p -- a raw, single-strand substring, not separately canonicalized
-    per locus.
-
-    Mod-sampling as stated operates on one fixed forward strand only; its
-    "prefer the smaller i mod w on a tie" rule is not symmetric under
-    reversal, so its per-locus values do NOT satisfy the mirror relationship
-    (kappa(i) in kmer's frame == kappa(k-m-i) in kmer_rc's frame) that
-    compute_minimizer's canonical_mmer_at/resolve_tie machinery relies on --
-    concretely, running this routine independently on kmer and on kmer_rc can
-    select genuinely different m-mers, for *any* input, not just at ties.
-
-    Worse, combining the two independently (taking the smaller of the two
-    resulting m-mers, as sshash's own *canonical parsing* modality does for
-    the classical scheme -- see the 2022 SSHash paper, "Double Strandedness")
-    is not just a mirror-equivariance problem here: it can make the SAME
-    physical kmer get claimed by two different super-kmers during
-    construction (a "backward jump", Section 4.1 of the mod-minimizer paper),
-    corrupting the index (duplicate kmer ids) rather than merely picking a
-    different-but-consistent bucket. Verified empirically: even t=10 (which
-    Lemma 13 of the mod-minimizer paper proves gives a true, forward
-    minimizer scheme on a single strand) still hits this once combined with
-    its own reverse-complement's independent computation.
-
-    So mod-minimizer instead uses sshash's *regular parsing* modality (the
-    2022 paper's other, simpler modality, also still real code today in
-    jermp/sshash-lite's streaming_query_regular_parsing): construction keeps
-    a kmer's minimizer as whichever single strand it was actually walked in
-    (this function, called once, no combination -- see
-    dictionary_builder::compute_minimizer_tuples), and Lookup instead "will
-    first search for g and -- only if not found -- will also search for ĝ.
-    This effectively doubles the query time for Lookup in the worst case"
-    (ibid., quoted verbatim) -- see dictionary::lookup's two-probe fallback.
-
-    Deliberately a straightforward O(k-t+1) computation per kmer (mirroring
-    compute_minimizer's own role as the brute-force reference), not an
-    amortized-O(1) incremental scheme like `minimizer_iterator`; see the
-    mod-minimizer integration notes for why this is an acceptable starting
-    point.
-*/
-template <typename Kmer>
-minimizer_info compute_mod_minimizer_single_strand(Kmer kmer, const uint64_t k, const uint64_t m,
-                                                   const uint64_t t,
-                                                   hasher_type const& hasher)  //
-{
-    assert(t <= m and m <= k);
-    assert(m <= Kmer::max_m);
-
-    const uint64_t w = k - m + 1;
-    const uint64_t num_t_loci = k - t + 1;
-
-    auto tau = [&](Kmer const& window) { return take_chars_as_uint(window, t); };
-
-    /* first locus peeled off the loop, same reasoning as compute_minimizer:
-       o_min must start out as a real hash value, not a sentinel that a real
-       hash could legitimately collide with. */
-    Kmer window = kmer;
-    uint64_t o_min = hasher.hash(tau(window));
-    uint64_t p = 0;  // 0 % w == 0
-    window.drop_char();
-
-    for (uint64_t i = 1; i != num_t_loci; ++i) {
-        uint64_t o = hasher.hash(tau(window));
-        uint64_t pos_mod_w = i % w;
-        if (o < o_min) {
-            o_min = o;
-            p = pos_mod_w;
-        } else if (o == o_min and pos_mod_w < p) {
-            p = pos_mod_w;
-        }
-        window.drop_char();
-    }
-
-    Kmer final_window = kmer;
-    final_window.drop_chars(p);
-    final_window.take_chars(m);
-    return {uint64_t(final_window), p};
-}
-
-/* A mirror-equivariant ("canonical") single-probe variant of
-   compute_mod_minimizer_single_strand was explored and found to break
-   construction-time forwardness empirically on real data (a periodic-repeat
-   counterexample) -- see commit history (util.hpp, "Mirror-equivariant
-   ('canonical') mod-sampling") for the full writeup, kept there rather than
-   in this file since it is not a usable code path. mod-minimizer therefore
-   always uses the two-probe "regular parsing" modality below, unconditionally
-   -- see dictionary::lookup and dictionary_builder::compute_minimizer_tuples.
-*/
 
 }  // namespace util
 

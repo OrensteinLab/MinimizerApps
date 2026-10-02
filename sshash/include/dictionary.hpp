@@ -24,8 +24,6 @@ struct dictionary  //
         , m_num_strings(0)
         , m_k(0)
         , m_m(0)
-        , m_mod_minimizer(false)
-        , m_t(0)
         , m_regular_parsing(false) {}
 
     /* Build from input file. */
@@ -36,8 +34,6 @@ struct dictionary  //
     uint64_t num_strings() const { return m_num_strings; }
     uint64_t k() const { return m_k; }
     uint64_t m() const { return m_m; }
-    bool mod_minimizer() const { return m_mod_minimizer; }
-    uint64_t t() const { return m_t; }
     bool regular_parsing() const { return m_regular_parsing; }
     bool weighted() const { return !m_weights.empty(); }
     hasher_type const& hasher() const { return m_hasher; }
@@ -86,7 +82,7 @@ struct dictionary  //
     bool is_member(char const* string_kmer, bool check_reverse_complement = true) const;
     bool is_member(Kmer uint_kmer, bool check_reverse_complement = true) const;
 
-    template <typename>
+    template <typename, bool>
     friend struct streaming_query;
 
     streaming_query_report  //
@@ -155,8 +151,6 @@ private:
         visitor.visit(t.m_num_strings);
         visitor.visit(t.m_k);
         visitor.visit(t.m_m);
-        visitor.visit(t.m_mod_minimizer);
-        visitor.visit(t.m_t);
         visitor.visit(t.m_regular_parsing);
         visitor.visit(t.m_hasher);
         visitor.visit(t.m_spss);
@@ -169,15 +163,18 @@ private:
     uint64_t m_num_strings;
     uint16_t m_k;
     uint16_t m_m;
-    bool m_mod_minimizer;
-    uint16_t m_t;
     bool m_regular_parsing;
-    hasher_type m_hasher;
 
     spss_type m_spss;
     sparse_and_skew_index<Kmer> m_ssi;
 
     weights m_weights;
+
+    /* Declared last although serialized right after m_regular_parsing (see visit_impl, which
+       fixes the file layout): the hasher's size depends on the order (GreedyMini carries its
+       rank table and derived constants), and this keeps the offsets of the hot members above
+       independent of it. (Moving it alone did not change query time measurably.) */
+    hasher_type m_hasher;
 
     lookup_result lookup(Kmer uint_kmer, Kmer uint_kmer_rc, minimizer_info mini_info,
                          typename spss_type::bucket_cache* cache = nullptr) const;

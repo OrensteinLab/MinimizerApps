@@ -99,6 +99,15 @@ if (SSHASH_BUILD_EXECUTABLES)
     add_executable(test_minimizer test/test_minimizer.cpp)
     target_link_libraries(test_minimizer PRIVATE sshash_static)
 
+    add_executable(test_gm_centre test/test_gm_centre.cpp)
+    target_link_libraries(test_gm_centre PRIVATE sshash_static)
+
+    add_executable(test_gm_rolling test/test_gm_rolling.cpp)
+    target_link_libraries(test_gm_rolling PRIVATE sshash_static)
+
+    add_executable(test_streaming_order test/test_streaming_order.cpp)
+    target_link_libraries(test_streaming_order PRIVATE sshash_static)
+
     add_executable(check test/check.cpp)
     target_link_libraries(check PRIVATE sshash_static)
 
