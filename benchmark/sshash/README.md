@@ -2,16 +2,15 @@
 
 Benchmarks [SSHash](https://github.com/jermp/sshash) (a compact k-mer dictionary index) across
 its **minimizer order**: `native` (sshash's own baseline), `xor-hash`, `xor-pcg-hash`,
-`greedymini` (the GreedyMini rank table integration), and their 4 `mod-minimizer-*` counterparts
-(Groot Koerkamp & Pibiri, WABI 2024 — see `../../orders/README.md`). Unlike kmc's `lex`
+`greedymini-k13`/`greedymini-k15` (the GreedyMini rank tables, centre-extended to the m-mer)
+(see `../../orders/README.md`). Unlike kmc's `lex`
 baseline, sshash has no seed-less order — every order, including `native`, takes a seed, so this
-harness runs every order once per seed with no special-casing; the 3 hash-based
-`mod-minimizer-*` orders additionally run once per `t` in `{10, 11}` (see "Choice of m" below).
+harness runs every order once per seed with no special-casing.
 
 ## What is measured
 
 For each dataset, k=31, m=21 (fixed across every order -- see "Choice of m" below), and
-order (x `t`, for `mod-minimizer-*`):
+order:
 
 - **construction time + peak RSS**: `sshash build` wrapped in `/usr/bin/time -v`
 - **correctness**: `sshash check` (must print `EVERYTHING OK!`)
@@ -20,6 +19,8 @@ order (x `t`, for `mod-minimizer-*`):
   headline query-time metric the SSHash paper itself reports
 - **query time, secondary**: `sshash query` against the dataset's real paired FASTQ reads,
   also `/usr/bin/time -v`-wrapped
+  (streaming queries extend along the stored string after each hit, for every order, so the
+  report's `num_searches`/`num_extensions` split is comparable across orders)
 - **space**: the built `.sshash` file's size on disk (`os.path.getsize`, which should match
   `build`'s own reported `index_size_in_bytes` up to a small serialization-estimate delta) and
   derived bits/kmer
@@ -76,7 +77,7 @@ under `data/<id>/`, and `results/`.
 
 ```
 benchmark/sshash/
-  config.yaml         # seeds, paths, defaults (single source of truth)
+  config.yaml         # seeds, paths, dataset list, GreedyMini table labels
   sshash_bench.sh     # main entry (download / run / export / experiment)
   Makefile            # `make venv` / `make test`
   lib/*.sh            # bash helpers
@@ -90,7 +91,7 @@ benchmark/sshash/
 
 | Path | Role |
 |---|---|
-| `config.yaml` | Shared seeds (same 10 hex literals as `benchmark/kmc/config.yaml`, for cross-tool consistency), paths, defaults |
+| `config.yaml` | Shared seeds (same 10 hex literals as `benchmark/kmc/config.yaml`, for cross-tool consistency), paths, dataset list, GreedyMini table labels |
 | `sshash_bench.sh` | Main entry (download / run / export / experiment) |
 | `lib/*.sh` | Bash helpers: `constants.sh` (shared defaults + `config.yaml` loading), `env.sh` (.env loading), `datasets.sh` (download + md5), `orders.sh` (order -> CLI flags), `run.sh` (build/check/bench/query + equivalence, `/usr/bin/time -v` wrapping), `experiment.sh` (YAML sweep dispatch) |
 | `scripts/config.py` | Load `config.yaml` |
@@ -142,29 +143,26 @@ benchmark/sshash/sshash_bench.sh export                              # re-export
 benchmark/sshash/sshash_bench.sh all -d cod -n 1                      # download + run + export
 ```
 
-Defaults: `cod,kestrel,human`, k=31, m=21, `-O all` (native, xor-hash, xor-pcg-hash, greedymini,
-mod-minimizer-native-hash, mod-minimizer-xor-hash, mod-minimizer-pcg-xor-hash,
-mod-minimizer-greedymini, mod-minimizer-greedymini-v2), `-M canonical`, `-n 5` seeds, 8 threads.
+Defaults: `cod,kestrel,human`, k=31, m=21, `-O all` (native, xor-hash, xor-pcg-hash, greedymini-k13,
+greedymini-k15), `-M canonical`, `-n 5` seeds, 8 threads.
 
 The command name (`download`/`run`/`export`/`all`/`experiment`) must come **first**, before any
 options -- e.g. `sshash_bench.sh run --dataset-file PATH -n 1`, not the reverse.
 
 `-M/--modality` selects `canonical` (default, single-probe) or `regular` (two-probe, `sshash
-build --regular`); a `mod-minimizer-*` order is always `regular` regardless of this flag, so e.g.
-`-O native -M regular` is the apples-to-apples comparison against mod-minimizer's own (mandatory)
-two-probe path. `--force` re-runs a config even if its `meta.json` already exists (default:
+build --regular`), a separate axis from the order, e.g. `-O native -M regular`. `--force` re-runs a config even if its `meta.json` already exists (default:
 skip unchanged configs).
 
 **Experiments** (multi-config sweeps from YAML):
 
 ```bash
 benchmark/sshash/sshash_bench.sh experiment list
-benchmark/sshash/sshash_bench.sh experiment sweep_orders   # primary: all 9 orders (x t for mod-minimizer-*) x 5 seeds, all 3 datasets
+benchmark/sshash/sshash_bench.sh experiment sweep_orders   # primary: all orders x 5 seeds, all 3 datasets
 benchmark/sshash/sshash_bench.sh experiment sweep_m        # secondary/optional: native only, m in {7,9,11,13}
 ```
 
 Experiment files live in `experiments/`. Each has shared `defaults` plus a `configs` list; keys
-are `datasets`, `k`, `m`, `orders`, `gm_file`, `n_seeds`, `threads`, `force`, `run_tag`.
+are `datasets`, `k`, `m`, `orders`, `n_seeds`, `threads`, `force`, `run_tag`.
 
 ### Smoke testing
 
@@ -190,28 +188,14 @@ hard-fail gate) runs unmodified against either.
 
 **m is fixed at 21 for every order** in the primary comparison (`sweep_orders.yaml` /
 `run -O all`), by deliberate design: the point of this benchmark is isolating the *order's*
-effect on space/time at a fixed minimizer length, not conflating it with an m sweep. m=21 (up
-from an earlier m=11) matches k=31/m=21/w=11 — the mod-minimizer paper's own tested SSHash
-regime (Groot Koerkamp & Pibiri, WABI 2024): mod-minimizer needs m large relative to w to show
-its benefit, and using the same (k, m) for every order keeps the comparison apples-to-apples.
-`greedymini` uses `orders/GreedyMini/w11_k15_canonical.gm` (`gm_k=15`, Extend-k'd up to `l=21`);
-`mod-minimizer-greedymini`'s O_t table is `orders/GreedyMini/w21_k11_canonical.gm` at `t=11`
-(`gm_k=11=t`, no extend needed there) and `w22_k10_canonical.gm` at `t=10` (`gm_k=10=t`). Varying
+effect on space/time at a fixed minimizer length, not conflating it with an m sweep. m=21 gives
+w=k-m+1=11, the window the GreedyMini tables `w11_k13`/`w11_k15` were built for, and using the same
+(k, m) for every order keeps the comparison apples-to-apples.
+`greedymini-k13`/`greedymini-k15` use `orders/GreedyMini/w11_k13_canonical.gm`/`w11_k15_canonical.gm`,
+extended to `l=21` around the centre `gm_k`-mer (`m - gm_k` even). Varying
 m *is* useful as its own, separate question -- `experiments/sweep_m.yaml` covers that, explicitly
 at a single order (`native`) so it isn't mistaken for a second order comparison, and is
 optional/secondary to the primary `sweep_orders` results.
-
-The 3 hash-based `mod-minimizer-*` orders, and `mod-minimizer-greedymini` itself, sweep `t` (the
-length of the inner order O_t): `t=10` reproduces the mod-minimizer paper's own published
-Human/GRCh38 numbers (its own formula, Definition 16, gives `t=10` for this regime); `t=11`
-instead matches `w21_k11_canonical.gm`'s own length exactly (the paper never used GreedyMini as
-O_t, so there's no "official" t for it either way). `mod-minimizer-greedymini-v2` is a separate
-order: an A/B comparison against an alternate/updated `t=11` GreedyMini table
-(`w21_k11_canonical_v2.gm`), fixed at `t=11`. Both GreedyMini tables' `t=10` case and any further
-labeled table variant are looked up from `config.yaml`'s `mod_t_gm_file_t10`/`mod_t_gm_labels`
-keys -- adding another labeled variant later (`mod-minimizer-greedymini-v3`, say) needs one new
-config.yaml line, not a code change (see `lib/orders.sh::order_gm_file`). See
-`../../orders/README.md#mod-minimizer`.
 
 ### Equivalence checking
 
@@ -252,12 +236,9 @@ Per-run artifacts live under `$SSHASH_BENCH_ROOT/results/runs/` in a nested layo
 runs/
   {dataset}/
     {modality}/            # canonical | regular -- see -M/--modality
-      {order}/              # native | xor_hash | xor_pcg_hash | greedymini |
-                             # mod_minimizer_{native_hash,xor_hash,pcg_xor_hash,greedymini} |
-                             # mod_minimizer_greedymini_<label> (e.g. _v2)
-        [t{t}/]              # mod-minimizer-* only: t10 or t11 (fixed t11 for a labeled variant)
+      {order}/              # native | xor_hash | xor_pcg_hash | greedymini_{k13,k15}[_at1] |
         {seed_idx}/          # 0…n-1
-          build.log          # sshash build --verbose stdout+stderr (trailing JSON blob)
+          build.log          # sshash build --verbose --bucket-stats stdout+stderr (trailing JSON blob)
           build_time.txt     # GNU /usr/bin/time -v
           check.log          # sshash check --verbose (EVERYTHING OK! or diagnostics)
           bench.log          # sshash bench (trailing JSON blob)
@@ -284,11 +265,8 @@ data exists).
 ### CSV columns (main fields)
 
 **Shared keys:** `dataset`, `k`, `m`, `w` (`k-m+1`), `modality` (`canonical`/`regular`, see
-`-M/--modality`), `scheme` (`minimizer`/`mod-minimizer`) + `order` (the *normalized* order name,
-identical across a scheme's base and `mod-minimizer-*` variants: `native-hash`/`xor-hash`/
-`pcg-xor-hash`/`greedymini` -- e.g. `-O native` and `-O mod-minimizer-native-hash` both write
-`order=native-hash`, distinguished only by `scheme`), `order_seed`, `seed_idx`, `t` (blank except
-for `scheme=mod-minimizer`), `gm_file`, `threads`.
+`-M/--modality`), `order` (`native`/`xor-hash`/`xor-pcg-hash`/`greedymini-k13`/`greedymini-k15`
+[+ `-at1`]), `order_seed`, `seed_idx`, `gm_file`, `gm_projection`, `threads`.
 
 **Space:** `num_kmers`, `index_size_in_bytes` (from `build`'s own JSON), `index_bytes_on_disk`
 (`os.path.getsize`, the ground truth), `bits_per_kmer` (`index_bytes_on_disk * 8 / num_kmers`).
@@ -312,7 +290,7 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | `index` | column reference: what every non-obvious column means |
 | `orders` | one row per (order, t): what it is, its sshash CLI flags, particular + expected density |
 | `datasets` | one row per dataset: k, m, measured num_kmers |
-| `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this order's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Since every `mod-minimizer-*` order is unconditionally `regular` modality, its ratio needs a `native`-under-`regular` run to divide by -- `run_schemes` (`lib/run.sh`) builds one automatically per dataset/seed whenever a sweep includes any `mod-minimizer-*` order, regardless of `-M`, so these columns are never silently blank |
+| `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this order's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. |
 | `runs` | one row per run (every metric + telemetry, unfiltered) |
 | `vs_reference` | informational: measured vs the Zenodo record's own published k-mer counts |
 
@@ -320,13 +298,20 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 
 - Every order (including `native`) takes `-s SEED`; there is no seed-less baseline the way
   kmc's `lex` is, so this benchmark never special-cases a "run once" order the way kmc does.
-- `greedymini`'s `--greedy-mini-file` defaults to `orders/GreedyMini/w11_k15_canonical.gm`
-  (`gm_k=15`, Extend-k'd up to `-m 21`). Override with `--greedy-mini-file PATH` or the
-  `gm_file` experiment-YAML key. `mod-minimizer-greedymini`'s own O_t tables are fixed to
-  `config.yaml`'s `mod_t_gm_file`/`mod_t_gm_file_t10` (not overridable from the CLI, to avoid
-  ambiguity when several such orders run in the same sweep); a labeled table variant (e.g.
-  `mod-minimizer-greedymini-v2`) instead reads `config.yaml`'s top-level `mod_t_gm_labels` map --
-  add a new label there to register another variant, no code change needed.
+- Plain-greedymini tables are first-class orders named by their `gm_k`: `greedymini-k13` and
+  `greedymini-k15` (the `w11_k13`/`w11_k15` tables; sshash `-O greedymini`, the centre extension
+  of the table to the m-mer, see `orders/README.md`), both in `all`. For the flipped
+  DNA->binary polarity (`sshash build --gm-projection at1-cg0`: AT->1, CG->0 instead of the
+  default AT->0, CG->1) an `-at1` suffix works on either: `greedymini-k13-at1`,
+  `greedymini-k15-at1`. Each is its own order id, run directory (`greedymini_k13_at1/...`),
+  summary/orders row and `meta.json` `gm_projection`; the table labels come from
+  `config.yaml`'s top-level `greedymini_labels` map (add a line to register another table --
+  the `-at1` twin comes for free). The centre extension needs `m - gm_k` even, so e.g. a table with an even
+  `gm_k` is rejected at m=21; `sshash_bench.sh run` checks this up front (`python -m scripts
+  orders check-gm ORDER M`). Example:
+  `./sshash_bench.sh run -d cod,kestrel -n 5 -O native,greedymini-k13,greedymini-k15,greedymini-k13-at1,greedymini-k15-at1`.
+  The orders sheet's expected density is the Monte Carlo on i.i.d. DNA (equal for both polarities
+  up to sampling noise by symmetry); the particular density per dataset is what can differ.
 - The built `.sshash` index is deleted after each run's check/bench/query/equivalence steps
   finish (to keep disk usage bounded across cod/kestrel/human x 9 orders x N seeds x up to 2
   `t` values); pass `--keep-index` to retain it.

@@ -15,6 +15,8 @@ if __name__ == "__main__" and __package__ is None:
 
 from scripts.export import (
     attach_native_ratios,
+    bucket_distribution_metrics,
+    histogram_overflow,
     summary_field_order,
     summary_rows,
     validate_orders_equivalence,
@@ -33,6 +35,7 @@ def _row(dataset, order, seed_idx, num_kmers=1000, check_ok=True, pos_match=True
         "k": 31,
         "m": 11,
         "order": order,
+        "modality": "canonical",
         "order_seed": seed_idx,
         "seed_idx": seed_idx,
         "gm_file": "",
@@ -56,12 +59,28 @@ def _row(dataset, order, seed_idx, num_kmers=1000, check_ok=True, pos_match=True
     return row
 
 
+def test_histogram_overflow_makes_the_histogram_exact() -> None:
+    # sshash does not tally buckets above 4096 per size: 90 singletons + 5 buckets of size 2
+    # list 100 k-mers in 95 buckets, but the run has 110 k-mers in 96 buckets (one big bucket).
+    listed = [(1, 90, 90), (2, 5, 10)]
+    assert histogram_overflow(listed, 110, 96) == (1, 10)
+    assert histogram_overflow(listed, 100, 95) is None  # nothing missing
+    assert histogram_overflow(listed, 105, 95) is None  # inconsistent: k-mers but no bucket
+    assert histogram_overflow([], 110, 96) is None  # no histogram
+    # the shares use the true totals once the overflow is included
+    plain = bucket_distribution_metrics(listed)
+    exact = bucket_distribution_metrics(listed, (1, 10))
+    assert plain["kmers_in_singleton_bucket_pct"] == 90.0
+    assert exact["kmers_in_singleton_bucket_pct"] == round(100 * 90 / 110, 4)
+    assert exact["expected_bucket_cost"] > plain["expected_bucket_cost"]
+
+
 def test_validate_orders_equivalence_ok() -> None:
     rows = [
         _row("cod", "native", 0),
         _row("cod", "native", 1),
         _row("cod", "xor-hash", 0),
-        _row("cod", "greedymini", 0),
+        _row("cod", "greedymini-k15", 0),
     ]
     n_cmp, errors = validate_orders_equivalence(rows)
     assert n_cmp == 4
@@ -83,7 +102,7 @@ def test_validate_orders_equivalence_catches_query_mismatch() -> None:
     rows = [
         _row("cod", "native", 0),
         _row("cod", "xor-hash", 0, pos_match=False),
-        _row("cod", "greedymini", 0, neg_match=False),
+        _row("cod", "greedymini-k15", 0, neg_match=False),
         _row("cod", "xor-pcg-hash", 0, check_ok=False),
     ]
     _, errors = validate_orders_equivalence(rows)
@@ -97,13 +116,13 @@ def test_summary_rows_and_ratios() -> None:
     rows = [
         _row("cod", "native", 0, build_wall_s=10.0, bits_per_kmer=5.0),
         _row("cod", "native", 1, build_wall_s=12.0, bits_per_kmer=5.0),
-        _row("cod", "greedymini", 0, build_wall_s=8.0, bits_per_kmer=4.0),
-        _row("cod", "greedymini", 1, build_wall_s=9.0, bits_per_kmer=4.0),
+        _row("cod", "greedymini-k15", 0, build_wall_s=8.0, bits_per_kmer=4.0),
+        _row("cod", "greedymini-k15", 1, build_wall_s=9.0, bits_per_kmer=4.0),
     ]
     summary = summary_rows(rows)
     assert len(summary) == 2
     attach_native_ratios(summary)
-    gm = next(r for r in summary if r["order"] == "greedymini")
+    gm = next(r for r in summary if r["order"] == "greedymini-k15")
     native = next(r for r in summary if r["order"] == "native")
     assert native["build_wall_s_ratio"] == 1.0
     assert gm["build_wall_s_ratio"] < 1.0  # greedymini built faster in this synthetic example
@@ -121,7 +140,7 @@ def test_vs_reference_rows() -> None:
 
 
 def test_write_csv_and_xlsx_roundtrip() -> None:
-    rows = [_row("cod", "native", 0), _row("cod", "greedymini", 0)]
+    rows = [_row("cod", "native", 0), _row("cod", "greedymini-k15", 0)]
     summary = summary_rows(rows)
     attach_native_ratios(summary)
     with tempfile.TemporaryDirectory(prefix="sshash_export_test_") as td:
@@ -173,7 +192,7 @@ def test_vertical_merge_plan_stops_at_dataset_boundary() -> None:
 
 
 def test_sheet_xml_has_category_band_header_and_styles() -> None:
-    rows = [_row("cod", "native", 0), _row("cod", "native", 1), _row("cod", "greedymini", 0)]
+    rows = [_row("cod", "native", 0), _row("cod", "native", 1), _row("cod", "greedymini-k15", 0)]
     fields = ["dataset", "k", "m", "w", "order", "num_kmers", "bits_per_kmer", "check_ok"]
     xml = _sheet_xml("runs", fields, rows)
     # row 1 = category band (merged dataset/k/m/w/order under "id / params",
