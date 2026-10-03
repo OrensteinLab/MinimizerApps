@@ -80,29 +80,23 @@ def read_gm_ranks(path: Path) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# Bit helpers (Python port of common/minimizer-orders/greedymini_rank.h,
-# assuming the traditional ACGT=0,1,2,3 packing this fork always builds with)
+# Bit helpers (Python port of sshash/include/custom_order_hasher.hpp, on sshash's
+# default packing A=0,C=1,G=3,T=2: bit 0 of a base is Sigma (AT vs CG), bit 1 is
+# Gamma, and complementing a base flips bit 1)
 # ---------------------------------------------------------------------------
 
 
 def dna_reverse_complement(mmer: int, m: int) -> int:
-    """Reverse complement of an m-base 2-bit-per-base DNA m-mer, ACGT=0,1,2,3
-    (complement(x) = 3-x under this mapping)."""
+    """Reverse complement of an m-base 2-bit-per-base DNA m-mer, A=0,C=1,G=3,T=2
+    (complement(x) = x ^ 2 under this mapping)."""
     rev = 0
     shift = m * 2 - 2
     x = mmer
     for _ in range(m):
-        rev |= (3 - (x & 3)) << shift
+        rev |= ((x & 3) ^ 2) << shift
         x >>= 2
         shift -= 2
     return rev
-
-
-def gm_acgt_to_atcg(x: int) -> int:
-    x &= MASK64
-    msb = (x >> 1) & EVENS64
-    lsb = x & EVENS64
-    return ((msb ^ lsb) << 1 | msb) & MASK64
 
 
 def _pext(x: int, mask: int) -> int:
@@ -188,12 +182,11 @@ def greedymini_hash(value: int, l: int, gm_ranks: list[int], seed: int, sigma_fl
     assert gm_centre_valid(l, gm_k), f"centre extension needs l - gm_k even (l={l}, gm_k={gm_k})"
     i = (l - gm_k) // 2
     msk = (1 << (2 * l)) - 1
-    flip = (ODDS64 & msk) if sigma_flip else 0
+    flip = ((1 << l) - 1) if sigma_flip else 0
     toggle = seed & ((1 << l) - 1)
 
     def planes(v: int) -> tuple[int, int]:
-        atcg = (gm_acgt_to_atcg(v) ^ flip) & msk
-        return _pext(atcg, ODDS64 & msk), _pext(atcg, EVENS64 & msk) ^ toggle
+        return _pext(v, EVENS64 & msk) ^ flip, _pext(v, ODDS64 & msk) ^ toggle
 
     s1, g1 = planes(value)
     s2, g2 = planes(dna_reverse_complement(value, l))
