@@ -98,7 +98,9 @@ ORDER_RANDOM_XOR = 0  # was ORDER_RANDOM; value 0 kept for DB compatibility
 ORDER_GM = 1
 ORDER_RANDOM_PCG = 2
 KRAKEN2_DB_VERSION_ORIGINAL = 0
-KRAKEN2_DB_VERSION = 1
+KRAKEN2_DB_VERSION_SCHEMES = 1
+KRAKEN2_DB_VERSION_GM_CENTRE = 2  # binary GM with l > gm_k ranks by the centre extension
+KRAKEN2_DB_VERSION = KRAKEN2_DB_VERSION_GM_CENTRE
 INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
 INDEX_OPTIONS_EXT_FMT = "<BBHI4xQ"
 SKETCHING_SCHEME_NAMES = {
@@ -642,7 +644,7 @@ def read_index_options(opts_pathname):
         "gm_k": 0,
         "gm_num_entries": 0,
     }
-    if db_version >= KRAKEN2_DB_VERSION:
+    if db_version >= KRAKEN2_DB_VERSION_SCHEMES:
         if len(data) < base_size + ext_size:
             return None
         sketching_scheme, gm_alphabet, gm_k, reserved, gm_num_entries = struct.unpack(
@@ -653,7 +655,22 @@ def read_index_options(opts_pathname):
         result["gm_alphabet"] = gm_alphabet
         result["gm_k"] = gm_k
         result["gm_num_entries"] = gm_num_entries
+    result["dna_db"] = bool(dna_db)
     return result
+
+
+def index_uses_legacy_gm_prefix(opts):
+    """True for a Minimizer+binary-GreedyMini DB (l > gm_k) built before the
+    centre extension (db_version < 2): its minimizers differ, rebuild it."""
+    return bool(
+        opts
+        and KRAKEN2_DB_VERSION_SCHEMES <= opts["db_version"] < KRAKEN2_DB_VERSION_GM_CENTRE
+        and opts["order"] == ORDER_GM
+        and opts["sketching_scheme"] == SKETCHING_MINIMIZER
+        and opts["dna_db"]
+        and opts["gm_alphabet"] == GM_ALPHABET_BINARY
+        and 0 < opts["gm_k"] < opts["l"]
+    )
 
 
 def database_requires_gm_k2d(opts_pathname):
@@ -750,6 +767,8 @@ def database_build_complete(args):
     if not all(os.path.isfile(f) for f in ("hash.k2d", "taxo.k2d", "opts.k2d")):
         return False
 
+    if index_uses_legacy_gm_prefix(read_index_options("opts.k2d")):
+        return False  # retired prefix extension: force a rebuild
     requested = sketching_order_build_key(args)
     stored = index_sketching_order_key("opts.k2d")
     _, order = sketching_order_from_args(args)
@@ -5230,7 +5249,9 @@ def make_build_parser(subparsers):
         metavar="FILENAME",
         default=None,
         help="Path to GreedyMini rank file (.gm); "
-             "required when --order GreedyMini",
+             "required when --order GreedyMini. With --sketching-scheme "
+             "Minimizer the minimizer length l must be gm_k + 2i "
+             "(w5_k15_canonical.gm: 15, 17, ..., 31)",
     )
     parser.add_argument(
         "--gm-alphabet",

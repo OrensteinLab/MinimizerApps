@@ -15,8 +15,14 @@ namespace kraken2 {
 
 // db_version 0 — original Kraken 2 opts.k2d (Minimizer + Random only).
 // db_version 1 — sketching_scheme, order, GreedyMini metadata in trailing fields.
+// db_version 2 — same layout; binary GreedyMini with l > gm_k ranks by the
+//                centre extension (minimizer_rankers.h). A version-1
+//                Minimizer+GreedyMini database with l > gm_k was built with the
+//                old prefix extension and selects different minimizers.
 static const int KRAKEN2_DB_VERSION_ORIGINAL = 0;
-static const int KRAKEN2_DB_VERSION = 1;
+static const int KRAKEN2_DB_VERSION_SCHEMES = 1;
+static const int KRAKEN2_DB_VERSION_GM_CENTRE = 2;
+static const int KRAKEN2_DB_VERSION = KRAKEN2_DB_VERSION_GM_CENTRE;
 
 struct IndexOptions {
   // ---- db_version 0 fields (do not reorder) ----
@@ -40,7 +46,7 @@ struct IndexOptions {
 
 inline void DecodeIndexSchemes(const IndexOptions &opts,
                                SketchingScheme &sketching, Order &order) {
-  if (opts.db_version >= KRAKEN2_DB_VERSION) {
+  if (opts.db_version >= KRAKEN2_DB_VERSION_SCHEMES) {
     sketching = (SketchingScheme)opts.sketching_scheme;
     order = (Order)(opts.reserved & 0xffu);
   } else {
@@ -54,6 +60,21 @@ inline void EncodeIndexSchemes(IndexOptions &opts, SketchingScheme sketching,
   opts.db_version = KRAKEN2_DB_VERSION;
   opts.sketching_scheme = (uint8_t)sketching;
   opts.reserved = (uint32_t)(uint8_t)order;
+}
+
+// True for a database whose minimizers were chosen with the retired prefix
+// Extend-k order (Minimizer + binary GreedyMini, nucleotide, l > gm_k, built
+// before db_version 2). Such a database must be rebuilt.
+inline bool IndexUsesLegacyGmPrefix(const IndexOptions &opts) {
+  if (opts.db_version >= KRAKEN2_DB_VERSION_GM_CENTRE ||
+      opts.db_version < KRAKEN2_DB_VERSION_SCHEMES)
+    return false;
+  SketchingScheme sketching;
+  Order order;
+  DecodeIndexSchemes(opts, sketching, order);
+  return order == Order::GM && sketching == SketchingScheme::MINIMIZER &&
+         opts.dna_db && opts.gm_alphabet == 0 && opts.gm_k > 0 &&
+         opts.l > opts.gm_k;
 }
 
 typedef uint64_t taxid_t;

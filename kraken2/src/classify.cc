@@ -305,10 +305,18 @@ IndexData *load_index(Options &opts) {
   if (idx_opts.db_version > KRAKEN2_DB_VERSION)
     errx(EX_DATAERR, "unsupported opts.k2d db_version %d (supported: 0–%d)",
          idx_opts.db_version, KRAKEN2_DB_VERSION);
-  if (idx_opts.db_version >= KRAKEN2_DB_VERSION &&
+  if (idx_opts.db_version >= KRAKEN2_DB_VERSION_SCHEMES &&
       read_size < sizeof(IndexOptions))
     errx(EX_DATAERR, "opts.k2d truncated for db_version %d (%zu bytes)",
          idx_opts.db_version, read_size);
+  if (IndexUsesLegacyGmPrefix(idx_opts))
+    errx(EX_DATAERR,
+         "%s was built with the retired prefix GreedyMini extension "
+         "(db_version %d, l=%zu > gm_k=%u); the minimizer order is now the "
+         "centre extension and selects different minimizers. Rebuild the "
+         "database.",
+         opts.options_filename.c_str(), idx_opts.db_version, idx_opts.l,
+         (unsigned)idx_opts.gm_k);
   opts.use_translated_search = ! idx_opts.dna_db;
 
   IndexData *index_data = new IndexData();

@@ -184,6 +184,25 @@ void MinimizerScanner::init_ranker(
   } catch (const std::exception &ex) {
     errx(EX_DATAERR, "%s", ex.what());
   }
+  gm_rf_ = nullptr;
+  gm_ = nullptr;
+  if (order_ == Order::GM && dna_) {
+    gm_ = dynamic_cast<GMRanker *>(ranker_.get());
+    if (gm_ && gm_->rank_first()) {
+      sigma_mask_ = gm_->sigma_mask();
+      SetRankFirst(true, kDefaultRollSigma);
+    }
+  }
+}
+
+// Test / benchmark hook: rank_first = false takes the Rank() path (full packed
+// value of every l-mer, the reference behaviour); roll_sigma = true keeps the
+// Sigma plane by one shift per base instead of one pext per l-mer. All
+// combinations select the same minimizers. No-op unless the ranker supports
+// rank-first comparison (GM centre order, revcom version 1).
+void MinimizerScanner::SetRankFirst(bool rank_first, bool roll_sigma) {
+  gm_rf_ = (gm_ && gm_->rank_first() && rank_first) ? gm_ : nullptr;
+  roll_sigma_ = gm_rf_ && roll_sigma;
 }
 
 MinimizerScanner::MinimizerScanner(ssize_t k, ssize_t l,
@@ -312,6 +331,7 @@ void MinimizerScanner::LoadSequence(const string &seq, size_t start,
   last_minimizer_ = ~0;
   last_ambig_ = 0;
   lmer_ = 0;
+  sigma_ = 0;
   seq_pos_ = 0;
   stream_origin_ = 0;
   if (ranker_)
@@ -395,6 +415,37 @@ uint64_t *MinimizerScanner::NextMinimizerMod() {
   }
 }
 
+// Pop the queue back while it is worse than the l-mer lmer_ with table rank
+// `rank` (the leftmost minimum stays on ties). Equal finite ranks compare the
+// full packed values, which is what Rank() would have returned; infinite
+// ranks are all equal.
+void MinimizerScanner::PopDominatedRankFirst(uint64_t rank) {
+  uint64_t value = 0;
+  bool have_value = false;
+  while (! queue_.empty()) {
+    const uint64_t back = queue_.back().rank;
+#if defined(KRAKEN2_MINIMIZER_BENCHMARK)
+    rank_cmp_++;
+#endif
+    if (back < rank)
+      break;
+    if (back == rank) {
+      if (rank == GMRanker::kInfRank)
+        break;
+#if defined(KRAKEN2_MINIMIZER_BENCHMARK)
+      tie_cmp_++;
+#endif
+      if (! have_value) {
+        value = gm_rf_->value(lmer_);
+        have_value = true;
+      }
+      if (gm_rf_->value(queue_.back().candidate) <= value)
+        break;
+    }
+    queue_.pop_back();
+  }
+}
+
 uint64_t *MinimizerScanner::NextMinimizer() {
   if (sketching_ == SketchingScheme::MOD && mod_sampler_)
     return NextMinimizerMod();
@@ -419,6 +470,7 @@ uint64_t *MinimizerScanner::NextMinimizer() {
         queue_.clear();
         queue_pos_ = 0;
         lmer_ = 0;
+        sigma_ = 0;
         loaded_ch_ = 0;
         last_ambig_ |= ambig_code;
         seq_pos_ = 0;
@@ -427,6 +479,9 @@ uint64_t *MinimizerScanner::NextMinimizer() {
       }
       else {
         lmer_ |= lookup_code;
+        if (roll_sigma_)
+          sigma_ = gm_centre::roll_in_low(sigma_, gm_rf_->sigma_bit(lookup_code),
+                                          sigma_mask_);
         seq_pos_++;
       }
       lmer_ &= lmer_mask_;
@@ -469,13 +524,22 @@ uint64_t *MinimizerScanner::NextMinimizer() {
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
     const uint64_t t_rank0 = nm_rdtsc();
 #endif
-    uint64_t rank = ranker_->Rank(rank_arg);
+    // GM centre order, rank first: the rank is one table load of the Sigma
+    // plane (rolled, or one pext of lmer_); the full packed value is only
+    // computed when a finite rank ties with the back of the queue.
+    const uint64_t rank =
+        gm_rf_ ? gm_rf_->rank_of_sigma(roll_sigma_ ? sigma_
+                                                    : gm_rf_->sigma_of(lmer_))
+               : ranker_->Rank(rank_arg);
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
     const uint64_t t_rank1 = nm_rdtsc();
     const uint64_t t_deq0 = t_rank1;
 #endif
-    while (! queue_.empty() && queue_.back().rank > rank)
-      queue_.pop_back();
+    if (gm_rf_)
+      PopDominatedRankFirst(rank);
+    else
+      while (! queue_.empty() && queue_.back().rank > rank)
+        queue_.pop_back();
     MinimizerData data = { rank, candidate, queue_pos_ };
     if (queue_.empty() && queue_pos_ >= k_ - l_) {
       // Empty queue means front will change

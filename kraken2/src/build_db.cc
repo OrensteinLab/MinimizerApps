@@ -82,6 +82,13 @@ int main(int argc, char **argv) {
     } else if (gm_k > (int)opts.l) {
       errx(EX_DATAERR, "GreedyMini k_gm=%d exceeds minimizer l=%d", gm_k,
            (int)opts.l);
+    } else if (opts.gm_table->alphabet() == GmAlphabet::BINARY &&
+               !opts.input_is_protein && gm_k < (int)opts.l &&
+               (((int)opts.l - gm_k) & 1) != 0) {
+      errx(EX_DATAERR,
+           "GreedyMini centre extension needs l - k_gm even (l=%d, k_gm=%d); "
+           "valid l: %d, %d, ... (max 31)",
+           (int)opts.l, gm_k, gm_k, gm_k + 2);
     }
     std::cerr << "Loaded GreedyMini rank table: alphabet="
               << gm_alphabet_name(opts.gm_alphabet)

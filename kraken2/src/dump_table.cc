@@ -62,6 +62,9 @@ void dump_table(CompactHashTable<Cell> &kraken_index, const Options &opts) {
     << "# Min clear hash value = " << idx_opts.minimum_acceptable_hash_value << "\n";
   if (idx_opts.revcom_version != CURRENT_REVCOM_VERSION)
     std::cout << "# Built with outdated revcom version\n";
+  if (IndexUsesLegacyGmPrefix(idx_opts))
+    std::cout << "# Built with the retired prefix GreedyMini extension "
+                 "(rebuild for the centre extension)\n";
   std::cout << std::flush;
 
   if (! opts.skip_counts) {

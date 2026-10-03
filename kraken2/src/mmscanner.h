@@ -23,6 +23,9 @@ const uint64_t DEFAULT_SPACED_SEED_MASK = 0;
 const int BITS_PER_CHAR_DNA = 2;
 const int BITS_PER_CHAR_PRO = 4;
 const int CURRENT_REVCOM_VERSION = 1;
+// GM centre order: compare table ranks first (see GMRanker::rank_first), with
+// the Sigma plane rolled one base per step or recomputed (pext) per l-mer.
+const bool kDefaultRollSigma = false;
 
 struct MinimizerData {
   uint64_t rank;
@@ -126,6 +129,11 @@ class MinimizerScanner {
     return ranker_ && ranker_->has_uhs_stats();
   }
 
+  void SetRankFirst(bool rank_first, bool roll_sigma = false);
+  // Counted only when built with KRAKEN2_MINIMIZER_BENCHMARK (zero otherwise).
+  uint64_t rank_compares() const { return rank_cmp_; }
+  uint64_t tie_compares() const { return tie_cmp_; }
+
   void ClearPhaseStats() {
     phase_stats_ = {};
   }
@@ -152,6 +160,7 @@ class MinimizerScanner {
   void init_ranker(const std::string &greedy_mini_filename,
                    std::shared_ptr<const GreedyMiniTable> gm_table);
   uint64_t *NextMinimizerMod();
+  void PopDominatedRankFirst(uint64_t rank);
 
   const std::string *str_;  // pointer to sequence
   ssize_t k_;
@@ -173,6 +182,12 @@ class MinimizerScanner {
   SketchingScheme sketching_;
   Order order_;
   std::unique_ptr<MinimizerRanker> ranker_;
+  // GM centre order compared rank first (see GMRanker::rank_first); null
+  // otherwise. sigma_ is the rolled Sigma plane of lmer_ when roll_sigma_.
+  GMRanker *gm_ = nullptr, *gm_rf_ = nullptr;
+  uint64_t sigma_ = 0, sigma_mask_ = 0;
+  bool roll_sigma_ = false;
+  uint64_t tie_cmp_ = 0, rank_cmp_ = 0;  // rank-first counters (benchmark builds only)
   std::unique_ptr<ModSampler> mod_sampler_;
   ssize_t seq_pos_;  // non-ambiguous bases since last reset (MOD + shared)
   // LoadSequence start (or 0 after 'N'); absolute k-mer/window index for Mod.

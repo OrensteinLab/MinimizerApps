@@ -249,6 +249,39 @@ static void time_rank_paths(const std::vector<uint64_t> &mers,
   non_uhs.sample_dist = summarize(std::move(non_samples));
 }
 
+// Back-to-back batch replay (no per-call timer): mean ns per call of the full
+// Rank() and, for the centre order, of the rank-first path (Sigma pext + one
+// table load), which is what the scanner pays per l-mer before any tie.
+static void time_rank_batch(const std::vector<uint64_t> &mers, GMRanker &gm,
+                            int reps) {
+  if (mers.empty() || !gm.rank_first())
+    return;
+  auto best = [&](bool first) {
+    double b = 1e30;
+    uint64_t sink = 0;
+    for (int r = 0; r < reps; r++) {
+      const auto t0 = std::chrono::steady_clock::now();
+      uint64_t acc = 0;
+      if (first)
+        for (uint64_t m : mers)
+          acc += gm.rank_of_sigma(gm.sigma_of(m));
+      else
+        for (uint64_t m : mers)
+          acc += gm.Rank(m);
+      const auto t1 = std::chrono::steady_clock::now();
+      sink += acc;
+      b = std::min(b, std::chrono::duration<double, std::nano>(t1 - t0).count() /
+                          (double)mers.size());
+    }
+    if (sink == 42)
+      std::cout << "";
+    return b;
+  };
+  const double full = best(false), first = best(true);
+  std::cout << "  batch replay   Rank() " << full << " ns/l-mer, rank-first "
+            << first << " ns/l-mer (best of " << reps << ")\n";
+}
+
 // Density = fraction of successive windows whose selected minimizer value
 // changes (TOK_LOOKUP / scan-step proxy). Also track super-mer run lengths
 // (maximal runs of identical non-ambiguous keys).
@@ -541,10 +574,16 @@ struct ScannerSpec {
   std::shared_ptr<const GreedyMiniTable> gm_tbl;
 };
 
+// GM centre order scanning: 0 = full Rank() per l-mer (reference), 1 = rank
+// first (Sigma pext + table load), 2 = rank first with the Sigma plane rolled.
+static int g_rank_path = kDefaultRollSigma ? 2 : 1;
+
 static MinimizerScanner make_scanner(const ScannerSpec &spec) {
-  return MinimizerScanner(spec.k, spec.l, spec.spaced_seed_mask, true,
-                          spec.toggle, CURRENT_REVCOM_VERSION, spec.sketching,
-                          spec.order, spec.gm_path, spec.gm_tbl);
+  MinimizerScanner sc(spec.k, spec.l, spec.spaced_seed_mask, true, spec.toggle,
+                      CURRENT_REVCOM_VERSION, spec.sketching, spec.order,
+                      spec.gm_path, spec.gm_tbl);
+  sc.SetRankFirst(g_rank_path >= 1, g_rank_path == 2);
+  return sc;
 }
 
 static void density_proxy_one_file_mt(const ScannerSpec &spec,
@@ -1017,6 +1056,8 @@ static void usage() {
          "(library/ FASTAs)\n"
       << "  -o FILE   write density table to FILE (.csv or text summary)\n"
       << "  --seed-idx INT  seed index column for CSV (default: 0)\n"
+      << "  --rank-path full|first|roll  GreedyMini centre scan: full Rank() per\n"
+         "            l-mer, rank first (pext Sigma), rank first + rolled Sigma\n"
       << "  -L FLOAT  ns per TOK_LOOKUP (GetBatch); from lookup_s/lookups×1e9\n"
       << "  -F FILE   classify timing file (nextminimizer_timing_*.txt)\n"
       << "  -R FLOAT  resolve phase ns per base (default: from -F or 0)\n"
@@ -1236,6 +1277,17 @@ int main(int argc, char **argv) {
       seed = std::strtoull(argv[++i], nullptr, 10);
     else if (!std::strcmp(argv[i], "--seed-idx") && i + 1 < argc)
       seed_idx = std::atoi(argv[++i]);
+    else if (!std::strcmp(argv[i], "--rank-path") && i + 1 < argc) {
+      const char *v = argv[++i];
+      if (!std::strcmp(v, "full"))
+        g_rank_path = 0;
+      else if (!std::strcmp(v, "first"))
+        g_rank_path = 1;
+      else if (!std::strcmp(v, "roll"))
+        g_rank_path = 2;
+      else
+        usage();
+    }
     else
       usage();
   }
@@ -1579,6 +1631,7 @@ int main(int argc, char **argv) {
     const size_t stride = ranked_lmers.size() > 2000000 ? 32 : 8;
     time_rank_paths(ranked_lmers, gm_ranker, stride, 200000, nspc, uhs, non);
     print_rank_path("GreedyMini", ranked_lmers.size(), nspc, uhs, non);
+    time_rank_batch(ranked_lmers, gm_ranker, 5);
   }
 
   if (table_dna) {

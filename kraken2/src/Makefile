@@ -31,6 +31,8 @@ endif
 # -Wlto-type-mismatch from stale TUs (e.g. classify.o vs mmscanner.o).
 MM_HEADERS = mmscanner.h minimizer_rankers.h sketching_schemes.h \
 	mod_minimizer.h dna_kmer.h greedymini_rank.h \
+	../../common/minimizer-orders/greedymini_rank.h \
+	../../common/minimizer-orders/greedymini_centre.h \
 	../../common/minimizer-orders/mod_residue_deque.h
 
 all: check_prof_mode $(PROGS)
@@ -123,7 +125,8 @@ mmscanner_bench.o: mmscanner.cc $(MM_HEADERS)
 benchmark_minimizers: benchmark_minimizers.o mmscanner_bench.o
 	$(CXX) $(CXXFLAGS) -o $@ benchmark_minimizers.o mmscanner_bench.o $(LDFLAGS)
 
-test_scheme_rankers.o: test_scheme_rankers.cc greedymini_rank.h minimizer_rankers.h
+test_scheme_rankers.o: test_scheme_rankers.cc greedymini_rank.h minimizer_rankers.h \
+	kraken2_data.h $(MM_HEADERS)
 test_scheme_rankers: test_scheme_rankers.o
 	$(CXX) $(CXXFLAGS) -o $@ test_scheme_rankers.o $(LDFLAGS)
 

@@ -4,7 +4,9 @@
  * Two alphabet modes (GmAlphabet):
  *
  * BINARY (default): binary UHS on {0,1}^gm_k sigma-extended to DNA, with
- * Extend-k when l > gm_k:
+ * Extend-k (prefix extension, used by kmc; kraken2's binary order for
+ * l > gm_k and sshash use the centre extension of greedymini_centre.h) when
+ * l > gm_k:
  *   DNA packing is ACGT = 0,1,2,3 (A=00, C=01, G=10, T=11).
  *   1. Remap each base ACGT -> ATCG bitplanes (A=00, T=01, C=10, G=11)
  *      so MSB = AT vs CG (Sigma) and LSB = within-pair residual (Gamma).

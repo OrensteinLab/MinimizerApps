@@ -24,6 +24,15 @@ low-density order also used by this monorepo's
 [`../orders/README.md`](../orders/README.md) for the option/CLI reference
 and shared implementation.
 
+With `--order GreedyMini` and the Minimizer scheme, a table with `gm_k < l` is
+extended by its **centre** (rank of the middle `gm_k` bases, then tie-breaks),
+which keeps the table's designed density (`w5_k15_canonical`: 1.466 at every
+valid `l`; the default `l = 31` is 4 % below the old prefix extension's 1.529).
+`l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). Databases
+built before this change (`db_version` 1, `l > gm_k`) must be rebuilt;
+`classify` refuses them. Details, numbers and the commands to reproduce them:
+[`minimizers/README.md`](minimizers/README.md).
+
 Publications
 ------------
 
