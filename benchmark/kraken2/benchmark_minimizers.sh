@@ -46,8 +46,10 @@ $(bench_common_options_help)
   -j N          Parallel density jobs (schemes × library files; default: OMP auto)
 
 Microbench-only:
-  -l INT        minimizer length ℓ (default: 31; GreedyMini Extend-k keeps
-                dens ~1.47 for w5_k15_canonical when gm_k=15 ≤ ℓ)
+  -l INT        minimizer length ℓ (default: 31). GreedyMini needs ℓ = gm_k + 2i
+                (w5_k15_canonical: 15, 17, ..., 31); the centre extension then
+                keeps the table's density factor (~1.467) at every such ℓ.
+                See kraken2/minimizers/README.md for the sweep commands.
   -k INT        k-mer length (default: l+4 ⇒ w=5)
   -N INT        approx DNA length for expected density (default: ${N})
   -b INT        batch size for latency samples (default: ${BATCH})
