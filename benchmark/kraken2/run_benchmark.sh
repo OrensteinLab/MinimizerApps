@@ -3,13 +3,15 @@
 #
 # Prep:
 #   ./benchmark/kraken2/download_data.sh      # data/strain-exclusion + data/fda-argos (Table S5)
+#   ./benchmark/kraken2/prepare_cami_data.sh  # data/cami (CAMI II marine sample; optional)
+#   ./benchmark/kraken2/prepare_mock_data.sh  # data/mock (ZymoBIOMICS D6300 run; optional)
 #   ./benchmark/kraken2/download_library.sh   # db/standard + db/standard_p{10,0.5}
 #   ./benchmark/kraken2/run_benchmark.sh -m   # → runs/standard_p10
 #   ./benchmark/kraken2/run_benchmark.sh -E   # → runs/strain_exclusion
 #
 # Layout:
 #   db/{standard,strain_exclusion,standard_p10,standard_p0.5}/
-#   data/{strain-exclusion,fda-argos}/
+#   data/{strain-exclusion,fda-argos,cami,mock}/
 #   runs/{standard,strain_exclusion,standard_p10,standard_p0.5}/
 #     {scheme}/{seed}/{db,results}
 
@@ -49,6 +51,9 @@ done
 
 bench_iface_init
 SCHEME=""
+SKIP_CAMI="${SKIP_CAMI:-0}"
+SKIP_MOCK="${SKIP_MOCK:-0}"
+EXTRA_SETS="${EXTRA_SETS:-0}"
 COMPARE_ONLY="${COMPARE_ONLY:-0}"
 
 N_SEEDS="${N_SEEDS:-5}"
@@ -67,6 +72,11 @@ Build + classify over N seeds, then score.
 Paper pairing (Wood et al. 2019): one strain-exclusion library (-E) and two
 query sets — Mason held-out genomes (Table S1 sens/PPV/F1) and FDA-ARGOS
 (Table S5 genus concordance). NCBI -m/-z/-N never classify those sets.
+Two extra query sets are used when prepared (prepare_cami_data.sh,
+prepare_mock_data.sh): CAMI II marine reads (data/cami; library-aware genus /
+species sens/PPV/F1) and the ZymoBIOMICS D6300 mock (data/mock; profile
+precision/recall, L1, Bray-Curtis). With -E they are classified automatically;
+with -m/-z/-N only when -Q is given.
 
 Classify order: seed → dataset → cold + timed repeats → shuffled schemes.
 Seed = toggle mask (Random* order; GreedyMini Γ / Mod tb).
@@ -80,6 +90,10 @@ $(bench_common_options_help)
                 classify always runs schemes sequentially
   -t N          Threads for k2 build (default: ${SCHEME_THREADS});
                 classify always uses 1 thread
+  -C            Skip the CAMI query set (data/cami)
+  -K            Skip the mock-community query set (data/mock)
+  -Q            With -m/-z/-N also classify data/cami and data/mock
+                (default for them: speed set only; -E always includes them)
   -c            Compare only (existing results + manifest; also plots).
                 Reuses -m/-z/-N/-E when given; otherwise auto-detects a single
                 tree under runs/ that has a manifest
@@ -88,7 +102,7 @@ EOF
     exit 0
 }
 
-while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATh-" opt; do
+while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATCKQh-" opt; do
     case "${opt}" in
         S)
             bench_handle_S_opt "$@"
@@ -99,6 +113,9 @@ while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATh-" opt; do
         j) PARALLEL_JOBS="${OPTARG}" ;;
         t) SCHEME_THREADS="${OPTARG}" ;;
         c) COMPARE_ONLY=1 ;;
+        C) SKIP_CAMI=1 ;;
+        K) SKIP_MOCK=1 ;;
+        Q) EXTRA_SETS=1 ;;
         A) : ;; # ARGOS on by default in paper mode (compat with old run_eval.sh -A)
         T) : ;; # seed list already includes the paper toggle (old run_eval.sh -T)
         h) show_help ;;
@@ -267,6 +284,20 @@ add_dataset() {
     DATASET_TRUTH["${id}"]="${truth}"
 }
 
+# CAMI (data/cami, truth.tsv) and mock community (data/mock, composition.csv):
+# added when prepared and not skipped with -C / -K.
+add_extra_datasets() {
+    local pair r1 r2
+    if [[ "${SKIP_CAMI}" -eq 0 ]] && pair="$(pe_pair_in_dir "${DATA_DIR}/cami")"; then
+        IFS=$'\t' read -r r1 r2 <<< "${pair}"
+        add_dataset "cami" "${r1}" "${r2}" "${DATA_DIR}/cami/truth.tsv"
+    fi
+    if [[ "${SKIP_MOCK}" -eq 0 ]] && pair="$(pe_pair_in_dir "${DATA_DIR}/mock")"; then
+        IFS=$'\t' read -r r1 r2 <<< "${pair}"
+        add_dataset "mock" "${r1}" "${r2}" "${DATA_DIR}/mock/composition.csv"
+    fi
+}
+
 setup_datasets() {
     DATASET_IDS=()
     declare -gA DATASET_R1=()
@@ -297,10 +328,13 @@ setup_datasets() {
                     "${BASE_DIR}/evaluation/reads/argos/truth.tsv"
             fi
         fi
+        add_extra_datasets
         if [[ "${#DATASET_IDS[@]}" -eq 0 ]]; then
-            echo "Error: -E needs Mason and/or FDA-ARGOS FASTQs." >&2
+            echo "Error: -E needs Mason, FDA-ARGOS, CAMI and/or mock FASTQs." >&2
             echo "  ./benchmark/kraken2/download_data.sh -o ${BASE_DIR}" >&2
             echo "  ./benchmark/kraken2/prepare_strex_data.sh -o ${BASE_DIR}" >&2
+            echo "  ./benchmark/kraken2/prepare_cami_data.sh -o ${BASE_DIR}" >&2
+            echo "  ./benchmark/kraken2/prepare_mock_data.sh -o ${BASE_DIR}" >&2
             exit 1
         fi
         return 0
@@ -313,6 +347,9 @@ setup_datasets() {
     elif pair="$(pe_pair_in_dir "${DATA_DIR}")"; then
         IFS=$'\t' read -r r1 r2 <<< "${pair}"
         add_dataset "speed" "${r1}" "${r2}" ""
+    fi
+    if [[ "${EXTRA_SETS}" -eq 1 ]]; then
+        add_extra_datasets
     fi
     if [[ "${#DATASET_IDS[@]}" -eq 0 ]]; then
         echo "Error: NCBI -m/-z/-N do not classify strain-exclusion or FDA-ARGOS." >&2
@@ -628,6 +665,26 @@ score_dataset_output() {
             --scheme "${SCHEME}" \
             --out-tsv "${OUTPUT_DIR}/fda_argos_metrics.tsv" \
             --expected "${TABLES}/table_s5_kraken2_expected.csv"
+    elif [[ "${ds}" == "cami" ]]; then
+        # Library-aware: reads whose true genus/species is absent from this
+        # library are counted as excluded, not as misses.
+        python3 "${SCRIPT_DIR}/score_cami.py" \
+            --nodes "${nodes}" \
+            --truth "${truth}" \
+            --library-dir "${SHARED_DB}" \
+            --kraken "${kraken}" \
+            --scheme "${SCHEME}" \
+            --dataset cami \
+            --out-tsv "${OUTPUT_DIR}/cami_metrics.tsv"
+    elif [[ "${ds}" == "mock" ]]; then
+        # Profile scoring from the kraken2 report; "truth" is composition.csv.
+        python3 "${SCRIPT_DIR}/score_mock.py" \
+            --nodes "${nodes}" \
+            --report "${OUTPUT_DIR}/$(report_out_name "${ds}")" \
+            --composition "${truth}" \
+            --scheme "${SCHEME}" \
+            --dataset mock \
+            --out-tsv "${OUTPUT_DIR}/mock_metrics.tsv"
     fi
 }
 

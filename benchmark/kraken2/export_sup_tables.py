@@ -17,9 +17,9 @@ import sys
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from xlsxutil import load_xlsx, row_values
-from xlsxutil import write_csv as _shared_write_csv
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
+from xlsx_util import load_xlsx, row_values
+from xlsx_util import write_csv as _shared_write_csv
 
 ESM_URL = (
     "https://static-content.springer.com/esm/"

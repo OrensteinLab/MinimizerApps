@@ -46,7 +46,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
-from xlsxutil import load_table, write_tables, _col_letter  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
+from xlsx_util import load_table  # noqa: E402
+import export_layout  # noqa: E402
 
 
 DATASET_ORDER = {
@@ -55,7 +57,9 @@ DATASET_ORDER = {
     "labeled": 0,
     "fda-argos": 1,
     "argos": 1,
-    "speed": 2,
+    "cami": 2,
+    "mock": 3,
+    "speed": 4,
 }
 DOMAIN_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2}
 RANK_ORDER = {"genus": 0, "species": 1}
@@ -473,7 +477,9 @@ def discover_classify_datasets(outdir):
         "labeled": 0,
         "fda-argos": 1,
         "argos": 1,
-        "speed": 2,
+        "cami": 2,
+        "mock": 3,
+        "speed": 4,
     }
     uniq = []
     for d in found:
@@ -750,50 +756,6 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset="speed"):
     }
 
 
-SKIP_EXPORT_KEYS = frozenset({"class_walls"})
-
-PER_SEED_FIELDS = [
-    "scheme",
-    "dataset",
-    "seed_idx",
-    "context",
-    "seed",
-    "build_s",
-    "build_gb",
-    "class_s",
-    "class_s_std",
-    "class_gb",
-    "class_gb_std",
-    "mrd_min",
-    "mrd_min_std",
-    "cls_pct",
-    "cls_pct_std",
-    "n_classify",
-    "n_reads",
-    "nextmin_s",
-    "nextmin_s_std",
-    "nextmin_ns",
-    "nextmin_cpm",
-    "nextmin_frac",
-    "scan_s",
-    "lookup_s",
-    "resolve_s",
-    "lookups_pm",
-    "repeats_pm",
-    "lookup_frac",
-    "uhs_frac",
-    "non_uhs_frac",
-    "mape_g",
-    "mape_s",
-    "l1_g",
-    "concordance",
-    "classified_concordance",
-    "jaccard",
-    "newly_classified_pct",
-    "newly_unclassified_pct",
-]
-
-
 def _scheme_base(name):
     return name.split(" [")[0]
 
@@ -859,107 +821,69 @@ def parse_density_summary(path):
     return out
 
 
-def load_density_by_scheme(run_dir):
-    for name in (
-        os.path.join("tables", "density_per_seed.csv"),
-        "density_per_seed.csv",
-        "minimizer_density.csv",
-        "minimizer_density_benchmark.txt",
-        "minimizer_density_summary.txt",
-    ):
+DENSITY_FILES = (
+    os.path.join("tables", "density_per_seed.csv"),
+    "density_per_seed.csv",
+    os.path.join("tables", "minimizer_density.csv"),
+    "minimizer_density.csv",
+)
+
+
+def load_density_rows(run_dir):
+    """Per-(scheme, seed) density rows ({scheme, seed_idx, l, k, w, fac_expected,
+    fac_particular, ns_per_minimizer, ...}) of the run root, from the density
+    microbenchmark CSV. Schemes missing from the CSV fall back to the
+    scheme-level summary text (one row per scheme, no seed_idx)."""
+    rows = []
+    for name in DENSITY_FILES:
+        path = os.path.join(run_dir, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                scheme = _scheme_base((row.get("scheme") or "").strip())
+                if not scheme:
+                    continue
+                rec = {"scheme": scheme}
+                for k, v in row.items():
+                    if k in ("scheme", "toggle_hex", "variant", "context") or v in (None, ""):
+                        continue
+                    try:
+                        rec[k] = int(v) if k == "seed_idx" else float(v)
+                    except ValueError:
+                        pass
+                if "fac_expected" in rec or "fac_particular" in rec:
+                    rows.append(rec)
+        if rows:
+            break
+    have = set(r["scheme"] for r in rows)
+    for name in ("minimizer_density_benchmark.txt", "minimizer_density_summary.txt"):
         parsed = parse_density_summary(os.path.join(run_dir, name))
         if parsed:
-            return parsed
-    return {}
+            for scheme, rec in parsed.items():
+                if scheme not in have:
+                    row = {"scheme": scheme}
+                    row.update(rec)
+                    rows.append(row)
+            break
+    return rows
 
 
-def pearson_r(xs, ys):
-    n = min(len(xs), len(ys))
-    if n < 2:
-        return None
-    xs = [float(x) for x in xs[:n]]
-    ys = [float(y) for y in ys[:n]]
-    mx = sum(xs) / n
-    my = sum(ys) / n
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
-    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
-    if dx == 0.0 or dy == 0.0:
-        return None
-    return num / (dx * dy)
+ACCURACY_KIND = {
+    "accuracy_strain_exclusion": "labeled",
+    "accuracy_fda_argos": "argos",
+    "accuracy_cami": "cami",
+    "accuracy_mock": "mock",
+}
 
 
-def _a1_range(col, r0, r1):
-    letter = _col_letter(col)
-    return "%s%d:%s%d" % (letter, r0, letter, r1)
-
-
-def timing_correl_cells(fields, rows):
-    """Excel CORREL of scheme-level density factor vs build/classify time and RSS.
-
-    Uses one row per scheme (first dataset for build; each dataset for classify).
-    """
-    if not rows or "fac_expected" not in fields:
-        return {}
-    if all(r.get("fac_expected") in ("", None) for r in rows):
-        return {}
-    col = {name: i for i, name in enumerate(fields, 1)}
-    need = (
-        "fac_expected",
-        "fac_particular",
-        "build_s_mean",
-        "build_gb_mean",
-        "class_s_mean",
-        "class_gb_mean",
-    )
-    if any(k not in col for k in need):
-        return {}
-    by_ds = []
-    seen = set()
-    for i, row in enumerate(rows, 2):
-        ds = row.get("dataset") or ""
-        if ds not in seen:
-            seen.add(ds)
-            by_ds.append((ds, i, i))
-        else:
-            by_ds[-1] = (by_ds[-1][0], by_ds[-1][1], i)
-    if not by_ds:
-        return {}
-    start_c = len(fields) + 2
-    cells = {
-        (start_c, 1): "Pearson r (n=schemes)",
-        (start_c + 1, 1): "fac_expected",
-        (start_c + 2, 1): "fac_particular",
-    }
-    first_ds, br0, br1 = by_ds[0]
-    pairs = [
-        ("build wall (s)", "build_s_mean", br0, br1),
-        ("build RSS (GB)", "build_gb_mean", br0, br1),
-    ]
-    for ds, r0, r1 in by_ds:
-        tag = " [%s]" % ds if ds else ""
-        pairs.append(("classify wall (s)%s" % tag, "class_s_mean", r0, r1))
-        pairs.append(("classify RSS (GB)%s" % tag, "class_gb_mean", r0, r1))
-
-    def vals(field, r0, r1):
-        return [
-            _chart_num(rows[r - 2].get(field))
-            for r in range(r0, r1 + 1)
-        ]
-
-    for i, (label, field, r0, r1) in enumerate(pairs, 2):
-        cells[(start_c, i)] = label
-        for j, dens in enumerate(("fac_expected", "fac_particular"), 1):
-            formula = "CORREL(%s,%s)" % (
-                _a1_range(col[dens], r0, r1),
-                _a1_range(col[field], r0, r1),
-            )
-            cached = pearson_r(vals(dens, r0, r1), vals(field, r0, r1))
-            cells[(start_c + j, i)] = {
-                "formula": formula,
-                "value": cached if cached is not None else "",
-            }
-    return cells
+def _chart_num(v):
+    if v in ("", None):
+        return 0.0
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _scheme_dataset(name):
@@ -989,10 +913,15 @@ def _row_sort_key(row):
         RANK_ORDER.get(row.get("rank") or "", 9),
         SCOPE_ORDER.get(row.get("scope") or "", 9),
         row.get("sra_run") or "",
+        row.get("group") or "",
+        str(row.get("min_frac") if row.get("min_frac") is not None else ""),
     )
 
 
-def build_export_sheets(by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=None):
+def collect_per_seed_rows(by_scheme, metrics_by_scheme):
+    """One dict per (scheme x dataset x seed): identity + collect_run_metrics()
+    (incl. the per-repeat `class_walls`); the export layer pivots these into the
+    `runs` sheet (export_layout.build_runs)."""
     per_seed = []
     for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
         runs = by_scheme.get(scheme, [])
@@ -1005,142 +934,12 @@ def build_export_sheets(by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=N
                 "context": run.get("context"),
                 "seed": run.get("seed"),
             }
-            for k, v in m.items():
-                if k not in SKIP_EXPORT_KEYS:
-                    row[k] = v
+            row.update(m)
             per_seed.append(row)
-
-    summary_fields = [
-        "scheme",
-        "dataset",
-        "n_seeds",
-        "fac_expected",
-        "fac_particular",
-        "ns_per_minimizer",
-        "build_s_mean",
-        "build_s_std",
-        "build_gb_mean",
-        "build_gb_std",
-        "class_s_mean",
-        "class_s_std",
-        "class_gb_mean",
-        "class_gb_std",
-        "mrd_min_mean",
-        "mrd_min_std",
-        "cls_pct_mean",
-        "cls_pct_std",
-        "nextmin_s_mean",
-        "nextmin_s_std",
-        "nextmin_ns_mean",
-        "nextmin_ns_std",
-        "lookups_pm_mean",
-        "lookups_pm_std",
-        "lookup_frac_mean",
-        "lookup_frac_std",
-    ]
-    summary = []
-    for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-        ms = metrics_by_scheme[scheme]
-        def ms_of(key):
-            return mean_std([m[key] for m in ms])
-
-        b, bs = ms_of("build_s")
-        bg, bgs = ms_of("build_gb")
-        cs, css = ms_of("class_s")
-        cg, cgs = ms_of("class_gb")
-        sp, sps = ms_of("mrd_min")
-        cp, cps = ms_of("cls_pct")
-        nms, nmss = ms_of("nextmin_s")
-        nns, nnss = ms_of("nextmin_ns")
-        lp, lps = ms_of("lookups_pm")
-        lf, lfs = ms_of("lookup_frac")
-        dens = (dens_by_scheme or {}).get(_scheme_base(scheme), {})
-        summary.append(
-            {
-                "scheme": _scheme_base(scheme),
-                "dataset": (ms[0].get("dataset") if ms else None) or _scheme_dataset(scheme),
-                "n_seeds": len(ms),
-                "fac_expected": dens.get("fac_expected"),
-                "fac_particular": dens.get("fac_particular"),
-                "ns_per_minimizer": dens.get("ns_per_minimizer"),
-                "build_s_mean": b,
-                "build_s_std": bs,
-                "build_gb_mean": bg,
-                "build_gb_std": bgs,
-                "class_s_mean": cs,
-                "class_s_std": css,
-                "class_gb_mean": cg,
-                "class_gb_std": cgs,
-                "mrd_min_mean": sp,
-                "mrd_min_std": sps,
-                "cls_pct_mean": cp,
-                "cls_pct_std": cps,
-                "nextmin_s_mean": nms,
-                "nextmin_s_std": nmss,
-                "nextmin_ns_mean": nns,
-                "nextmin_ns_std": nnss,
-                "lookups_pm_mean": lp,
-                "lookups_pm_std": lps,
-                "lookup_frac_mean": lf,
-                "lookup_frac_std": lfs,
-            }
-        )
-
-    sheets = [
-        ("scheme_summary", summary_fields, summary),
-        ("per_seed", PER_SEED_FIELDS, per_seed),
-    ]
-    return sheets
+    return per_seed
 
 
 S1_METRICS = ("sensitivity", "ppv", "f1")
-
-XLSX_TAB = {
-    "contents": "0 contents",
-    "query_sets": "1 query sets",
-    "scheme_summary": "2 timing summary",
-    "per_seed": "3 timing per seed",
-    "accuracy_strain_exclusion_summary": "4 strain-exclusion summary",
-    "accuracy_strain_exclusion": "5 strain-exclusion per seed",
-    "accuracy_fda_argos_summary": "6 FDA-ARGOS summary",
-    "accuracy_fda_argos": "7 FDA-ARGOS per experiment",
-}
-
-SHEET_BLURB = {
-    "query_sets": (
-        "Query FASTQs: sources (genomes or SRA runs), fragments per source, "
-        "paired-end fragment count, and read length"
-    ),
-    "scheme_summary": (
-        "Mean±std classify wall / RSS / NextMinimizer over seeds; "
-        "density factor and Rank ns/minimizer are scheme-level, not per dataset"
-    ),
-    "per_seed": "One row per scheme × dataset × seed (timing)",
-    "accuracy_strain_exclusion_summary": (
-        "Mason held-out genomes: mean±std sensitivity / PPV / F1 "
-        "(scheme × domain × rank)"
-    ),
-    "accuracy_strain_exclusion": (
-        "Mason held-out genomes, per seed (TP/VP/FP/FN + sens/PPV/F1)"
-    ),
-    "accuracy_fda_argos_summary": (
-        "FDA-ARGOS genus concordance mean±std over seeds: concordant, "
-        "discordant, ancestor, unclassified"
-    ),
-    "accuracy_fda_argos": (
-        "FDA-ARGOS per SRR, plus unweighted mean and pooled fragments, per seed"
-    ),
-}
-
-SHEET_ORDER = (
-    "query_sets",
-    "scheme_summary",
-    "per_seed",
-    "accuracy_strain_exclusion_summary",
-    "accuracy_strain_exclusion",
-    "accuracy_fda_argos_summary",
-    "accuracy_fda_argos",
-)
 
 ARGOS_FOUR = (
     "concordant_frac",
@@ -1236,12 +1035,64 @@ def summarize_argos_concordance(argos_rows):
     return fields, rows
 
 
+CAMI_METRICS = ("sensitivity", "ppv", "f1", "excluded_frac", "n_scored")
+MOCK_METRICS = (
+    "precision",
+    "recall",
+    "f1",
+    "l1",
+    "bray_curtis",
+    "classified_frac",
+    "on_target_frac",
+    "off_target_frac",
+)
+MOCK_HEADLINE_MIN_FRAC = 1e-4
+
+
+def _summarize_by(rows, key_fields, metrics):
+    """Mean±std over seeds of `metrics`, grouped by key_fields (scheme first)."""
+    groups = defaultdict(list)
+    for row in rows:
+        groups[tuple(row.get(k) if row.get(k) is not None else "" for k in key_fields)].append(row)
+    fields = list(key_fields) + ["n_seeds"] + [
+        x for m in metrics for x in (m + "_mean", m + "_std")
+    ]
+    out = []
+    for key in sorted(
+        groups,
+        key=lambda k: (SCHEME_ORDER.get(k[0], 99),) + tuple(str(x) for x in k),
+    ):
+        ms = groups[key]
+        rec = dict(zip(key_fields, key))
+        rec["n_seeds"] = len(ms)
+        for m in metrics:
+            mu, sd = mean_std([float(r[m]) for r in ms if r.get(m) not in ("", None)])
+            rec[m + "_mean"] = mu
+            rec[m + "_std"] = sd
+        out.append(rec)
+    return fields, out
+
+
+def summarize_cami(rows):
+    """CAMI (library-aware): mean±std sens / PPV / F1 / excluded fraction per scheme × group × rank."""
+    return _summarize_by(rows, ("scheme", "group", "rank"), CAMI_METRICS)
+
+
+def summarize_mock(rows):
+    """Mock profile: mean±std precision / recall / F1 / L1 / BC per scheme × scope × rank × threshold."""
+    return _summarize_by(rows, ("scheme", "scope", "rank", "min_frac"), MOCK_METRICS)
+
+
 def load_accuracy_sheets(runs):
     """Concat per-seed strain_exclusion_metrics.tsv / fda_argos_metrics.tsv."""
     labeled = []
     argos = []
+    cami = []
+    mock = []
     labeled_fields = []
     argos_fields = []
+    cami_fields = []
+    mock_fields = []
     for r in runs:
         out = r["outdir"]
         for fname, bucket, kind in (
@@ -1250,6 +1101,8 @@ def load_accuracy_sheets(runs):
             ("labeled_metrics.tsv", labeled, "sim"),
             ("fda_argos_metrics.tsv", argos, "argos"),
             ("argos_metrics.tsv", argos, "argos"),
+            ("cami_metrics.tsv", cami, "cami"),
+            ("mock_metrics.tsv", mock, "mock"),
         ):
             path = os.path.join(out, fname)
             if not os.path.isfile(path):
@@ -1264,6 +1117,10 @@ def load_accuracy_sheets(runs):
             merged = extra + [f for f in fields if f not in extra]
             if kind == "sim":
                 labeled_fields = merged
+            elif kind == "cami":
+                cami_fields = merged
+            elif kind == "mock":
+                mock_fields = merged
             else:
                 argos_fields = merged
     labeled.sort(key=_row_sort_key)
@@ -1281,6 +1138,18 @@ def load_accuracy_sheets(runs):
         if srows:
             sheets.append(("accuracy_fda_argos_summary", sfields, srows))
         sheets.append(("accuracy_fda_argos", argos_fields, argos))
+    cami.sort(key=_row_sort_key)
+    mock.sort(key=_row_sort_key)
+    if cami:
+        sfields, srows = summarize_cami(cami)
+        if srows:
+            sheets.append(("accuracy_cami_summary", sfields, srows))
+        sheets.append(("accuracy_cami", cami_fields, cami))
+    if mock:
+        sfields, srows = summarize_mock(mock)
+        if srows:
+            sheets.append(("accuracy_mock_summary", sfields, srows))
+        sheets.append(("accuracy_mock", mock_fields, mock))
     return sheets
 
 
@@ -1337,6 +1206,29 @@ def _truth_source_stats(path):
     return n_src, "%d–%d" % (counts[0], counts[-1])
 
 
+def _truth_taxon_stats(path):
+    """(distinct true taxids, None) for read-level truth without per-source IDs (CAMI)."""
+    taxa = set()
+    if not path or not os.path.isfile(path):
+        return 0, None
+    with open(path) as f:
+        for line in f:
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) > 1:
+                taxa.add(parts[1])
+    return len(taxa), None
+
+
+def _composition_stats(path):
+    """(expected taxa, None) for a mock composition table."""
+    if not path or not os.path.isfile(path):
+        return 0, None
+    with open(path) as f:
+        return max(0, sum(1 for line in f if line.strip()) - 1), None
+
+
 def query_sets_sheet(data_dir):
     """One row per query FASTQ directory under data/."""
     if not data_dir or not os.path.isdir(data_dir):
@@ -1351,6 +1243,16 @@ def query_sets_sheet(data_dir):
             "fda-argos",
             "SRA experiments (Table S5)",
             os.path.join(data_dir, "fda-argos"),
+        ),
+        (
+            "cami",
+            "CAMI II marine genomes (distinct true taxids)",
+            os.path.join(data_dir, "cami"),
+        ),
+        (
+            "mock",
+            "mock community strains (ZymoBIOMICS D6300)",
+            os.path.join(data_dir, "mock"),
         ),
     )
     fields = [
@@ -1371,7 +1273,12 @@ def query_sets_sheet(data_dir):
         if not os.path.isfile(r1):
             continue
         n, len_min, len_max = _fastq_n_and_len(r1)
-        n_src, per_src = _truth_source_stats(os.path.join(d, "truth.tsv"))
+        if ds == "cami":
+            n_src, per_src = _truth_taxon_stats(os.path.join(d, "truth.tsv"))
+        elif ds == "mock":
+            n_src, per_src = _composition_stats(os.path.join(d, "composition.csv"))
+        else:
+            n_src, per_src = _truth_source_stats(os.path.join(d, "truth.tsv"))
         if len_min == len_max:
             read_len = len_min
             total_bp = n * read_len * (2 if os.path.isfile(r2) else 1)
@@ -1395,378 +1302,6 @@ def query_sets_sheet(data_dir):
         return None
     return ("query_sets", fields, rows)
 
-
-def _contents_sheet(sheets):
-    fields = ["tab", "csv", "section", "description"]
-    rows = []
-    for name, _fields, _rows in sheets:
-        if name == "contents":
-            continue
-        rows.append(
-            {
-                "tab": XLSX_TAB.get(name, name)[:31],
-                "csv": name + ".csv",
-                "section": (
-                    "query sets"
-                    if name == "query_sets"
-                    else "strain-exclusion"
-                    if "strain_exclusion" in name
-                    else "FDA-ARGOS"
-                    if "fda_argos" in name
-                    else "timing"
-                ),
-                "description": SHEET_BLURB.get(name, ""),
-            }
-        )
-    return ("contents", fields, rows)
-
-
-def organize_sheets(timing_sheets, extra_sheets):
-    """Timing first, then strain-exclusion accuracy, then FDA-ARGOS concordance."""
-    by_name = {}
-    for trip in list(timing_sheets) + list(extra_sheets or []):
-        by_name[trip[0]] = trip
-    ordered = []
-    for name in SHEET_ORDER:
-        if name in by_name:
-            ordered.append(by_name.pop(name))
-    ordered.extend(by_name[k] for k in sorted(by_name))
-    return [_contents_sheet(ordered)] + ordered
-
-
-def _chart_num(v):
-    if v in ("", None):
-        return 0.0
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _ordered_schemes(rows):
-    seen = []
-    have = set()
-    for row in rows:
-        s = row.get("scheme") or ""
-        if s and s not in have:
-            have.add(s)
-            seen.append(s)
-    return sorted(seen, key=lambda s: (SCHEME_ORDER.get(s, 99), s))
-
-
-def _mean_std_series(rows, schemes, series_name, mean_key, std_key, match):
-    means, stds = [], []
-    for sch in schemes:
-        hit = None
-        for row in rows:
-            if (row.get("scheme") or "") != sch:
-                continue
-            ok = True
-            for k, v in match.items():
-                if (row.get(k) or "") != v:
-                    ok = False
-                    break
-            if ok:
-                hit = row
-                break
-        means.append(_chart_num(hit.get(mean_key) if hit else None))
-        stds.append(_chart_num(hit.get(std_key) if hit and std_key else None))
-    if not any(means) and not any(stds):
-        return None
-    return {"name": series_name, "means": means, "stds": stds}
-
-
-def _charts_by_dataset(rows, schemes, metrics):
-    """Same layout as timing: clustered columns, one series per dataset."""
-    datasets = []
-    have = set()
-    for row in rows:
-        ds = row.get("dataset") or ""
-        if ds and ds not in have:
-            have.add(ds)
-            datasets.append(ds)
-    datasets.sort(key=lambda d: DATASET_ORDER.get(d, 9))
-    charts = []
-    for title, mean_k, std_k in metrics:
-        series = []
-        for ds in datasets:
-            ser = _mean_std_series(
-                rows, schemes, ds, mean_k, std_k, {"dataset": ds}
-            )
-            if ser:
-                series.append(ser)
-        if series:
-            charts.append(
-                {"title": title, "y_title": title, "cats": schemes, "series": series}
-            )
-    return charts
-
-
-def _chart_one_series(rows, schemes, title, mean_k, std_k):
-    """Library-level metric (same across query datasets): one series, no breakdown."""
-    ser = _mean_std_series(rows, schemes, title, mean_k, std_k, {})
-    if not ser:
-        return None
-    return {"title": title, "y_title": title, "cats": schemes, "series": [ser]}
-
-
-def _class_time_by_scheme(timing_rows, dataset_names):
-    """scheme -> (class_s_mean, class_s_std) for the first matching dataset."""
-    want = set(dataset_names)
-    out = {}
-    for row in timing_rows or []:
-        ds = row.get("dataset") or ""
-        if ds not in want:
-            continue
-        sch = row.get("scheme") or ""
-        if sch in out:
-            continue
-        out[sch] = (
-            _chart_num(row.get("class_s_mean")),
-            _chart_num(row.get("class_s_std")),
-        )
-    return out
-
-
-def _scatter_metric_vs_classify(
-    rows, schemes, title, y_title, mean_k, std_k, class_times, match
-):
-    """One point per scheme: x = classify wall, y = metric. Legend = scheme."""
-    series = []
-    for sch in schemes:
-        hit = None
-        for row in rows:
-            if (row.get("scheme") or "") != sch:
-                continue
-            ok = True
-            for k, v in match.items():
-                if (row.get(k) or "") != v:
-                    ok = False
-                    break
-            if ok:
-                hit = row
-                break
-        if not hit:
-            continue
-        xs = class_times.get(sch)
-        if not xs:
-            continue
-        series.append(
-            {
-                "name": sch,
-                "x": [xs[0]],
-                "y": [_chart_num(hit.get(mean_k))],
-                "stds": [_chart_num(hit.get(std_k))],
-            }
-        )
-    if not series:
-        return None
-    return {
-        "type": "scatter",
-        "title": title,
-        "x_title": "Classify wall (s)",
-        "y_title": y_title,
-        "series": series,
-    }
-
-
-def charts_for_sheet(csv_name, rows, timing_rows=None):
-    """Column charts with mean±std error bars; x-axis = scheme.
-
-    Accuracy summary sheets also get scatter charts of each metric vs classify time.
-    """
-    if not rows:
-        return []
-    schemes = _ordered_schemes(rows)
-    if not schemes:
-        return []
-    charts = []
-    if csv_name == "scheme_summary":
-        build_wall = _chart_one_series(
-            rows, schemes, "Build wall (s)", "build_s_mean", "build_s_std"
-        )
-        build_mem = _chart_one_series(
-            rows, schemes, "Build RSS (GB)", "build_gb_mean", "build_gb_std"
-        )
-        classify = _charts_by_dataset(
-            rows,
-            schemes,
-            (
-                ("Classify wall (s)", "class_s_mean", "class_s_std"),
-                ("Classify RSS (GB)", "class_gb_mean", "class_gb_std"),
-            ),
-        )
-        fac_exp = _mean_std_series(
-            rows, schemes, "expected (random DNA)", "fac_expected", None, {}
-        )
-        fac_part = _mean_std_series(
-            rows, schemes, "particular (DB library)", "fac_particular", None, {}
-        )
-        fac_series = [s for s in (fac_exp, fac_part) if s]
-        density = []
-        if fac_series:
-            density.append(
-                {
-                    "title": "Minimizer density factor",
-                    "y_title": "Density factor",
-                    "y_min": 1.0,
-                    "y_max": 2.1,
-                    "cats": schemes,
-                    "series": fac_series,
-                }
-            )
-        lookups = _charts_by_dataset(
-            rows,
-            schemes,
-            (("Lookups / Mbp", "lookups_pm_mean", "lookups_pm_std"),),
-        )
-        nextmin = _charts_by_dataset(
-            rows,
-            schemes,
-            (("NextMinimizer (s)", "nextmin_s_mean", "nextmin_s_std"),),
-        )
-        rank = _chart_one_series(
-            rows, schemes, "Rank (ns)", "ns_per_minimizer", None
-        )
-        charts = (
-            ([build_wall] if build_wall else [])
-            + ([build_mem] if build_mem else [])
-            + classify
-            + density
-            + lookups
-            + nextmin
-            + ([rank] if rank else [])
-        )
-    elif csv_name == "accuracy_strain_exclusion_summary":
-        slices = []
-        for row in rows:
-            sl = (row.get("domain") or "", row.get("rank") or "")
-            if sl not in slices:
-                slices.append(sl)
-        slices.sort(
-            key=lambda sl: (
-                DOMAIN_ORDER.get(sl[0], 9),
-                RANK_ORDER.get(sl[1], 9),
-                sl,
-            )
-        )
-        class_times = _class_time_by_scheme(
-            timing_rows, ("strain-exclusion", "simulated", "labeled")
-        )
-        for title, mean_k, std_k in (
-            ("Sensitivity", "sensitivity_mean", "sensitivity_std"),
-            ("PPV", "ppv_mean", "ppv_std"),
-            ("F1", "f1_mean", "f1_std"),
-        ):
-            series = []
-            for domain, rank in slices:
-                label = "{} / {}".format(domain, rank) if domain else rank
-                ser = _mean_std_series(
-                    rows,
-                    schemes,
-                    label,
-                    mean_k,
-                    std_k,
-                    {"domain": domain, "rank": rank},
-                )
-                if ser:
-                    series.append(ser)
-            if series:
-                charts.append(
-                    {
-                        "title": title,
-                        "y_title": title,
-                        "cats": schemes,
-                        "series": series,
-                    }
-                )
-            spec = _scatter_metric_vs_classify(
-                rows,
-                schemes,
-                "{} vs classify time (all / genus)".format(title),
-                title,
-                mean_k,
-                std_k,
-                class_times,
-                {"domain": "all", "rank": "genus"},
-            )
-            if spec:
-                charts.append(spec)
-    elif csv_name == "accuracy_fda_argos_summary":
-        class_times = _class_time_by_scheme(
-            timing_rows, ("fda-argos", "argos")
-        )
-        for title, mean_k, std_k in (
-            ("Concordant", "concordant_mean", "concordant_std"),
-            ("Discordant", "discordant_mean", "discordant_std"),
-            ("Ancestor", "ancestor_mean", "ancestor_std"),
-            ("Unclassified", "unclassified_mean", "unclassified_std"),
-        ):
-            ser = _mean_std_series(rows, schemes, title, mean_k, std_k, {})
-            if ser:
-                charts.append(
-                    {
-                        "title": title + " (fraction of fragments)",
-                        "y_title": "Fraction",
-                        "cats": schemes,
-                        "series": [ser],
-                    }
-                )
-            spec = _scatter_metric_vs_classify(
-                rows,
-                schemes,
-                "{} vs classify time".format(title),
-                title,
-                mean_k,
-                std_k,
-                class_times,
-                {},
-            )
-            if spec:
-                charts.append(spec)
-    return charts
-
-
-def export_tables(
-    out_txt, by_scheme, metrics_by_scheme, ref_name, extra_sheets=None, dens_by_scheme=None
-):
-    out_dir = os.path.dirname(os.path.abspath(out_txt)) or "."
-    csv_dir = os.path.join(out_dir, "tables")
-    xlsx = os.path.splitext(out_txt)[0] + ".xlsx"
-    sheets = organize_sheets(
-        build_export_sheets(
-            by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=dens_by_scheme
-        ),
-        extra_sheets,
-    )
-    xlsx_sheets = []
-    charts_by_tab = {}
-    extra_cells_by_tab = {}
-    timing_rows = []
-    timing_fields = []
-    for name, fields, rows in sheets:
-        if name == "scheme_summary":
-            timing_rows = rows
-            timing_fields = fields
-            break
-    correl = timing_correl_cells(timing_fields, timing_rows)
-    for name, fields, rows in sheets:
-        tab = XLSX_TAB.get(name, name)
-        xlsx_sheets.append((tab, fields, rows))
-        charts = charts_for_sheet(name, rows, timing_rows=timing_rows)
-        if charts:
-            charts_by_tab[tab] = charts
-        if name == "scheme_summary" and correl:
-            extra_cells_by_tab[tab] = correl
-    write_tables(
-        xlsx,
-        csv_dir,
-        sheets,
-        xlsx_sheets=xlsx_sheets,
-        charts_by_name=charts_by_tab,
-        extra_cells_by_name=extra_cells_by_tab,
-    )
-    return xlsx, csv_dir
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -2409,7 +1944,6 @@ def main():
     emit("")
     acc_sheets = load_accuracy_sheets(orig_runs)
     qs = query_sets_sheet(resolve_data_dir(base))
-    extra_sheets = ([qs] if qs else []) + list(acc_sheets or [])
     if acc_sheets:
         emit("")
         emit("5. ACCURACY vs LABELS  (Wood et al. 2019; last timed classify per seed)")
@@ -2421,14 +1955,25 @@ def main():
             "  FDA-ARGOS: genus concordance only — (a) concordant (b) discordant "
             "(c) ancestor (d) unclassified; no sensitivity/PPV."
         )
+        emit(
+            "  CAMI: sens/PPV/F1 over reads whose true taxon is in the library "
+            "(excluded = no reference; reported, not scored)."
+        )
+        emit(
+            "  Mock: taxon precision/recall, L1 and Bray-Curtis vs the expected "
+            "composition (profile level; no per-read truth)."
+        )
         for name, fields, rows in acc_sheets:
             emit("")
             emit("  {} (n={})".format(name, len(rows)))
             if name == "accuracy_strain_exclusion":
-                emit("    (per-seed detail in tables/accuracy_strain_exclusion.csv)")
+                emit("    (per-seed detail in tables/kraken2_strain_exclusion_runs.csv)")
                 continue
             if name == "accuracy_fda_argos":
-                emit("    (per-SRR detail in tables/accuracy_fda_argos.csv)")
+                emit("    (per-SRR detail in tables/kraken2_fda_argos_runs.csv)")
+                continue
+            if name in ("accuracy_cami", "accuracy_mock"):
+                emit("    (per-seed detail in tables/kraken2_{}_runs.csv)".format(name.replace("accuracy_", "")))
                 continue
             if name == "accuracy_strain_exclusion_summary":
                 show = [c for c in fields]
@@ -2436,6 +1981,15 @@ def main():
             elif name == "accuracy_fda_argos_summary":
                 show = [c for c in fields]
                 display = rows
+            elif name == "accuracy_cami_summary":
+                show = [c for c in fields if not c.endswith("_std")]
+                display = [r for r in rows if r.get("group") in ("all", "bacteria", "archaea")]
+            elif name == "accuracy_mock_summary":
+                show = [c for c in fields if not c.endswith("_std")]
+                display = [
+                    r for r in rows
+                    if _chart_num(r.get("min_frac")) == MOCK_HEADLINE_MIN_FRAC
+                ]
             else:
                 show = [
                     c
@@ -2469,18 +2023,33 @@ def main():
         seed = r["seed"] or "?"
         emit("  {} (seed {}) -> {}".format(r["context"], seed, r["outdir"]))
 
-    xlsx_path = csv_dir = None
+    xlsx_path = csv_dir = results_xlsx = None
     try:
-        dens_by_scheme = load_density_by_scheme(base)
-        xlsx_path, csv_dir = export_tables(
-            out_path,
-            by_scheme,
-            metrics_by_scheme,
-            ref_name,
-            extra_sheets=extra_sheets,
-            dens_by_scheme=dens_by_scheme,
+        library = os.path.basename(os.path.normpath(base))
+        acc_rows = {}
+        for name, _fields, rows in acc_sheets or []:
+            kind = ACCURACY_KIND.get(name)
+            if kind:
+                acc_rows[kind] = rows
+        qs_sheet = qs[2] if qs else []
+        xlsx_path, csv_dir, _tables = export_layout.export_library(
+            base,
+            os.path.splitext(out_path)[0] + ".xlsx",
+            library,
+            collect_per_seed_rows(by_scheme, metrics_by_scheme),
+            acc_rows,
+            load_density_rows(base),
+            qs_sheet,
         )
+        base_dir = export_layout.resolve_base_dir(base)
+        if base_dir:
+            merged = export_layout.export_results(base_dir)
+            if merged:
+                results_xlsx = merged[0]
     except Exception as e:
+        import traceback
+
+        traceback.print_exc()
         emit("")
         emit("Could not write CSV/XLSX tables: {}".format(e))
 
@@ -2491,7 +2060,9 @@ def main():
         emit("Wrote {}".format(out_path))
         if xlsx_path:
             emit("Wrote {}".format(xlsx_path))
-            emit("Wrote CSVs under {}".format(csv_dir))
+            emit("Wrote CSVs (kraken2_<sheet>.csv) under {}".format(csv_dir))
+        if results_xlsx:
+            emit("Wrote {} (all libraries)".format(results_xlsx))
     except OSError as e:
         fallback = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
