@@ -176,8 +176,10 @@ indexes are refused.
 *Implementation note (no CLI/format change beyond the above).* `hash(x) == hash(rc(x))`, so
 the minimizer code (`strand_invariant_minimizer_iterator`, `util::compute_minimizer`, ...)
 hashes the *raw* forward m-mer and builds the canonical m-mer value only for a locus that
-becomes the minimum (`streaming_query` is instantiated with the matching iterator at compile
-time, so the native/xor orders compile to the code they always did). A hash is
+becomes the minimum (the order is a compile-time parameter of the hot paths -- `minimizer_iterator<Kmer, Mode>`,
+`streaming_query<Dict, Mode>`, `util::compute_minimizer_for<Mode>`, the builder's loop --
+selected once by `dispatch_order`, so the native order compiles to upstream's multiply and xor
+with the magic precomputed, and xor-hash/xor-pcg-hash to a xor and a PCG scramble). A hash is
 `(rank, tie-break)` with the rank in its top bits, so windows with different ranks are ordered
 by their ranks alone: `hash()` is computed from the Sigma/Gamma bit planes of the m-mer and of
 its reverse complement (`hash_from_planes`; two `pext` and one bit reversal), but the code
@@ -196,15 +198,18 @@ tables) check all of this. For `--regular` indexes the streaming query applies A
 early return: a k-mer whose forward and reverse-complement minimizers equal those of the last
 probed k-mer, whose minimizers were not in the index, is negative without a lookup. Only the
 binary-alphabet GreedyMini tables (`2^gm_k` entries) are supported; the
-DNA-alphabet tables of kmc are not. The on-disk version is 12.
+DNA-alphabet tables of kmc are not. The on-disk version is 13.
 
-**NOTE**: this fork always builds with
-`-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` (the default in
-`CMakeLists.txt` is flipped from upstream's `Off`), so its 2-bit packing
-matches the shared minimizer-order implementation. This also changes the
-`native` order's own on-disk character mapping from vanilla upstream's
-default, so **indexes built by this fork are not binary-compatible with
-indexes built by unmodified upstream `sshash`**, and vice versa.
+**NOTE**: GreedyMini works on sshash's default nucleotide encoding (A=00, C=01, G=11, T=10):
+Sigma is bit 0 of a base, Gamma is bit 1, and complementing flips bit 1 only. Its hash of a
+window depends on the base sequence alone, so it equals the one computed on the ACGT = 0123
+packing of the shared implementation (`common/minimizer-orders/greedymini_rank.h`); only
+the numeric tie-break between a k-mer-window and its reverse complement (the canonical m-mer
+value) depends on the packing. `-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` is still
+accepted for the native and xor orders but `-O greedymini` is then refused at configuration.
+With the default encoding the `native` order builds the same index as vanilla upstream
+`sshash` (apart from the version and the fields this fork adds to the serialized hasher and
+dictionary).
 
 Dependencies
 ------------

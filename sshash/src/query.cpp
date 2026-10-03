@@ -162,15 +162,18 @@ dictionary<Kmer, Offsets>::streaming_query_from_file(std::string const& filename
                                                      bool multiline) const  //
 {
     using dictionary_type = dictionary<Kmer, Offsets>;
-    /* compile-time choice of the classical-path minimizer iterator, see streaming_query */
-    if (m_hasher.strand_invariant()) {
+    /* compile-time choice of the order, see streaming_query */
+    return dispatch_order(m_hasher.mode(), [&](auto mode) {
+        constexpr custom_order_mode Mode = decltype(mode)::value;
+        if (m_regular_parsing) {
+            return streaming_query_from_file_impl<dictionary_type,
+                                                  streaming_query<dictionary_type, Mode, true>>(
+                this, filename, multiline);
+        }
         return streaming_query_from_file_impl<dictionary_type,
-                                              streaming_query<dictionary_type, true>>(
+                                              streaming_query<dictionary_type, Mode, false>>(
             this, filename, multiline);
-    }
-    return streaming_query_from_file_impl<dictionary_type,
-                                          streaming_query<dictionary_type, false>>(this, filename,
-                                                                                    multiline);
+    });
 }
 
 }  // namespace sshash

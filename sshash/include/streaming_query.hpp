@@ -7,22 +7,22 @@
 namespace sshash {
 
 /*
-    `StrandInvariant` selects, at compile time, the minimizer iterator of the classical path:
-    false = minimizer_iterator (native, xor-hash, xor-pcg-hash: hashes canonical m-mers), true =
-    strand_invariant_minimizer_iterator (GreedyMini: hashes raw m-mers). It is a template
-    parameter, not a runtime branch, so that the native instantiation compiles to exactly what it
-    did before GreedyMini got its own iterator (a runtime branch in `lookup` -- or in
-    `minimizer_iterator::next` -- stopped them from being inlined and cost native queries
-    ~15%). The dictionary picks the instantiation from `hasher.strand_invariant()`.
+    `Mode` is the minimizer order, a compile-time parameter that selects the minimizer iterator
+    of the classical path and, through it, the inlined hash: minimizer_iterator<Mode> for native,
+    xor-hash and xor-pcg-hash (they hash canonical m-mers),
+    strand_invariant_minimizer_iterator for GreedyMini (hashes raw m-mers). It is a template
+    parameter, not a runtime branch, so that each instantiation compiles to what a build with
+    only that order would (a runtime branch in `lookup` -- or in `minimizer_iterator::next` --
+    stopped them from being inlined and cost native queries ~15%). `Regular` selects, likewise,
+    the "regular parsing" lookup (see util::compute_minimizer_single_strand): a runtime test of it
+    in the per-k-mer path alone cost 1-2% of the classical one. The dictionary picks the
+    instantiation from `hasher.mode()` (dispatch_order) and `regular_parsing()`.
 */
-template <typename Dict, bool StrandInvariant = false>
+template <typename Dict, custom_order_mode Mode = custom_order_mode::NATIVE, bool Regular = false>
 struct streaming_query  //
 {
     using kmer_t = typename Dict::kmer_type;
-    struct empty_t {
-        empty_t() {}
-        empty_t(uint64_t, uint64_t, hasher_type const&) {}
-    };
+    using minimizer_iterator_t = order_minimizer_iterator<kmer_t, Mode>;
 
     streaming_query(Dict const* dict)
 
@@ -50,15 +50,12 @@ struct streaming_query  //
         , m_num_skipped_singleton_lookups(0)
         , m_num_bucket_cache_hits(0)
 
-        , m_si_minimizer_it(dict->m_k, dict->m_m, dict->m_hasher)
-
     {
-        /* The iterator is picked at compile time (StrandInvariant); pairing it with the wrong
-           kind of order would hash with the wrong function and silently give minimizers that
-           differ from the built index's. */
-        if (dict->m_hasher.strand_invariant() != StrandInvariant) {
-            throw std::logic_error(
-                "streaming_query: the StrandInvariant instantiation does not match the order");
+        /* The iterator is picked at compile time; pairing it with the wrong order would hash
+           with the wrong function and silently give minimizers that differ from the built
+           index's. */
+        if (dict->m_hasher.mode() != Mode or dict->m_regular_parsing != Regular) {
+            throw std::logic_error("streaming_query: the instantiation does not match the index");
         }
     }
 
@@ -67,14 +64,15 @@ struct streaming_query  //
         m_remaining_string_bases = 0;
         m_res = lookup_result();
         m_minimizer_it.reset();
-        if constexpr (StrandInvariant) m_si_minimizer_it.reset();
         m_last_seed_mini_info = minimizer_info();
         m_last_seed_positive = false;
         m_bucket_cache.size = 0;
         m_prev_probed = false;
     }
 
-    lookup_result lookup(char const* kmer)  //
+    /* always inlined into the query loop, as the compiler does with upstream's lookup; the
+       inlining of everything below it depends on this */
+    __attribute__((always_inline)) lookup_result lookup(char const* kmer)  //
     {
         /* 1. validation */
         bool is_valid =
@@ -100,7 +98,7 @@ struct streaming_query  //
             m_kmer_rc.reverse_complement_inplace(m_k);
         }
 
-        if (m_dict->regular_parsing()) {
+        if constexpr (Regular) {
             /* Regular (single-strand) parsing: the minimizer scheme is neither
                forward-strand-canonical nor mirror-equivariant, so seed()'s
                singleton-bucket-skip/bucket-cache shortcuts (which rely on
@@ -124,11 +122,7 @@ struct streaming_query  //
             return m_res;
         }
 
-        if constexpr (StrandInvariant) {
-            m_curr_mini_info = m_si_minimizer_it.next(m_kmer);
-        } else {
-            m_curr_mini_info = m_minimizer_it.next(m_kmer);
-        }
+        m_curr_mini_info = m_minimizer_it.next(m_kmer);
 
         /* 3. compute result */
         if (m_remaining_string_bases == 0) {
@@ -174,12 +168,8 @@ private:
     uint64_t m_k, m_m;
 
     /* minimizer state */
-    minimizer_iterator<kmer_t> m_minimizer_it;
+    minimizer_iterator_t m_minimizer_it;
     minimizer_info m_curr_mini_info;
-
-    /* --regular early return: minimizers and outcome of the last probed kmer */
-    uint64_t m_prev_mini = 0, m_prev_mini_rc = 0;
-    bool m_prev_found = false, m_prev_probed = false;
 
     /* string state */
     kmer_iterator<kmer_t, bits::bit_vector> m_it;
@@ -205,11 +195,9 @@ private:
     /* large and cold: keep it last, away from the per-kmer members above */
     typename Dict::spss_type::bucket_cache m_bucket_cache;
 
-    /* GreedyMini (strand-invariant) classical order: raw-m-mer iterator, a separate class so the
-       native orders' inlined hot path above is untouched (see minimizer_iterator.hpp). Declared
-       after the cold block to leave the layout of the members above as it was. */
-    std::conditional_t<StrandInvariant, strand_invariant_minimizer_iterator<kmer_t>, empty_t>
-        m_si_minimizer_it;
+    /* --regular early return: minimizers and outcome of the last probed kmer */
+    uint64_t m_prev_mini = 0, m_prev_mini_rc = 0;
+    bool m_prev_found = false, m_prev_probed = false;
 
     /* Whether the minimizer of the last seed is its own reverse complement
        (possible for even m only). Rarely needed, so computed on demand. */

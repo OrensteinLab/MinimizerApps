@@ -184,6 +184,14 @@ static void fail(std::string const& what) {
     if (failures++ < 10) std::cerr << "FAILED: " << what << std::endl;
 }
 
+/* Reverse complement of an m-mer packed in sshash's encoding (A=0,C=1,G=3,T=2: the complement
+   of a base is b ^ 2), base by base. */
+static uint64_t rc_mmer(uint64_t x, uint64_t l) {
+    uint64_t rc = 0;
+    for (uint64_t p = 0; p != l; ++p) rc |= (((x >> (2 * p)) & 3) ^ 2) << (2 * (l - 1 - p));
+    return rc;
+}
+
 static uint64_t gen_mmer(std::mt19937_64& rng, uint64_t i, uint64_t l) {
     const uint64_t mask = (uint64_t(1) << (2 * l)) - 1;
     uint64_t x = rng() & mask;
@@ -193,7 +201,7 @@ static uint64_t gen_mmer(std::mt19937_64& rng, uint64_t i, uint64_t l) {
         case 3: {
             const uint64_t half = l / 2, hm = (uint64_t(1) << (2 * half)) - 1;
             uint64_t y = rng() & hm;
-            x = ((y << (2 * half)) | dna_reverse_complement(y, (uint8_t)half)) & mask;
+            x = ((y << (2 * half)) | rc_mmer(y, half)) & mask;
             break;
         }
         case 4: x = (rng() & 0xFull) * 0x1111111111111111ull & mask; break;

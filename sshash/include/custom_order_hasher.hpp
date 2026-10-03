@@ -13,10 +13,11 @@
 // (hash_from_planes), which the strand-invariant iterator rolls along the
 // k-mer; hash_reference() is the slow per-base specification used by tests.
 //
-// Requires building with -D SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING (see
-// CMakeLists.txt, default flipped on for this fork), so sshash's 2-bit
-// packing (A=0,C=1,G=2,T=3) matches what greedymini_rank.h/dna_revcomp.h
-// assume.
+// Works on sshash's own 2-bit packing, A=00, C=01, G=11, T=10 (upstream's default encoding; the
+// traditional one, -D SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING, is not supported by this
+// header): bit 0 of a base is its Sigma (A,T -> 0; C,G -> 1), bit 1 its Gamma (A,C -> 0; G,T -> 1),
+// and complementing a base flips bit 1 only. The hash of a window is a function of the base
+// sequence alone, so it is the same as with the packing greedymini_rank.h documents (ACGT = 0123).
 
 #pragma once
 
@@ -24,10 +25,10 @@
 
 #include "../../common/minimizer-orders/greedymini_rank.h"
 #include "../../common/minimizer-orders/pcg_rxs_m_xs.h"
-#include "../../common/minimizer-orders/dna_revcomp.h"
 
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace sshash {
@@ -64,10 +65,10 @@ inline custom_order_mode parse_custom_order_mode(std::string const& s) {
 
 /*
     DNA -> binary projection polarity for the GreedyMini
-    backend. The Sigma plane (MSB of the ATCG-remapped base, A=00,T=01,C=10,
-    G=11) classifies {A,T} vs {C,G}; AT0_CG1 (default, the historical
-    behaviour) maps AT->0, CG->1, AT1_CG0 flips every Sigma bit (AT->1, CG->0).
-    Gamma (the LSB plane, the tie-break) is untouched by the flip.
+    backend. The Sigma plane (bit 0 of an sshash base: A=00, C=01, G=11, T=10)
+    classifies {A,T} vs {C,G}; AT0_CG1 (default, the historical behaviour) maps AT->0, CG->1,
+    AT1_CG0 flips every Sigma bit (AT->1, CG->0). Gamma (bit 1, the tie-break) is untouched by
+    the flip.
 */
 enum class gm_projection : uint8_t { AT0_CG1 = 0, AT1_CG0 = 1 };
 
@@ -83,25 +84,49 @@ inline gm_projection parse_gm_projection(std::string const& s) {
 }
 
 /*
-    The hash of the strand-dependent orders (native, xor-hash, xor-pcg-hash) -- three words,
-    no table -- as a small value type. minimizer_iterator keeps one by value, next to its own
+    The order, as a compile-time constant: `dispatch_order(mode, f)` calls f with a
+    std::integral_constant<custom_order_mode, mode>, so that the code of the hot paths (the
+    minimizer iterators, util::compute_minimizer, streaming_query, the builder) is generated once
+    per order, with the hash function inlined, instead of branching on the mode at every hash.
+*/
+template <custom_order_mode Mode>
+using order_tag = std::integral_constant<custom_order_mode, Mode>;
+
+template <typename F>
+inline decltype(auto) dispatch_order(custom_order_mode mode, F&& f) {
+    switch (mode) {
+        case custom_order_mode::XOR_HASH:
+            return f(order_tag<custom_order_mode::XOR_HASH>());
+        case custom_order_mode::XOR_PCG_HASH:
+            return f(order_tag<custom_order_mode::XOR_PCG_HASH>());
+        case custom_order_mode::GREEDYMINI:
+            return f(order_tag<custom_order_mode::GREEDYMINI>());
+        case custom_order_mode::NATIVE:
+        default:
+            return f(order_tag<custom_order_mode::NATIVE>());
+    }
+}
+
+/*
+    The hash of a strand-dependent order (native, xor-hash, xor-pcg-hash; they expect the
+    numerically canonical m-mer) as a one-word value type: native is upstream's mixer_64 with its
+    magic precomputed, a multiply and a xor. The iterators keep one by value, next to their own
     state, instead of a pointer to (or copy of) the full hasher, which for GreedyMini carries a
     rank table and ~100 bytes of derived constants.
 */
+template <custom_order_mode Mode>
 struct plain_hasher {
-    custom_order_mode mode = custom_order_mode::NATIVE;
-    uint64_t seed = 0;
-    uint64_t native_magic = 0;
+    static_assert(Mode != custom_order_mode::GREEDYMINI);
+
+    uint64_t key = 0;  // native: mixer_64's magic, xxhash_64(seed); xor-hash, xor-pcg-hash: the seed
 
     inline uint64_t hash(uint64_t value) const {
-        switch (mode) {
-            case custom_order_mode::XOR_HASH:
-                return value ^ seed;
-            case custom_order_mode::XOR_PCG_HASH:
-                return pcg_rxs_m_xs64(value ^ seed);
-            case custom_order_mode::NATIVE:
-            default:
-                return (value * 0x517cc1b727220a95ull) ^ native_magic;
+        if constexpr (Mode == custom_order_mode::NATIVE) {
+            return (value * 0x517cc1b727220a95ull) ^ key;
+        } else if constexpr (Mode == custom_order_mode::XOR_HASH) {
+            return value ^ key;
+        } else {
+            return pcg_rxs_m_xs64(value ^ key);
         }
     }
 };
@@ -120,9 +145,8 @@ struct gm_planes {
 /*
     Replaces sshash's hasher_type (upstream: mixer_64). One binary, order
     chosen at runtime (build_configuration::order), same "no per-order build
-    variant" posture as kraken2/kmc. NATIVE reproduces mixer_64's exact
-    formula locally (rather than holding a sshash::mixer_64 member) purely to
-    avoid this header depending on hash_util.hpp's ordering; behavior is
+    variant" posture as kraken2/kmc; the hot paths are instantiated per order (dispatch_order).
+    NATIVE reproduces mixer_64's exact formula (plain_hasher<NATIVE>); behavior is
     byte-identical to upstream when no --order flag is passed.
 */
 struct custom_order_hasher {
@@ -148,18 +172,17 @@ struct custom_order_hasher {
         m_mode = mode;
         m_l = (int)l;
         m_projection = projection;
-        m_sigma_flip = 0;
         if (mode != custom_order_mode::GREEDYMINI) {
             if (projection != gm_projection::AT0_CG1) {
                 throw std::invalid_argument("--gm-projection only applies to -O greedymini");
             }
             return;
         }
-        if (projection == gm_projection::AT1_CG0) {
-            /* Sigma = odd bits of the ATCG word; flip them for the l bases. */
-            const uint64_t odd = 0xAAAAAAAAAAAAAAAAull;
-            m_sigma_flip = (l >= 32) ? odd : (odd & ((uint64_t(1) << (2 * l)) - 1));
-        }
+#ifdef SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING
+        throw std::invalid_argument(
+            "GreedyMini needs sshash's default nucleotide encoding (A=00,C=01,G=11,T=10), not "
+            "-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING");
+#endif
 
         auto raw = load_gm_file_raw(greedy_mini_filename);
         if (raw.empty()) {
@@ -180,18 +203,26 @@ struct custom_order_hasher {
     */
     inline bool strand_invariant() const { return m_mode == custom_order_mode::GREEDYMINI; }
 
+    /* The hash of the order chosen at run time; the hot loops know the order at compile time
+       and use plain<Mode>().hash() / hash_gm() directly (see dispatch_order). */
     inline uint64_t hash(uint64_t value) const {
-        return m_mode == custom_order_mode::GREEDYMINI ? hash_gm(value) : hash_plain(value);
+        return dispatch_order(m_mode, [&](auto mode) {
+            if constexpr (decltype(mode)::value == custom_order_mode::GREEDYMINI) {
+                return hash_gm(value);
+            } else {
+                return plain<decltype(mode)::value>().hash(value);
+            }
+        });
     }
 
-    /* hash() split by strand-invariance, so that hot loops that know the order's kind
-       (minimizer_iterator, util::compute_minimizer) inline only the half they need:
-       hash_plain() for native / xor-hash / xor-pcg-hash (which expect the numerically
-       canonical m-mer), hash_gm() for GreedyMini (which accepts either strand). */
-    inline uint64_t hash_plain(uint64_t value) const { return plain().hash(value); }
+    /* The hash of a strand-dependent order (native, xor-hash, xor-pcg-hash), expecting the
+       numerically canonical m-mer, as a value of its own. */
+    template <custom_order_mode Mode>
+    plain_hasher<Mode> plain() const {
+        return plain_hasher<Mode>{Mode == custom_order_mode::NATIVE ? m_native_magic : m_seed};
+    }
 
-    plain_hasher plain() const { return plain_hasher{m_mode, m_seed, m_native_magic}; }
-
+    /* The GreedyMini hash, which accepts either strand of the m-mer. */
     inline uint64_t hash_gm(uint64_t value) const { return hash_from_planes(planes_of_mmer(value)); }
 
     /*
@@ -205,7 +236,7 @@ struct custom_order_hasher {
        position m-1 are zero. */
     inline gm_planes planes_of_mmer(uint64_t x) const {
         gm_planes p;
-        p.S = gm_pext_even(x ^ (x >> 1), m_even_l) ^ m_flip_l;
+        p.S = gm_pext_even(x, m_even_l) ^ m_flip_l;
         p.G = gm_pext_odd(x, m_odd_l);
         const uint64_t T = reverse_bits64(p.S | (p.G << 32));
         p.Sb = T >> (64 - m_l);
@@ -215,18 +246,17 @@ struct custom_order_hasher {
 
     /* Sigma plane only, which is all the rank of a window needs (see centre_rank): of a whole
        k-mer (k <= 63; low/high 64-bit halves of the packed word, bits above k-1 zero), and
-       slid by one base: the base b (A=0,C=1,G=2,T=3) enters at the highest position k-1 of
-       the word, the lowest position leaves. */
+       slid by one base: the base b (a 2-bit code of the packing) enters at the highest position
+       k-1 of the word, the lowest position leaves. */
     inline uint64_t sigma_of_kmer(uint64_t lo, uint64_t hi, int k) const {
         const uint64_t evens = 0x5555555555555555ull;
         const uint64_t kmask = (uint64_t(1) << k) - 1;
-        uint64_t S = (gm_pext_even(lo ^ (lo >> 1), evens) | (gm_pext_even(hi ^ (hi >> 1), evens) << 32)) &
-                     kmask;
-        return m_sigma_flip ? S ^ kmask : S;
+        uint64_t S = (gm_pext_even(lo, evens) | (gm_pext_even(hi, evens) << 32)) & kmask;
+        return m_flip_bit ? S ^ kmask : S;
     }
 
     inline uint64_t roll_sigma(uint64_t S, uint64_t b, int k) const {
-        return (S >> 1) | ((((b ^ (b >> 1)) & 1) ^ m_flip_bit) << (k - 1));
+        return (S >> 1) | (((b & 1) ^ m_flip_bit) << (k - 1));
     }
 
     /* The primary (rank) field of the hash of the m-mer at positions i .. i+m-1 of a k-mer
@@ -271,16 +301,22 @@ struct custom_order_hasher {
         auto planes = [&](uint64_t v, uint64_t& sigma, uint64_t& gamma) {
             sigma = gamma = 0;
             for (int p = 0; p != l; ++p) {  // base p = 0 is the one in the highest bits
-                const uint64_t b = (v >> (2 * (l - 1 - p))) & 3;  // A=0,C=1,G=2,T=3
-                const uint64_t sig = (b == 1 or b == 2) ? 1 : 0;  // {C,G} vs {A,T}
-                const uint64_t gam = (b >> 1) & 1;                // {A,C} vs {G,T}
+                const uint64_t b = (v >> (2 * (l - 1 - p))) & 3;  // A=0,C=1,G=3,T=2
+                const uint64_t sig = (b == 1 or b == 3) ? 1 : 0;  // {C,G} vs {A,T}
+                const uint64_t gam = (b == 2 or b == 3) ? 1 : 0;  // {A,C} vs {G,T}
                 sigma = (sigma << 1) | (sig ^ (m_projection == gm_projection::AT1_CG0 ? 1 : 0));
                 gamma = (gamma << 1) | gam;
             }
         };
+        /* reverse complement, base by base: A <-> T (0 <-> 2), C <-> G (1 <-> 3) */
+        uint64_t rc = 0;
+        for (int p = 0; p != l; ++p) {
+            const uint64_t b = (value >> (2 * p)) & 3;
+            rc |= uint64_t(b == 0 ? 2 : b == 2 ? 0 : b == 1 ? 3 : 1) << (2 * (l - 1 - p));
+        }
         uint64_t s1, g1, s2, g2;
         planes(value, s1, g1);
-        planes(dna_reverse_complement(value, (uint8_t)l), s2, g2);
+        planes(rc, s2, g2);
         uint64_t key = 0;
         for (int p = i; p != i + gk; ++p) key = (key << 1) | ((s1 >> (l - 1 - p)) & 1);
         const uint64_t f1 = (s1 << l) | (g1 ^ toggle);
@@ -314,7 +350,6 @@ private:
         visitor.visit(t.m_gm_k);
         visitor.visit(t.m_gm_ranks);
         visitor.visit(t.m_projection);
-        visitor.visit(t.m_sigma_flip);
     }
 
     /* Preconditions: (l - gm_k) even, 16 + 2l <= 63, and a mirror-symmetric
@@ -383,8 +418,8 @@ private:
         const int l = m_l, gk = m_gm_k;
         m_toggle = tb_toggle();
         m_l_mask = (uint64_t(1) << l) - 1;
-        m_flip_l = m_sigma_flip ? m_l_mask : 0;
-        m_flip_bit = m_sigma_flip ? 1 : 0;
+        m_flip_bit = m_projection == gm_projection::AT1_CG0 ? 1 : 0;
+        m_flip_l = m_flip_bit ? m_l_mask : 0;
         const uint64_t evens = 0x5555555555555555ull;
         m_even_l = evens & ((uint64_t(1) << (2 * l)) - 1);
         m_odd_l = m_even_l << 1;
@@ -399,7 +434,6 @@ private:
     int m_l = 0;
     int m_gm_k = 0;
     gm_projection m_projection = gm_projection::AT0_CG1;
-    uint64_t m_sigma_flip = 0;  // XOR mask on the ATCG word: flips every Sigma bit, or 0
     std::vector<uint16_t> m_gm_ranks;  // embedded in the .sshash file; no sidecar needed
 
     /* derived by derive(); never serialized */
@@ -409,5 +443,9 @@ private:
 };
 
 using hasher_type = custom_order_hasher;
+
+/* whether a hasher (a plain_hasher<Mode> or the GreedyMini hasher itself) is strand-invariant */
+template <typename Hasher>
+inline constexpr bool strand_invariant_hasher_v = std::is_same_v<Hasher, custom_order_hasher>;
 
 }  // namespace sshash

@@ -11,11 +11,12 @@ namespace sshash {
 
 /*
     NOTE: this is the iterator for the orders whose hash expects the numerically-canonical
-    m-mer (native, xor-hash, xor-pcg-hash). A strand-invariant order (GreedyMini) uses
-    `strand_invariant_minimizer_iterator` below, selected by the callers
-    (`hasher.strand_invariant()`): it is deliberately a separate class and not a branch in
-    `next`, because a bigger `next` stops being inlined into the streaming lookup and
-    slowed native queries by ~16%.
+    m-mer (native, xor-hash, xor-pcg-hash), instantiated per order: `Mode` is a compile-time
+    parameter so that the hash is inlined (for native, upstream's multiply and xor with the
+    magic precomputed) rather than selected at every call. A strand-invariant order (GreedyMini)
+    uses `strand_invariant_minimizer_iterator` below, selected by the callers: it is
+    deliberately a separate class and not a branch in `next`, because a bigger `next` stops
+    being inlined into the streaming lookup and slowed native queries by ~16%.
 
     "Re-scan" method: computes the minimizer of each kmer of a sequence,
     sliding one character at a time.
@@ -33,8 +34,10 @@ namespace sshash {
     every locus, via rc(x_i) = rc(x)_{k-m-i}, so no m-mer is ever
     reverse-complemented on its own.
 */
-template <typename Kmer>
+template <typename Kmer, custom_order_mode Mode>
 struct minimizer_iterator {
+    static_assert(Mode != custom_order_mode::GREEDYMINI);
+
     minimizer_iterator() {}
 
     minimizer_iterator(uint64_t k, uint64_t m, hasher_type const& hasher, uint64_t position = 0)
@@ -42,7 +45,7 @@ struct minimizer_iterator {
         , m_m(m)
         , m_min_value(constants::invalid_uint64)
         , m_min_hash(constants::invalid_uint64)
-        , m_hasher(hasher.plain())
+        , m_hasher(hasher.plain<Mode>())
 #ifndef NDEBUG
         , m_hasher_p(&hasher)
 #endif
@@ -106,10 +109,10 @@ private:
     uint64_t m_position, m_min_pos_in_kmer;
     uint64_t m_min_value, m_min_position, m_min_hash;
     uint64_t m_num_mins;
-    /* Just the three words the strand-dependent orders hash with (see plain_hasher), by value:
-       a copy of the full hasher (GreedyMini: rank table + derived constants) would bloat -- and
-       shift the hot members of -- the streaming query object. */
-    plain_hasher m_hasher;
+    /* Just the word the strand-dependent orders hash with (see plain_hasher), by value: a copy
+       of the full hasher (GreedyMini: rank table + derived constants) would bloat -- and shift
+       the hot members of -- the streaming query object. */
+    plain_hasher<Mode> m_hasher;
 #ifndef NDEBUG
     hasher_type const* m_hasher_p = nullptr;  // for the assertions only; must outlive the iterator
     hasher_type const& hasher() const { return *m_hasher_p; }
@@ -119,30 +122,32 @@ private:
         const uint64_t begin = m_position;
 
         /* first locus, peeled off the loop: see `util::compute_minimizer` */
-        {
-            m_min_value = util::canonical_mmer_at<Kmer>(kmer, kmer_rc, m_k, m_m, 0);
-            kmer.drop_char();
-            m_min_hash = m_hasher.hash(m_min_value);
-            m_min_pos_in_kmer = 0;
-            m_num_mins = 1;
-            ++m_position;
-        }
+        uint64_t min_value = util::canonical_mmer_at<Kmer>(kmer, kmer_rc, m_k, m_m, 0);
+        kmer.drop_char();
+        uint64_t min_hash = m_hasher.hash(min_value);
+        uint64_t min_pos_in_kmer = 0;
+        uint64_t num_mins = 1;
 
-        for (uint64_t i = 1; i != m_k - m_m + 1; ++i, ++m_position) {
+        for (uint64_t i = 1; i != m_k - m_m + 1; ++i) {
             uint64_t value = util::canonical_mmer_at<Kmer>(kmer, kmer_rc, m_k, m_m, i);
             kmer.drop_char();
             uint64_t hash = m_hasher.hash(value);
-            if (hash < m_min_hash) {  // leftmost
-                m_min_hash = hash;
-                m_min_value = value;
-                m_min_pos_in_kmer = i;
-                m_num_mins = 1;
-            } else if (hash == m_min_hash) {
-                m_num_mins += 1;
-            }
+            /* Branch-free selection (the same as `if (hash < min_hash) {...} else if (hash ==
+               min_hash) ++num_mins`): whether a locus beats the minimum so far is as
+               unpredictable as the hashes, and with a branch here the compiler's choice (upstream's
+               is branch-free) made streaming queries 2-3% slower on some data sets. */
+            const uint64_t less = -uint64_t(hash < min_hash);  // all ones: a new (leftmost) minimum
+            num_mins = (less & 1) | (~less & (num_mins + (hash == min_hash)));
+            min_value = (less & value) | (~less & min_value);
+            min_pos_in_kmer = (less & i) | (~less & min_pos_in_kmer);
+            min_hash = (less & hash) | (~less & min_hash);
         }
 
-        m_position -= 1;
+        m_min_value = min_value;
+        m_min_hash = min_hash;
+        m_min_pos_in_kmer = min_pos_in_kmer;
+        m_num_mins = num_mins;
+        m_position += m_k - m_m;
         m_min_position = begin + m_min_pos_in_kmer;
     }
 
@@ -500,5 +505,11 @@ private:
         mini_info = minimizer_info(m_min_value, window_begin + chosen, chosen);
     }
 };
+
+/* The iterator of the classical path for the order `Mode`. */
+template <typename Kmer, custom_order_mode Mode>
+using order_minimizer_iterator =
+    std::conditional_t<Mode == custom_order_mode::GREEDYMINI,
+                       strand_invariant_minimizer_iterator<Kmer>, minimizer_iterator<Kmer, Mode>>;
 
 }  // namespace sshash

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "include/util.hpp"
+#include "include/kmer.hpp"
 
 using namespace sshash;
 
@@ -31,6 +32,14 @@ static void report(const char* what, uint64_t x, uint64_t a, uint64_t b) {
     }
 }
 
+/* Reverse complement of an m-mer packed in sshash's encoding (A=0,C=1,G=3,T=2: the complement
+   of a base is b ^ 2), base by base. */
+static uint64_t rc_mmer(uint64_t x, uint64_t l) {
+    uint64_t rc = 0;
+    for (uint64_t p = 0; p != l; ++p) rc |= (((x >> (2 * p)) & 3) ^ 2) << (2 * (l - 1 - p));
+    return rc;
+}
+
 struct string_ref {
     std::vector<uint16_t> ranks;
     int l, gk;
@@ -40,7 +49,7 @@ struct string_ref {
     /* fully independent: decode to an ACGT string, work on strings */
     uint64_t hash(uint64_t x) const {
         std::string s(l, 'A');
-        for (int p = 0; p != l; ++p) s[p] = "ACGT"[(x >> (2 * (l - 1 - p))) & 3];
+        for (int p = 0; p != l; ++p) s[p] = nucleotides[(x >> (2 * (l - 1 - p))) & 3];
         std::string rc(s.rbegin(), s.rend());
         for (auto& c : rc) c = c == 'A' ? 'T' : c == 'T' ? 'A' : c == 'C' ? 'G' : 'C';
         std::string best;
@@ -74,7 +83,7 @@ static inline void check_one(hasher_type const& h, string_ref const* sr, uint64_
         const uint64_t s = sr->hash(x);
         if (got != s) report("hash != string reference", x, got, s);
     }
-    const uint64_t rc = dna_reverse_complement(x, (uint8_t)l);
+    const uint64_t rc = rc_mmer(x, l);
     const uint64_t got_rc = h.hash(rc);
     if (got_rc != got) report("rc-invariance", x, got_rc, got);
 }
@@ -87,17 +96,17 @@ static uint64_t gen_sample(std::mt19937_64& rng, uint64_t i, uint64_t l, uint64_
         case 3: {                             // palindrome (even l) / near palindrome
             const uint64_t half = l / 2, hm = (uint64_t(1) << (2 * half)) - 1;
             uint64_t y = rng() & hm;
-            x = ((y << (2 * half)) | dna_reverse_complement(y, (uint8_t)half)) & mask;
+            x = ((y << (2 * half)) | rc_mmer(y, half)) & mask;
             if (l & 1) x = (x & ~(uint64_t(3) << (2 * half))) | ((rng() & 3) << (2 * half));
             break;
         }
         case 4: x = (rng() & 0xFull) * 0x1111111111111111ull & mask; break;  // short repeat
-        case 5: x = (x & ~(mask >> 10)) | (dna_reverse_complement(x, (uint8_t)l) & (mask >> 10)); break;
+        case 5: x = (x & ~(mask >> 10)) | (rc_mmer(x, l) & (mask >> 10)); break;
         case 6: {  // Sigma string is a palindrome (Sigma(x) == reverse Sigma(x)) but x is not
             for (uint64_t p = 0; p != l / 2; ++p) {
                 const uint64_t sp = 2 * (l - 1 - p), sq = 2 * p;  // bit offsets of base p and l-1-p
                 const uint64_t bp = (x >> sp) & 3, bq = (x >> sq) & 3;
-                if (((bp >> 1) ^ (bp & 1)) != ((bq >> 1) ^ (bq & 1))) x ^= (uint64_t(1) << sq);
+                if ((bp & 1) != (bq & 1)) x ^= (uint64_t(1) << sq);  // bit 0 of a base is Sigma
             }
             break;
         }
@@ -151,7 +160,7 @@ static void run_injectivity(hasher_type const& h, uint64_t l) {
         if (i & 1) x &= (rng() | rng());
         if ((i & 3) == 3) x = (x & ~centre_mask) | fixed_centre;  // shared centre
         if ((i & 0xFFFF) == 0xFFFF) fixed_centre = rng() & centre_mask;
-        const uint64_t canon = std::min(x, dna_reverse_complement(x, (uint8_t)l));
+        const uint64_t canon = std::min(x, rc_mmer(x, l));
         const uint64_t hv = h.hash(x);
         auto it = seen.find(hv);
         if (it == seen.end()) {
