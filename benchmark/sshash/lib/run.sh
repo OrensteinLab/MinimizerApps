@@ -59,26 +59,27 @@ ensure_query_sets() {
   bench_py equivalence to-fasta --txt "$neg_txt" --fasta "$QUERY_NEG_FASTA" >/dev/null
 }
 
-# runs/{dataset}/{modality}/{order}/[t{t}/]{seed_idx} -- k/m aren't in the
+# runs/{dataset}/{modality}/{order}/{seed_idx} -- k/m aren't in the
 # path (fixed for the whole benchmark, recorded in meta.json instead).
 run_rel_path() {
-  local ds="$1" order="$2" seed_idx="$3" t_len="${4:-}" modality="${5:-canonical}"
-  local seg
-  seg="$(order_dir_name "$order")"
-  [[ -n "$t_len" ]] && seg="${seg}/t${t_len}"
-  echo "${ds}/${modality}/${seg}/${seed_idx}"
+  local ds="$1" order="$2" seed_idx="$3" modality="${4:-canonical}"
+  echo "${ds}/${modality}/$(order_dir_name "$order")/${seed_idx}"
+}
+
+# sshash --gm-projection value a plain greedymini order runs with ("" for any
+# other order), recorded in meta.json.
+gm_projection_of() {
+  case "$1" in
+    greedymini-*) order_gm_split "$1"; echo "$GM_PROJECTION" ;;
+    *) echo "" ;;
+  esac
 }
 
 run_one() {
-  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" t_len="${8:-}" modality="${9:-canonical}"
-
-  # A mod-minimizer-* order is always regular parsing, independent of -M
-  # (its single-probe canonical path is permanently disabled) -- record and
-  # file it under its actual modality, not whatever -M happened to be.
-  [[ "$order" == mod-minimizer-* ]] && modality="regular"
+  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" modality="${8:-canonical}"
 
   local rid run_dir index_path meta_path
-  rid="$(run_rel_path "$ds" "$order" "$seed_idx" "$t_len" "$modality")"
+  rid="$(run_rel_path "$ds" "$order" "$seed_idx" "$modality")"
   run_dir="$RESULTS_DIR/runs/$rid"
   meta_path="$run_dir/meta.json"
 
@@ -99,10 +100,10 @@ run_one() {
   fasta="$(dataset_fasta_path "$ds")"
   [[ -f "$fasta" ]] || die "missing $fasta; run: $0 download -d $ds"
 
-  build_order_flags "$order" "$seed" "$gm_file" "$t_len" "$modality"
+  build_order_flags "$order" "$seed" "$gm_file" "$modality"
 
   local build_log="$run_dir/build.log" build_time="$run_dir/build_time.txt"
-  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose "${ORDER_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
+  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose --bucket-stats "${ORDER_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
   local wrapped=("${build_cmd[@]}")
   [[ -x "$TIME_BIN" ]] && wrapped=("$TIME_BIN" -v -o "$build_time" "${build_cmd[@]}")
 
@@ -180,7 +181,7 @@ run_one() {
   META_SEED="${seed:-}" \
   META_SEED_IDX="$seed_idx" \
   META_GM_FILE="${gm_file:-}" \
-  META_T="${t_len:-}" \
+  META_GM_PROJECTION="$(gm_projection_of "$order")" \
   META_THREADS="$THREADS" \
   META_SSHASH_PATH="$SSHASH_BIN" \
   META_SSHASH_VERSION="$SSHASH_VERSION" \
@@ -201,7 +202,7 @@ run_one() {
   printf 'finished %s in %.1fs\n' "$rid" "$wall"
 }
 
-run_schemes() {
+run_sweep() {
   local n="${#BENCH_SEEDS[@]}"
   [[ "$N_SEEDS" -ge 1 && "$N_SEEDS" -le "$n" ]] || die "-n must be between 1 and $n"
 
@@ -210,48 +211,27 @@ run_schemes() {
   orders_list="$(resolve_orders)"
   IFS=',' read -r -a order_arr <<<"$orders_list"
 
-  # A mod-minimizer-* order is unconditionally run under "regular" modality
-  # (see build_order_flags), regardless of -M; its {metric}_ratio columns
-  # (scripts/export.py) need a same-modality "native" run to divide by. Make
-  # sure one exists per dataset/seed whenever this sweep includes any
-  # mod-minimizer-* order -- independent of whatever -M was passed for the
-  # rest of the sweep -- instead of silently leaving those columns blank
-  # until someone remembers to run `-O native -M regular` by hand.
-  local needs_native_regular=0 o
+  # A plain greedymini order extends its gm_k table to the m-mer by the centre
+  # extension, which needs m - gm_k even: fail up front with a clear message
+  # instead of after the first (failing) sshash build.
+  local o
   for o in "${order_arr[@]}"; do
-    [[ "$(trim "$o")" == mod-minimizer-* ]] && needs_native_regular=1 && break
+    o="$(trim "$o")"
+    [[ "$o" == greedymini-* ]] || continue
+    bench_py orders check-gm "$o" "$M" || die "order $o is not valid for m=$M"
   done
-  # ...unless the sweep already explicitly builds "native" under "regular"
-  # itself (e.g. `-O all -M regular`, where every non-mod-minimizer order,
-  # including native, takes modality "$MODALITY" == regular below) -- then
-  # the per-order loop's own native/regular run already covers it, and
-  # injecting a second one here would just be identical, wasted work under
-  # --force (the default skip-if-exists behavior masks it otherwise).
-  if [[ "$needs_native_regular" == 1 && "${MODALITY:-canonical}" == "regular" ]]; then
-    for o in "${order_arr[@]}"; do
-      [[ "$(trim "$o")" == "native" ]] && needs_native_regular=0 && break
-    done
-  fi
 
-  local ds order i seed t_val gm_file
+  local ds order i seed gm_file
   for ds in "${ds_arr[@]}"; do
     ds="$(trim "$ds")"
     [[ -n "$ds" ]] || continue
     for ((i = 0; i < N_SEEDS; i++)); do
       seed="${BENCH_SEEDS[$i]}"
-      if [[ "$needs_native_regular" == 1 ]]; then
-        run_one "$ds" "$K" "$M" "native" "" "$seed" "$i" "" "regular"
-      fi
       for order in "${order_arr[@]}"; do
         order="$(trim "$order")"
         [[ -n "$order" ]] || continue
-        for t_val in $(order_t_values "$order"); do
-          [[ "$t_val" == "-" ]] && t_val=""
-          # gm_file depends on t (e.g. mod-minimizer-greedymini's t=10 vs
-          # t=11 use different tables), so it's resolved per t, not per order.
-          gm_file="$(order_gm_file "$order" "$GM_FILE" "$t_val")"
-          run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "$t_val" "${MODALITY:-canonical}"
-        done
+        gm_file="$(order_gm_file "$order")"
+        run_one "$ds" "$K" "$M" "$order" "$gm_file" "$seed" "$i" "${MODALITY:-canonical}"
       done
     done
   done

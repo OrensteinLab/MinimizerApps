@@ -1,5 +1,5 @@
 """Minimizer density helpers: generic sliding-window "particular" density
-counting, plus pure-Python re-implementations of sshash's four hash/order
+counting, plus pure-Python re-implementations of sshash's hash/order
 formulas used by ``expected_density.py`` to Monte Carlo simulate the
 *theoretical* expected density_factor of each order on i.i.d. random DNA
 (mirrors ``benchmark/kmc/scripts/density.py``'s approach and terminology,
@@ -10,9 +10,7 @@ density_factor = density * (w + 1), where density = n_selected / n_kmers and
 w = k - m + 1 is the window size (see orders/GreedyMini/w11_k15_canonical.*:
 the "w11" in that filename *is* this w, for k=31/m=21). A uniformly random
 total order has expected density_factor -> 2 as w grows (Roberts et al.
-2004); GreedyMini's whole point is to push it below that, and mod-minimizer
-(Groot Koerkamp & Pibiri, WABI 2024) pushes it lower still as m grows relative
-to w -- see mod_sampling_runs below.
+2004); GreedyMini's whole point is to push it below that.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ INF_RANK = 0xFFFF
 def density_factor(n_selected: int, n_kmers: int, w: int) -> float | None:
     if n_kmers <= 0 or n_selected <= 0:
         return None
-    return round(n_selected / n_kmers * (w + 1), 6)
+    return round(n_selected / n_kmers * (w + 1), 10)
 
 
 def _sliding_runs(keys: list[int], w: int) -> tuple[int, int, int]:
@@ -82,29 +80,23 @@ def read_gm_ranks(path: Path) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# Bit helpers (Python port of common/minimizer-orders/greedymini_rank.h,
-# assuming the traditional ACGT=0,1,2,3 packing this fork always builds with)
+# Bit helpers (Python port of sshash/include/custom_order_hasher.hpp, on sshash's
+# default packing A=0,C=1,G=3,T=2: bit 0 of a base is Sigma (AT vs CG), bit 1 is
+# Gamma, and complementing a base flips bit 1)
 # ---------------------------------------------------------------------------
 
 
 def dna_reverse_complement(mmer: int, m: int) -> int:
-    """Reverse complement of an m-base 2-bit-per-base DNA m-mer, ACGT=0,1,2,3
-    (complement(x) = 3-x under this mapping)."""
+    """Reverse complement of an m-base 2-bit-per-base DNA m-mer, A=0,C=1,G=3,T=2
+    (complement(x) = x ^ 2 under this mapping)."""
     rev = 0
     shift = m * 2 - 2
     x = mmer
     for _ in range(m):
-        rev |= (3 - (x & 3)) << shift
+        rev |= ((x & 3) ^ 2) << shift
         x >>= 2
         shift -= 2
     return rev
-
-
-def gm_acgt_to_atcg(x: int) -> int:
-    x &= MASK64
-    msb = (x >> 1) & EVENS64
-    lsb = x & EVENS64
-    return ((msb ^ lsb) << 1 | msb) & MASK64
 
 
 def _pext(x: int, mask: int) -> int:
@@ -126,30 +118,6 @@ def _gm_k_from_table(gm_ranks: list[int]) -> int:
     gm_k = n.bit_length() - 1
     assert (1 << gm_k) == n, f"GreedyMini table size {n} is not a power of 2"
     return gm_k
-
-
-def gm_extract_dna_key_atcg(atcg: int, l: int, gm_k: int) -> int:
-    """Sigma of the TOP gm_k bases of the l-length atcg value (Extend-k: the
-    key is the prefix, the remaining l-gm_k bases are the suffix below)."""
-    top = (atcg >> (2 * (l - gm_k))) & MASK64
-    mask = (1 << (2 * gm_k)) - 1
-    top &= mask
-    return _pext(top, ODDS64 & mask)
-
-
-def gm_extract_suffix_sigma_atcg(atcg: int, l: int, gm_k: int) -> int:
-    """Sigma of the low (l-gm_k) bases (the Extend-k suffix); 0 when gm_k==l."""
-    suf = l - gm_k
-    if suf <= 0:
-        return 0
-    mask = (1 << (2 * suf)) - 1
-    return _pext(atcg & mask, ODDS64 & mask)
-
-
-def gm_extract_dna_tb_atcg(atcg: int, l: int) -> int:
-    """Gamma (tie-break) of all l bases."""
-    mask = (1 << (2 * l)) - 1
-    return _pext(atcg & mask, EVENS64 & mask)
 
 
 # ---------------------------------------------------------------------------
@@ -189,114 +157,44 @@ def native_hash(value: int, seed: int) -> int:
     return ((value * 0x517CC1B727220A95) ^ magic) & MASK64
 
 
-def greedymini_hash(value: int, l: int, gm_ranks: list[int], seed: int) -> int:
-    """Full port of custom_order_hasher::rank_binary_dna, including Extend-k
-    (gm_k, derived from the table's own size, may be < l -- e.g. plain
-    greedymini uses gm_k=15 at l=m=21; mod-minimizer-greedymini uses gm_k=11
-    at l=t=11, ext_bits=0): dual-orientation lookup, raw Sigma key (+ suffix,
-    if extended) folded below rank as a tie-break (see that file's comment
-    for why)."""
+def gm_centre_valid(l: int, gm_k: int) -> bool:
+    """The extension of the table to the m-mer needs the same number of extra bases on both sides."""
+    return l >= gm_k and (l - gm_k) % 2 == 0
+
+
+def gm_table_mirror_symmetric(gm_ranks: list[int]) -> bool:
     gm_k = _gm_k_from_table(gm_ranks)
-    ext_bits = l - gm_k
-    key_bits = gm_k
-    gamma_bits = l  # 1 bit/base (DNA, bpc-1=1), all l bases
-    toggle = seed & ((1 << gamma_bits) - 1)
+    return all(
+        gm_ranks[key] == gm_ranks[int(format(key, f"0{gm_k}b")[::-1], 2)] for key in range(len(gm_ranks))
+    )
 
-    def probe(x: int) -> tuple[int, int, int]:
-        atcg = gm_acgt_to_atcg(x)
-        key = gm_extract_dna_key_atcg(atcg, l, gm_k)
-        return gm_ranks[key], key, atcg
 
-    def finish(rank: int, key: int, atcg: int) -> int:
-        mid = ((rank << key_bits) | key) << ext_bits
-        if ext_bits > 0:
-            mid |= gm_extract_suffix_sigma_atcg(atcg, l, gm_k)
-        gamma = gm_extract_dna_tb_atcg(atcg, l) ^ toggle
-        return (mid << gamma_bits) | gamma
+def greedymini_hash(value: int, l: int, gm_ranks: list[int], seed: int, sigma_flip: bool = False) -> int:
+    """Port of custom_order_hasher::hash_from_planes (the GreedyMini hash).
 
-    ra, ka, aa = probe(value)
-    rc = dna_reverse_complement(value, l)
-    if rc == value:
-        return finish(ra, ka, aa)
-    rb, kb, ab = probe(rc)
-    if ra < rb:
-        return finish(ra, ka, aa)
-    if rb < ra:
-        return finish(rb, kb, ab)
-    va, vb = finish(ra, ka, aa), finish(rb, kb, ab)
-    return va if va < vb else vb
+    View the m-mer as x y z with |x| = |z| = i = (l - gm_k) / 2, |y| = gm_k.
+    Primary key: rank of Sigma(y) (one probe; strand-invariant because the
+    table is mirror-symmetric and rc maps y to its mirror). Ties: the smaller
+    of (Sigma, Gamma^toggle) of the two strands, compared as (Sigma << l) |
+    Gamma -- i.e. min(Sigma(xyz), reverse Sigma(xyz)) first, then Gamma -- so
+    the packed value is injective on canonical m-mers."""
+    gm_k = _gm_k_from_table(gm_ranks)
+    assert gm_centre_valid(l, gm_k), f"centre extension needs l - gm_k even (l={l}, gm_k={gm_k})"
+    i = (l - gm_k) // 2
+    msk = (1 << (2 * l)) - 1
+    flip = ((1 << l) - 1) if sigma_flip else 0
+    toggle = seed & ((1 << l) - 1)
+
+    def planes(v: int) -> tuple[int, int]:
+        return _pext(v, EVENS64 & msk) ^ flip, _pext(v, ODDS64 & msk) ^ toggle
+
+    s1, g1 = planes(value)
+    s2, g2 = planes(dna_reverse_complement(value, l))
+    key = (s1 >> (l - i - gm_k)) & ((1 << gm_k) - 1)
+    return (gm_ranks[key] << (2 * l)) | min((s1 << l) | g1, (s2 << l) | g2)
 
 
 def canonical_mmer(x: int, m: int) -> int:
     """sshash's own pre-canonicalization: numeric min(forward, revcomp)."""
     rc = dna_reverse_complement(x, m)
     return x if x <= rc else rc
-
-
-# ---------------------------------------------------------------------------
-# Mod-sampling (Groot Koerkamp & Pibiri, WABI 2024, Algorithm 6 / Definition 7)
-# ---------------------------------------------------------------------------
-
-
-def _rolling_values(dna_stream: list[int], length: int) -> list[int]:
-    """Raw (uncanonicalized) packed integer value of each `length`-window of
-    `dna_stream` (2-bit bases), one entry per valid start position."""
-    n = len(dna_stream)
-    if n < length:
-        return []
-    mask = (1 << (2 * length)) - 1
-    state = 0
-    for i in range(length):
-        state = (state << 2) | dna_stream[i]
-    out = [state]
-    for i in range(length, n):
-        state = ((state << 2) | dna_stream[i]) & mask
-        out.append(state)
-    return out
-
-
-def mod_sampling_runs(
-    dna_stream: list[int], k: int, m: int, t: int, hash_fn, seed: int
-) -> tuple[int, int]:
-    """Mod-sampling particular-density counting on a single (uncanonicalized)
-    strand -- matches sshash's own "regular parsing" construction for
-    mod-minimizer (see sshash/include/util.hpp's
-    compute_mod_minimizer_single_strand doc comment): for each k-mer window,
-    scan its k-t+1 t-mer loci with `hash_fn` (= O_t), apply the paper's exact
-    tie rule (equal hash -> prefer the smaller i mod w), and count super-kmer
-    boundaries (how many times the selected absolute position's raw m-mer
-    value changes) -- the same (n_windows, n_super) shape `_sliding_runs`
-    returns for the classic scheme, so `density_factor(n_super, n_windows, w)`
-    applies unchanged.
-
-    `hash_fn` is one of xor_hash/xor_pcg_hash/native_hash (called as
-    hash_fn(t_mer_value, seed)) or a `lambda v, s: greedymini_hash(v, t,
-    gm_ranks, s)` closure for mod-minimizer-greedymini (whose GreedyMini
-    table has gm_k == t, so no Extend-k is needed here either).
-    """
-    w = k - m + 1
-    num_t_loci = k - t + 1
-    n_win = max(0, len(dna_stream) - k + 1)
-    if n_win <= 0:
-        return 0, 0
-    t_raw = _rolling_values(dna_stream, t)
-    m_raw = _rolling_values(dna_stream, m)
-
-    n_super = 0
-    prev_val = None
-    for start in range(n_win):
-        o_min = None
-        p = 0
-        for i in range(num_t_loci):
-            o = hash_fn(t_raw[start + i], seed)
-            pos_mod_w = i % w
-            if o_min is None or o < o_min:
-                o_min = o
-                p = pos_mod_w
-            elif o == o_min and pos_mod_w < p:
-                p = pos_mod_w
-        val = m_raw[start + p]
-        if prev_val is None or val != prev_val:
-            n_super += 1
-            prev_val = val
-    return n_win, n_super

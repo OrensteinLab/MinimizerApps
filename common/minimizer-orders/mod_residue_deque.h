@@ -2,11 +2,8 @@
 // Koerkamp & Pibiri 2024): maintaining w = k-l+1 of these (one per t-mer
 // locus residue i mod w) and combining their fronts gives the amortized-O(1)
 // incremental analogue of mod-sampling's own O(k-t+1) brute-force scan.
-// Shared by kraken2 (kraken2::ModSampler, src/mod_minimizer.h) and sshash
-// (mod_minimizer_iterator, sshash/include/mod_minimizer_iterator.hpp); each
-// app keeps its own tool-specific glue (bit-packing/ranking for kraken2,
-// Kmer/hasher_type for sshash) around this shared primitive, since the
-// call-site shapes differ.
+// Used by kraken2 (kraken2::ModSampler, src/mod_minimizer.h), which keeps its
+// own tool-specific glue (bit-packing/ranking) around this primitive.
 
 #ifndef MINIMIZER_ORDERS_MOD_RESIDUE_DEQUE_H_
 #define MINIMIZER_ORDERS_MOD_RESIDUE_DEQUE_H_

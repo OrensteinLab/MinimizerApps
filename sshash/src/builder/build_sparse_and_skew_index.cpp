@@ -231,6 +231,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
 
     if (num_buckets_in_skew_index == 0) {
         if (build_config.verbose) buckets_stats.print_less();
+        if (build_config.bucket_stats) buckets_stats.print_full();
         return;
     }
 
@@ -457,6 +458,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
         print_time(uint64_t(timer.elapsed()), "step 7.2 (build skew index)");
         buckets_stats.print_less();
     }
+    if (build_config.bucket_stats) buckets_stats.print_full();
 }
 
 }  // namespace sshash

@@ -53,7 +53,7 @@ struct kmer_iterator  //
     }
 
     inline uint64_t get_next_char() {
-        if (m_avail < Kmer::bits_per_char) fill_buff();
+        if (m_avail < Kmer::bits_per_char) fill_buff_inlined();
         m_avail -= Kmer::bits_per_char;
         m_pos += Kmer::bits_per_char;
         return m_buff.pop_char();
@@ -62,13 +62,21 @@ struct kmer_iterator  //
     inline uint64_t position() const { return m_pos; }
 
 private:
-    inline void fill_buff() {
+    /* The refill itself, always inlined into `get_next_char`, the per-k-mer step of the string
+       iterators (`sshash bench`'s iterator, check): there, in a translation unit as big as
+       tools/sshash.cpp, the compiler's size heuristics otherwise leave the call out of line and
+       the iteration gets 70% slower. The other callers (the streaming query's extension steps)
+       use `fill_buff`, left to the compiler: forcing it there makes the streaming lookup 8%
+       slower. */
+    __attribute__((always_inline)) inline void fill_buff_inlined() {
         static_assert(Kmer::uint_kmer_bits % 64 == 0);
         for (int i = Kmer::uint_kmer_bits - 64; i >= 0; i -= 64) {
             m_buff.append64(m_bv->get_word64(m_pos + i));
         }
         m_avail = Kmer::uint_kmer_bits;
     }
+
+    inline void fill_buff() { fill_buff_inlined(); }
 
     inline void fill_buff_reverse() {
         static_assert(Kmer::uint_kmer_bits % 64 == 0);

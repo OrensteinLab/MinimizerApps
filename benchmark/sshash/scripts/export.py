@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import re
 import statistics
@@ -60,23 +61,9 @@ from scripts.common import bench_paths, die, load_dotenv
 from scripts.config import seeds as bench_seeds
 from scripts.density import density_factor as _density_factor
 from scripts.expected_density import ensure_expected_orders
-from scripts.orders import ORDERS, order_t_values
+from scripts.config import greedymini_label_file
+from scripts.orders import ORDERS, parse_greedymini_order
 from xlsx_util import col_letter, root_rels_xml, write_csv as _shared_write_csv, xml_escape
-
-
-def scheme_and_order(order_id: str) -> tuple[str, str]:
-    """Splits an order id into ("minimizer" | "mod-minimizer", base order
-    name), normalized so the *same* base order has the *same* name under
-    either scheme even though sshash's own CLI names diverge (e.g.
-    "xor-pcg-hash" vs "mod-minimizer-pcg-xor-hash" -- note the swapped word
-    order)."""
-    if order_id.startswith("mod-minimizer-"):
-        return "mod-minimizer", order_id[len("mod-minimizer-"):]
-    if order_id == "native":
-        return "minimizer", "native-hash"
-    if order_id == "xor-pcg-hash":
-        return "minimizer", "pcg-xor-hash"
-    return "minimizer", order_id
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +166,102 @@ def parse_bucket_stats(path: Path) -> dict:
     return out
 
 
+HISTOGRAM_ID_FIELDS = ("dataset", "k", "m", "modality", "order", "seed_idx")
+BUCKET_HISTOGRAM_FIELDS = [*HISTOGRAM_ID_FIELDS, "bucket_size", "num_buckets", "num_kmers_in_buckets"]
+SUPER_KMER_HISTOGRAM_FIELDS = [*HISTOGRAM_ID_FIELDS, "kmers_in_super_kmer", "num_super_kmers"]
+HEAVY_KMER_FRACTION = 0.01  # top share of k-mers treated as "large bucket", all at one (capped) cost
+
+
+def parse_bucket_histograms(path: Path) -> dict:
+    """Parse the full histograms `sshash build --verbose --bucket-stats` prints via
+    buckets_statistics::print_full: per bucket size (= number of super-k-mers
+    sharing one sampled m-mer) the number of buckets and of k-mers, and per
+    super-k-mer length the number of super-k-mers. Buckets larger than
+    buckets_statistics::MAX_BUCKET_SIZE (4096) are not tallied by sshash."""
+    out: dict = {"bucket_sizes": [], "super_kmer_lengths": []}
+    if not path.is_file():
+        return out
+    text = path.read_text(errors="replace")
+    for m in re.finditer(
+        r"^buckets with (\d+) minimizer positions = (\d+) \([^)]*\) \| num_kmers = (\d+)",
+        text, re.MULTILINE,
+    ):
+        out["bucket_sizes"].append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    for m in re.finditer(r"^super_kmers with (\d+) kmer = (\d+) ", text, re.MULTILINE):
+        out["super_kmer_lengths"].append((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+BUCKET_HISTOGRAM_CAP = 4096  # sshash's buckets_statistics::MAX_BUCKET_SIZE: bigger buckets are not tallied per size
+
+
+def histogram_overflow(
+    bucket_sizes: list[tuple[int, int, int]], num_kmers: int | None, num_buckets: int | None
+) -> tuple[int, int] | None:
+    """(buckets, kmers) in the buckets larger than BUCKET_HISTOGRAM_CAP, which
+    `build --bucket-stats` does not list per size. Exact: every k-mer sits in
+    exactly one bucket and every sampled m-mer owns one bucket, so the overflow
+    is the run's totals minus what the histogram lists. None if it cannot be
+    derived (no histogram / totals) or the numbers are inconsistent."""
+    if not bucket_sizes or num_kmers is None or num_buckets is None:
+        return None
+    kmers = num_kmers - sum(n for _, _, n in bucket_sizes)
+    buckets = num_buckets - sum(b for _, b, _ in bucket_sizes)
+    if kmers < 0 or buckets < 0 or (kmers == 0) != (buckets == 0):
+        return None
+    return (buckets, kmers) if kmers else None
+
+
+def bucket_distribution_metrics(
+    bucket_sizes: list[tuple[int, int, int]], overflow: tuple[int, int] | None = None
+) -> dict:
+    """Skew of the bucket-size distribution from the (size, buckets, kmers)
+    histogram. `expected_bucket_cost` models the query cost per k-mer as the
+    number of super-k-mers to check (its bucket size), except that the
+    HEAVY_KMER_FRACTION of k-mers in the largest buckets all cost the same,
+    `heavy_bucket_threshold` (the smallest size s with at most that share of
+    k-mers in buckets larger than s). `overflow` = (buckets, kmers) of the
+    buckets above BUCKET_HISTOGRAM_CAP (see histogram_overflow): they are the
+    largest class, so the shares and the heavy threshold use the true totals."""
+    if overflow:
+        bucket_sizes = [*bucket_sizes, (BUCKET_HISTOGRAM_CAP + 1, *overflow)]
+    out: dict = {
+        "singleton_bucket_pct": None,
+        "kmers_in_singleton_bucket_pct": None,
+        "heavy_bucket_threshold": None,
+        "expected_bucket_cost": None,
+    }
+    total_buckets = sum(b for _, b, _ in bucket_sizes)
+    total_kmers = sum(n for _, _, n in bucket_sizes)
+    if not total_buckets or not total_kmers:
+        return out
+    by_size = {s: (b, n) for s, b, n in bucket_sizes}
+    out["singleton_bucket_pct"] = round(100.0 * by_size.get(1, (0, 0))[0] / total_buckets, 4)
+    out["kmers_in_singleton_bucket_pct"] = round(100.0 * by_size.get(1, (0, 0))[1] / total_kmers, 4)
+    threshold, above = max(by_size), 0
+    for s in sorted(by_size, reverse=True):
+        if above + by_size[s][1] > HEAVY_KMER_FRACTION * total_kmers:
+            threshold = s
+            break
+        above += by_size[s][1]
+    out["heavy_bucket_threshold"] = threshold
+    out["expected_bucket_cost"] = round(
+        sum(n * min(s, threshold) for s, _, n in bucket_sizes) / total_kmers, 4
+    )
+    return out
+
+
+def _extension_pct(query_json: dict) -> float | None:
+    """Share of positive k-mers of the streamed reads answered by extension
+    along the stored string (sshash query's num_extensions) rather than a
+    seed lookup (num_searches)."""
+    searches = _num(query_json.get("num_searches"), int)
+    extensions = _num(query_json.get("num_extensions"), int)
+    if searches is None or extensions is None or searches + extensions == 0:
+        return None
+    return round(100.0 * extensions / (searches + extensions), 4)
+
+
 def parse_minimizer_counts(path: Path) -> dict:
     """Parse the plain-text 'num_minimizers = X' / 'num_minimizer_positions =
     Y' lines `sshash build --verbose` prints (dictionary_builder.hpp) --
@@ -218,12 +301,11 @@ RUN_FIELDS = (
     "m",
     "w",
     "modality",
-    "scheme",
     "order",
     "order_seed",
     "seed_idx",
-    "t",
     "gm_file",
+    "gm_projection",
     "threads",
     # space
     "num_kmers",
@@ -242,6 +324,10 @@ RUN_FIELDS = (
     "skew_index_bits_per_kmer",
     "mid_load_bits_per_kmer",
     "control_codewords_bits_per_kmer",
+    "singleton_bucket_pct",
+    "kmers_in_singleton_bucket_pct",
+    "heavy_bucket_threshold",
+    "expected_bucket_cost",
     # build
     "build_wall_s",
     "build_max_rss_kb",
@@ -260,6 +346,11 @@ RUN_FIELDS = (
     "query_num_kmers",
     "query_num_positive_kmers",
     "query_num_negative_kmers",
+    "query_num_searches",
+    "query_num_extensions",
+    "query_extension_pct",
+    "query_num_skipped_singleton_lookups",
+    "query_num_bucket_cache_hits",
     "query_pos_match",
     "query_neg_match",
     # bench (sshash's own internal micro-benchmark, see "what is bench" note
@@ -336,6 +427,10 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
     avg_bucket_size = None
     if buckets["num_buckets"] and num_kmers:
         avg_bucket_size = round(num_kmers / buckets["num_buckets"], 2)
+    hist_sizes = parse_bucket_histograms(run_dir / "build.log")["bucket_sizes"]
+    bucket_dist = bucket_distribution_metrics(
+        hist_sizes, histogram_overflow(hist_sizes, num_kmers, buckets["num_buckets"])
+    )
     k_val, m_val = meta.get("k"), meta.get("m")
     w = int(k_val) - int(m_val) + 1 if k_val is not None and m_val is not None else None
     # Raw minimizer_density (= num_minimizer_positions / num_kmers) isn't
@@ -348,23 +443,19 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         v = _num(build_json.get(key), float)
         return round(v / 1_000_000, 6) if v is not None else None
 
-    order_id = meta.get("order") or ""
     modality = meta.get("modality") or "canonical"
-    scheme, order_name = scheme_and_order(order_id)
 
     row = {
         "run_id": meta.get("run_id") or str(run_dir.relative_to(runs_root)),
         "dataset": meta.get("dataset"),
         "k": meta.get("k"),
         "m": meta.get("m"),
-        "order_id": order_id,
         "modality": modality,
-        "scheme": scheme,
-        "order": order_name,
+        "order": meta.get("order") or "",
         "order_seed": meta.get("order_seed"),
         "seed_idx": meta.get("seed_idx"),
-        "t": meta.get("t"),
         "gm_file": meta.get("gm_file") or "",
+        "gm_projection": meta.get("gm_projection") or "",
         "threads": meta.get("threads"),
         "num_kmers": num_kmers,
         "index_size_in_bytes": index_bytes_json,
@@ -380,6 +471,7 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "skew_index_bits_per_kmer": buckets["skew_index_bits_per_kmer"],
         "mid_load_bits_per_kmer": buckets["mid_load_bits_per_kmer"],
         "control_codewords_bits_per_kmer": buckets["control_codewords_bits_per_kmer"],
+        **bucket_dist,
         "build_wall_s": build_time["time_elapsed_s"],
         "build_max_rss_kb": build_time["max_rss_kb"],
         "build_total_build_time_s": (
@@ -405,6 +497,13 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "query_num_kmers": _num(query_json.get("num_kmers"), int),
         "query_num_positive_kmers": _num(query_json.get("num_positive_kmers"), int),
         "query_num_negative_kmers": _num(query_json.get("num_negative_kmers"), int),
+        "query_num_searches": _num(query_json.get("num_searches"), int),
+        "query_num_extensions": _num(query_json.get("num_extensions"), int),
+        "query_extension_pct": _extension_pct(query_json),
+        "query_num_skipped_singleton_lookups": _num(
+            query_json.get("num_skipped_singleton_lookups"), int
+        ),
+        "query_num_bucket_cache_hits": _num(query_json.get("num_bucket_cache_hits"), int),
         "query_pos_match": _bool_env(
             meta.get("query_pos_match") or (equiv_json.get("pos") or {}).get("match")
         ),
@@ -446,7 +545,6 @@ def validate_orders_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
         if len(counts) > 1:
             detail = ", ".join(
                 f"{r.get('order')}"
-                f"{'@t' + str(r['t']) if r.get('t') is not None else ''}"
                 f"/seed{r.get('seed_idx')}={r.get('num_kmers')}"
                 for r in group
             )
@@ -478,17 +576,33 @@ SUMMARY_METRICS = (
     "skew_index_bits_per_kmer",
     "mid_load_bits_per_kmer",
     "control_codewords_bits_per_kmer",
+    "singleton_bucket_pct",
+    "kmers_in_singleton_bucket_pct",
+    "heavy_bucket_threshold",
+    "expected_bucket_cost",
     # build
     "build_wall_s",
     "build_max_rss_kb",
     # query (real FASTQ) -- kept next to build
     "query_wall_s",
     "query_elapsed_ms",
+    "query_extension_pct",
     # bench (sshash's own internal micro-benchmark)
     "bench_positive_ns",
     "bench_negative_ns",
     "bench_access_ns",
 )
+
+
+def _round_std(x: float | None) -> float | None:
+    """Round a standard deviation to at least 4 decimals and at least 4
+    significant digits, so a tiny std (a GreedyMini order's 1e-5 spread over
+    seeds) is not flattened to 0.0."""
+    if x is None:
+        return None
+    if x == 0:
+        return 0.0
+    return round(x, max(4, 3 - int(math.floor(math.log10(abs(x))))))
 
 
 def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
@@ -504,21 +618,18 @@ def summary_group_key(r: dict) -> tuple:
         r.get("dataset") or "",
         int(r.get("k") or 0),
         int(r.get("m") or 0),
-        r.get("order_id") or "",
+        r.get("order") or "",
         r.get("modality") or "",
-        r.get("t") if r.get("t") is not None else -1,
     )
 
 
 def summary_sort_key(row: dict) -> tuple:
-    order_id = row.get("order_id") or ""
     modality_rank = 0 if (row.get("modality") or "canonical") == "canonical" else 1
     try:
-        rank = ORDERS.index(order_id)
+        rank = ORDERS.index(row.get("order") or "")
     except ValueError:
         rank = len(ORDERS)
-    t = row.get("t")
-    return (row.get("dataset") or "", modality_rank, rank, -1 if t is None else int(t))
+    return (row.get("dataset") or "", modality_rank, rank)
 
 
 def summary_rows(rows: list[dict]) -> list[dict]:
@@ -535,10 +646,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             "m": head["m"],
             "w": head.get("w"),
             "modality": head["modality"],
-            "scheme": head["scheme"],
             "order": head["order"],
-            "order_id": head["order_id"],
-            "t": head.get("t"),
             "n_seeds": len({p.get("seed_idx") for p in parts}),
             "n_kmers": head.get("num_kmers"),
         }
@@ -546,7 +654,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             vals = [float(p[metric]) for p in parts if p.get(metric) is not None]
             mean, std = _mean_std(vals)
             row[f"{metric}_mean"] = round(mean, 4) if mean is not None else None
-            row[f"{metric}_std"] = round(std, 4) if std is not None else None
+            row[f"{metric}_std"] = _round_std(std)
         out.append(row)
     return sorted(out, key=summary_sort_key)
 
@@ -554,14 +662,13 @@ def summary_rows(rows: list[dict]) -> list[dict]:
 def attach_native_ratios(rows: list[dict]) -> None:
     """`{metric}_ratio` = this order's mean / the same-modality native's mean
     for the same dataset (native = 1). Isolates each order's own effect from
-    the canonical-vs-regular parsing-mode difference. Matches the regular
-    baseline by (scheme, order) == ("minimizer", "native-hash") rather than
-    order_id, since "native" itself can run under either modality. Falls back
-    to the canonical baseline if no regular-modality native was run."""
+    the canonical-vs-regular parsing-mode difference. "native" can run under
+    either modality, so the baseline is looked up per (dataset, modality); it
+    falls back to the canonical baseline if no regular-modality native was run."""
     base_by_key: dict[tuple, dict] = {}
     canonical_native_by_dataset: dict[str, dict] = {}
     for r in rows:
-        if r.get("scheme") == "minimizer" and r.get("order") == "native-hash":
+        if r.get("order") == "native":
             base_by_key[(r["dataset"], r.get("modality"))] = r
             if r.get("modality") == "canonical":
                 canonical_native_by_dataset[r["dataset"]] = r
@@ -590,57 +697,7 @@ REFERENCE_KMERS = {
 }
 
 
-# Groot Koerkamp & Pibiri, WABI 2024, Section "Indexing k-mer sets with
-# SSHash": whole human genome (GRCh38), k=31, m=21 (the same regime this
-# benchmark uses) -- random minimizer vs. mod-minimizer with a hash-based
-# O_t (their own Definition 16 gives t=10 for this regime; no GreedyMini
-# O_t was tested in the paper). "space usage goes down from 8.70 to 7.40
-# bits/kmer (-14.9%)" -- quoted verbatim.
-PAPER_HUMAN_BITS_PER_KMER = {"native": 8.70, "mod_minimizer": 7.40}
-
-
-def _paper_reproduction_row(summary: list[dict]) -> dict:
-    """Reproduces the mod-minimizer paper's own published Human/GRCh38
-    space-reduction claim against our own measured numbers, on our 'human'
-    dataset -- native vs. mod-minimizer-native-hash at t=10, the same
-    hash-based O_t the paper used (see PAPER_HUMAN_BITS_PER_KMER). Purely
-    informational (like the rest of this sheet): our eulertigs-derived
-    'human' dataset isn't literally GRCh38, so this is a plausibility check,
-    not a correctness gate."""
-
-    def _find(order_id: str, t) -> dict | None:
-        for r in summary:
-            if r.get("dataset") == "human" and r.get("order_id") == order_id and r.get("t") == t:
-                return r
-        return None
-
-    native = _find("native", None)
-    mod = _find("mod-minimizer-native-hash", 10)
-    measured_native = native.get("bits_per_kmer_mean") if native else None
-    measured_mod = mod.get("bits_per_kmer_mean") if mod else None
-    measured_reduction_pct = None
-    if measured_native and measured_mod:
-        measured_reduction_pct = round((1 - measured_mod / measured_native) * 100, 2)
-
-    published_native = PAPER_HUMAN_BITS_PER_KMER["native"]
-    published_mod = PAPER_HUMAN_BITS_PER_KMER["mod_minimizer"]
-    published_reduction_pct = round((1 - published_mod / published_native) * 100, 2)
-
-    return {
-        "dataset": "human (mod-minimizer paper reproduction)",
-        "published_num_kmers_approx": None,
-        "measured_num_kmers": None,
-        "measured_vs_published_ratio": None,
-        "published_bits_per_kmer_native": published_native,
-        "published_bits_per_kmer_mod_minimizer_t10": published_mod,
-        "published_reduction_pct": published_reduction_pct,
-        "measured_bits_per_kmer_native": measured_native,
-        "measured_bits_per_kmer_mod_minimizer_t10": measured_mod,
-        "measured_reduction_pct": measured_reduction_pct,
-    }
-
-
-def vs_reference_rows(rows: list[dict], summary: list[dict] | None = None) -> list[dict]:
+def vs_reference_rows(rows: list[dict]) -> list[dict]:
     out: list[dict] = []
     by_dataset: dict[str, dict] = {}
     for r in rows:
@@ -655,16 +712,8 @@ def vs_reference_rows(rows: list[dict], summary: list[dict] | None = None) -> li
                 "published_num_kmers_approx": ref_kmers,
                 "measured_num_kmers": measured,
                 "measured_vs_published_ratio": ratio,
-                "published_bits_per_kmer_native": None,
-                "published_bits_per_kmer_mod_minimizer_t10": None,
-                "published_reduction_pct": None,
-                "measured_bits_per_kmer_native": None,
-                "measured_bits_per_kmer_mod_minimizer_t10": None,
-                "measured_reduction_pct": None,
             }
         )
-    if summary and any(r.get("dataset") == "human" for r in summary):
-        out.append(_paper_reproduction_row(summary))
     return out
 
 
@@ -683,8 +732,10 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "m", "w", "modality", "scheme", "order", "t", "n_seeds", "n_kmers"]
+    fields = ["dataset", "k", "m", "w", "modality", "order", "n_seeds", "n_kmers"]
     for metric in SUMMARY_METRICS:
+        if _METRIC_CATEGORY.get(metric) == "buckets":
+            continue  # shown in the buckets sheet (bucket_field_order), not repeated here
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
 
@@ -695,12 +746,6 @@ def vs_reference_field_order() -> list[str]:
         "published_num_kmers_approx",
         "measured_num_kmers",
         "measured_vs_published_ratio",
-        "published_bits_per_kmer_native",
-        "published_bits_per_kmer_mod_minimizer_t10",
-        "published_reduction_pct",
-        "measured_bits_per_kmer_native",
-        "measured_bits_per_kmer_mod_minimizer_t10",
-        "measured_reduction_pct",
     ]
 
 
@@ -719,14 +764,14 @@ XLSX_DATA_START_ROW = 3
 # Repeated across every row of a dataset's block (k/m/w are fixed for the
 # whole benchmark; dataset obviously repeats) -- merge vertically instead of
 # printing the same value on every row.
-XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w", "modality", "scheme"})
+XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w", "modality"})
 # Sheets with one row per (dataset, ...): get a divider (bottom border) after
 # each dataset's last row, and the vertical merge above.
 XLSX_DATASET_BORDER_SHEETS = frozenset({"runs", "summary", "buckets"})
 
 _ID_FIELDS = frozenset({
-    "run_id", "dataset", "k", "m", "w", "modality", "scheme", "order", "order_seed", "seed_idx",
-    "t", "gm_file", "threads", "n_seeds", "n_kmers",
+    "run_id", "dataset", "k", "m", "w", "modality", "order", "order_seed", "seed_idx",
+    "gm_file", "gm_projection", "threads", "n_seeds", "n_kmers",
 })
 _METRIC_CATEGORY = {
     # space
@@ -738,6 +783,8 @@ _METRIC_CATEGORY = {
     "log2_max_bucket_size": "buckets", "kmers_in_skew_index_pct": "buckets",
     "skew_index_bits_per_kmer": "buckets", "mid_load_bits_per_kmer": "buckets",
     "control_codewords_bits_per_kmer": "buckets",
+    "singleton_bucket_pct": "buckets", "kmers_in_singleton_bucket_pct": "buckets",
+    "heavy_bucket_threshold": "buckets", "expected_bucket_cost": "buckets",
     # build
     "build_wall_s": "build", "build_max_rss_kb": "build", "build_total_build_time_s": "build",
     "build_step1_s": "build", "build_step2_s": "build", "build_step3_s": "build", "build_step4_s": "build",
@@ -749,6 +796,8 @@ _METRIC_CATEGORY = {
     # query (real FASTQ)
     "query_wall_s": "query", "query_max_rss_kb": "query", "query_elapsed_ms": "query",
     "query_num_kmers": "query", "query_num_positive_kmers": "query", "query_num_negative_kmers": "query",
+    "query_num_searches": "query", "query_num_extensions": "query", "query_extension_pct": "query",
+    "query_num_skipped_singleton_lookups": "query", "query_num_bucket_cache_hits": "query",
     "query_pos_match": "query", "query_neg_match": "query",
     # telemetry
     "sshash_version": "telemetry", "host": "telemetry", "build_exit_code": "telemetry",
@@ -769,7 +818,7 @@ def _field_category(field: str) -> str:
 
 
 def _orders_field_category(field: str) -> str:
-    if field in ("order", "t", "description", "cli", "w"):
+    if field in ("order", "description", "cli", "w"):
         return "order"
     if field.startswith("expected_density_factor"):
         return "expected (theoretical)"
@@ -924,7 +973,7 @@ def _category_band_row(fields: Sequence[str], categories: Sequence[str]) -> tupl
     return f'<row r="1">{"".join(cells)}</row>', merges
 
 
-def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
+def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], drawing_rid: str | None = None) -> str:
     xml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -977,6 +1026,8 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
         cs = _color_scale_xml(fields, rows)
         if cs:
             xml.append(cs)
+    if drawing_rid:
+        xml.append(f'<drawing r:id="{drawing_rid}"/>')
     xml.append("</worksheet>")
     return "\n".join(xml)
 
@@ -1010,14 +1061,160 @@ def _xlsx_styles_xml() -> str:
     )
 
 
-def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) -> None:
-    """Write a multi-sheet .xlsx without extra Python packages."""
+# ---------------------------------------------------------------------------
+# Charts (hand-written DrawingML, same package layout openpyxl emits)
+# ---------------------------------------------------------------------------
+
+CHART_GRID_COL0 = 10                 # first chart column (K): the raw table fills A..I
+CHART_PITCH = (9, 16)                # grid pitch in (columns, rows) -- room for one chart
+CHART_SIZE_EMU = (5_400_000, 2_880_000)
+CHART_ORDER_ORDER = (
+    "native", "xor-hash", "xor-pcg-hash",
+    "greedymini-k13", "greedymini-k15", "greedymini-k13-at1", "greedymini-k15-at1",
+)
+CHART_DATASET_ORDER = ("cod", "kestrel", "human")
+CHART_COLORS = {
+    "native": "7F7F7F", "xor-hash": "ED7D31", "xor-pcg-hash": "FFC000",
+    "greedymini-k13": "70AD47", "greedymini-k15": "4472C4",
+    "greedymini-k13-at1": "A9D18E", "greedymini-k15-at1": "8FAADC",
+}
+
+
+def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
+    """One chart per (dataset, order): number of buckets per bucket size (log-log
+    scatter) for the first seed, in a grid -- datasets down, orders across --
+    to the right of the raw table (rows of `bucket_hist` start at
+    XLSX_DATA_START_ROW). The aggregated '>4096' row is left out (it has no
+    size to plot)."""
+    sizes_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("bucket_size") + 1)
+    count_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("num_buckets") + 1)
+    blocks: dict[tuple, list[int]] = {}
+    first_seed: dict[tuple, int] = {}
+    for idx, r in enumerate(bucket_hist):
+        key = (r["dataset"], r["order"])
+        seed = int(r.get("seed_idx") or 0)
+        if key not in first_seed or seed < first_seed[key]:
+            first_seed[key] = seed
+            blocks[key] = []
+        if seed == first_seed[key] and not str(r["bucket_size"]).startswith(">"):
+            blocks[key].append(idx)
+    datasets = [d for d in CHART_DATASET_ORDER if any(k[0] == d for k in blocks)]
+    datasets += sorted({k[0] for k in blocks} - set(datasets))
+    orders = [o for o in CHART_ORDER_ORDER if any(k[1] == o for k in blocks)]
+    orders += sorted({k[1] for k in blocks} - set(orders))
+    charts = []
+    for i, ds in enumerate(datasets):
+        for j, o in enumerate(orders):
+            rows = blocks.get((ds, o))
+            if not rows:
+                continue
+            r0, r1 = XLSX_DATA_START_ROW + rows[0], XLSX_DATA_START_ROW + rows[-1]
+            charts.append({
+                "title": f"{ds} / {o} (seed {first_seed[(ds, o)]})",
+                "cat": f"${sizes_col}${r0}:${sizes_col}${r1}",
+                "val": f"${count_col}${r0}:${count_col}${r1}",
+                "col": CHART_GRID_COL0 + j * CHART_PITCH[0],
+                "row": 2 + i * CHART_PITCH[1],
+                "color": CHART_COLORS.get(o, "4472C4"),
+            })
+    return charts
+
+
+def _chart_text(text: str, size: int = 1000, bold: bool = False) -> str:
+    b = ' b="1"' if bold else ""
+    return (
+        '<tx><rich><a:bodyPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'
+        '<a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        f'<a:pPr><a:defRPr sz="{size}"{b}/></a:pPr><a:r><a:rPr lang="en-US" sz="{size}"{b}/>'
+        f"<a:t>{xml_escape(text)}</a:t></a:r></a:p></rich></tx>"
+    )
+
+
+def _chart_xml(sheet_name: str, chart: dict) -> str:
+    """Log-log scatter (one marker per bucket size): a bar histogram over the
+    hundreds of distinct sizes would squeeze the head of the distribution, where
+    the orders differ most, into a few pixels."""
+    sheet = "'" + sheet_name.replace("'", "''") + "'"
+    color = chart["color"]
+
+    def axis(ax_id: int, cross_id: int, pos: str, title: str, grid: bool) -> str:
+        return (
+            f'<valAx><axId val="{ax_id}"/><scaling><logBase val="10"/><orientation val="minMax"/></scaling>'
+            f'<delete val="0"/><axPos val="{pos}"/>{"<majorGridlines/>" if grid else ""}'
+            f'<title>{_chart_text(title, 900)}<overlay val="0"/></title>'
+            '<numFmt formatCode="General" sourceLinked="0"/><majorTickMark val="out"/><minorTickMark val="none"/>'
+            f'<tickLblPos val="nextTo"/><crossAx val="{cross_id}"/><crosses val="min"/>'
+            '<crossBetween val="midCat"/></valAx>'
+        )
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'<chart><title>{_chart_text(chart["title"], 1000, True)}<overlay val="0"/></title>'
+        '<autoTitleDeleted val="0"/><plotArea><layout/>'
+        '<scatterChart><scatterStyle val="lineMarker"/><varyColors val="0"/>'
+        '<ser><idx val="0"/><order val="0"/><spPr><a:ln w="19050"><a:noFill/></a:ln></spPr>'
+        f'<marker><symbol val="circle"/><size val="4"/><spPr><a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+        f'<a:ln w="3175"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:ln></spPr></marker>'
+        f'<xVal><numRef><f>{sheet}!{chart["cat"]}</f></numRef></xVal>'
+        f'<yVal><numRef><f>{sheet}!{chart["val"]}</f></numRef></yVal><smooth val="0"/></ser>'
+        '<axId val="111"/><axId val="222"/></scatterChart>'
+        + axis(111, 222, "b", "bucket size (super-k-mers per sampled m-mer), log", False)
+        + axis(222, 111, "l", "buckets, log", True)
+        + '</plotArea><plotVisOnly val="1"/><dispBlanksAs val="gap"/></chart></chartSpace>'
+    )
+
+
+def _drawing_xml(charts: Sequence[dict]) -> str:
+    cx, cy = CHART_SIZE_EMU
+    anchors = []
+    for n, ch in enumerate(charts, start=1):
+        anchors.append(
+            f'<oneCellAnchor><from><col>{ch["col"]}</col><colOff>0</colOff><row>{ch["row"]}</row><rowOff>0</rowOff></from>'
+            f'<ext cx="{cx}" cy="{cy}"/><graphicFrame macro=""><nvGraphicFramePr><cNvPr id="{n + 1}" name="Chart {n}"/>'
+            '<cNvGraphicFramePr/></nvGraphicFramePr><xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xfrm>'
+            '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+            f'<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId{n}"/>'
+            "</a:graphicData></a:graphic></graphicFrame><clientData/></oneCellAnchor>"
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<wsDr xmlns="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + "".join(anchors) + "</wsDr>"
+    )
+
+
+def _rels_xml(items: Sequence[tuple[str, str, str]]) -> str:
+    body = "".join(f'<Relationship Id="{i}" Type="{t}" Target="{tg}"/>' for i, t, tg in items)
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{body}</Relationships>"
+    )
+
+
+_REL_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def write_xlsx(
+    path: Path,
+    sheets: Sequence[tuple[str, list[str], list[dict]]],
+    charts: dict[str, list[dict]] | None = None,
+) -> None:
+    """Write a multi-sheet .xlsx without extra Python packages. `charts` maps a
+    sheet's raw name to its charts (dicts with title/cat/val/col/row/color,
+    see bucket_histogram_charts); each such sheet gets one drawing part."""
+    charts = charts or {}
     names: list[str] = []
     payloads: list[str] = []
     for raw_name, fields, rows in sheets:
         name = (raw_name or "Sheet")[:31]
         names.append(name)
-        payloads.append(_sheet_xml(raw_name, fields, rows))
+        payloads.append(_sheet_xml(raw_name, fields, rows, "rId1" if charts.get(raw_name) else None))
 
     sheet_refs, rels, overrides = [], [], [
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
@@ -1038,6 +1235,34 @@ def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) 
         overrides.append(
             f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         )
+
+    # drawing + chart parts of the sheets that have charts
+    extra_parts: list[tuple[str, str]] = []
+    chart_no = 0
+    for d_no, (i, (raw_name, _fields, _rows)) in enumerate(
+        [(i, sh) for i, sh in enumerate(sheets, start=1) if charts.get(sh[0])], start=1
+    ):
+        sheet_charts = charts[raw_name]
+        drawing_rels = []
+        for n, ch in enumerate(sheet_charts, start=1):
+            chart_no += 1
+            extra_parts.append((f"xl/charts/chart{chart_no}.xml", _chart_xml(names[i - 1], ch)))
+            drawing_rels.append((f"rId{n}", f"{_REL_BASE}/chart", f"../charts/chart{chart_no}.xml"))
+            overrides.append(
+                f'<Override PartName="/xl/charts/chart{chart_no}.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+            )
+        extra_parts.append((f"xl/drawings/drawing{d_no}.xml", _drawing_xml(sheet_charts)))
+        extra_parts.append((f"xl/drawings/_rels/drawing{d_no}.xml.rels", _rels_xml(drawing_rels)))
+        extra_parts.append((
+            f"xl/worksheets/_rels/sheet{i}.xml.rels",
+            _rels_xml([("rId1", f"{_REL_BASE}/drawing", f"../drawings/drawing{d_no}.xml")]),
+        ))
+        overrides.append(
+            f'<Override PartName="/xl/drawings/drawing{d_no}.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+        )
+
     rels_xml = "\n".join([*rels_head, *rels, "</Relationships>"])
     workbook = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -1061,7 +1286,9 @@ def write_xlsx(path: Path, sheets: Sequence[tuple[str, list[str], list[dict]]]) 
         z.writestr("xl/styles.xml", _xlsx_styles_xml())
         for i, body in enumerate(payloads, start=1):
             z.writestr(f"xl/worksheets/sheet{i}.xml", body)
-    print(f"wrote {path} ({len(names)} sheets)")
+        for part, body in extra_parts:
+            z.writestr(part, body)
+    print(f"wrote {path} ({len(names)} sheets, {sum(len(v) for v in charts.values())} charts)")
 
 
 def index_rows() -> list[dict]:
@@ -1069,25 +1296,28 @@ def index_rows() -> list[dict]:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
     return [
-        row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 21 for every order -- matches the mod-minimizer paper's own tested SSHash regime, giving w=k-m+1=11; see README 'Choice of m')"),
-        row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order/scheme; a mod-minimizer-* order is always regular regardless of this flag."),
-        row("all", "scheme", "minimizer (classical, per-locus-canonicalized) or mod-minimizer (wider t-mer scan) -- see scripts/export.py:scheme_and_order"),
-        row("all", "order", "base order/hash within scheme, normalized so the same base order has the same name under either scheme (sshash's own CLI names diverge, e.g. xor-pcg-hash vs mod-minimizer-pcg-xor-hash): native-hash | xor-hash | pcg-xor-hash | greedymini"),
-        row("all", "t", "t-mer length for mod-minimizer's inner order O_t (blank for the 4 base orders); 10 reproduces the mod-minimizer paper's own published numbers, 11 matches the GreedyMini t-order table's own length (a labeled table variant, e.g. mod-minimizer-greedymini-v2, is fixed at t=11)"),
+        row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 21 for every order, giving w=k-m+1=11; see README 'Choice of m')"),
+        row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order."),
+        row("all", "order", "minimizer order id: native | xor-hash | xor-pcg-hash | greedymini-k13 | greedymini-k15 (+ '-at1' for the flipped polarity)"),
+        row("all", "gm_projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. Plain greedymini orders only; blank otherwise. The order id carries it as an '-at1' suffix (greedymini-k13-at1, greedymini-k15-at1); the table is the label (-k13/-k15, config.yaml's greedymini_labels)"),
         row("all", "num_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
         row("summary/runs", "bits_per_kmer", "index_bytes_on_disk * 8 / num_kmers"),
         row("summary/runs", "bench_*_ns", "sshash bench's internal avg_nanosec_per_kmer (the paper's own headline query-time metric)"),
         row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, elapsed_millisec from sshash's own JSON)"),
-        row("summary", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order/sampling-scheme effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
+        row("summary", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
         row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
         row("vs_reference", "published_num_kmers_approx", "Zenodo 17582116's own published distinct-31-mer count (informational only, not order-specific)"),
-        row("vs_reference", "published/measured_*_reduction_pct", "mod-minimizer paper reproduction (extra row, 'human' only): native vs mod-minimizer-native-hash@t10 bits_per_kmer reduction, ours vs the paper's own published GRCh38 figure (8.70 -> 7.40 bits/kmer, -14.9%) -- see scripts/export.py:PAPER_HUMAN_BITS_PER_KMER"),
         row("summary/runs/orders", "w", "window size k - m + 1 (=11 for k=31,m=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
         row("summary/runs/orders", "density_factor", "particular (measured): (num_minimizer_positions/num_kmers) * (w+1) -- see scripts/density.py"),
         row("orders", "expected_density_factor_mean/std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
         row("buckets/summary/runs", "num_buckets / avg_bucket_size", "num_kmers / num_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
         row("buckets/summary/runs", "kmers_in_skew_index_pct", "share of k-mers whose bucket is large enough to go in sshash's skew index (the structure for heavy buckets); higher can mean slower lookups despite a smaller/denser index"),
+        row("bucket_histogram", "bucket_size / num_buckets / num_kmers_in_buckets", "one row per run x bucket size (number of super-k-mers sharing a sampled m-mer): how many buckets have that size and how many k-mers they hold; only runs built with `--bucket-stats` (the harness passes it) have rows. sshash does not tally buckets larger than 4096 per size, so one aggregated row `>4096` carries them (derived from the run's totals): the k-mer column then sums exactly to num_kmers and the bucket column to the number of sampled m-mers"),
+        row("super_kmer_histogram", "kmers_in_super_kmer / num_super_kmers", "one row per run x super-k-mer length (k-mers per super-k-mer): how many super-k-mers have that length"),
+        row("buckets/summary/runs", "num_buckets", "number of distinct sampled m-mers (num_minimizers, M): the MPHF and control-codeword array both have M entries"),
+        row("buckets/summary/runs", "singleton_bucket_pct / kmers_in_singleton_bucket_pct", "share of buckets, and of k-mers, whose sampled m-mer occurs in exactly one super-k-mer (the fast singleton path, no OFFSETS access)"),
+        row("buckets/summary/runs", "heavy_bucket_threshold / expected_bucket_cost", "cost model: the top 1% of k-mers (largest buckets) all cost one capped bucket size (= heavy_bucket_threshold); the rest cost their bucket size (number of super-k-mers to check). expected_bucket_cost = k-mer-weighted mean of that cost; lower is better"),
         row("buckets/summary/runs", "skew_index_bits_per_kmer / mid_load_bits_per_kmer / control_codewords_bits_per_kmer", "space breakdown for the bucket-count/size tradeoff: fewer buckets means less control_codewords/mid_load overhead but a bigger skew_index share"),
     ]
 
@@ -1105,31 +1335,34 @@ ORDER_DESCRIPTIONS = {
         "description": "xor-hash's XOR step, then PCG RXS-M-XS 64-bit scramble before ranking",
         "cli": "-O xor-pcg-hash -s SEED",
     },
-    "greedymini": {
-        "description": "Ranks minimizers by the precomputed GreedyMini w11_k15 rank table (gm_k=15, Extend-k'd up to l=m=21)",
-        "cli": "-O greedymini --greedy-mini-file orders/GreedyMini/w11_k15_canonical.gm -s SEED",
-    },
-    "mod-minimizer-native-hash": {
-        "description": "Mod-minimizer (WABI 2024): ranks t-mers by the native order, samples the m-mer at the winning t-mer's position mod w",
-        "cli": "-O mod-minimizer-native-hash --t-length T -s SEED",
-    },
-    "mod-minimizer-xor-hash": {
-        "description": "Mod-minimizer: ranks t-mers by xor-hash, samples the m-mer at the winning t-mer's position mod w",
-        "cli": "-O mod-minimizer-xor-hash --t-length T -s SEED",
-    },
-    "mod-minimizer-pcg-xor-hash": {
-        "description": "Mod-minimizer: ranks t-mers by xor-pcg-hash, samples the m-mer at the winning t-mer's position mod w",
-        "cli": "-O mod-minimizer-pcg-xor-hash --t-length T -s SEED",
-    },
-    "mod-minimizer-greedymini": {
-        "description": "Mod-minimizer: ranks t-mers by the GreedyMini w21_k11 (t=11) or w22_k10 (t=10) rank table, samples the m-mer at the winning t-mer's position mod w",
-        "cli": "-O mod-minimizer-greedymini --greedy-mini-file FILE.gm --t-length T -s SEED",
-    },
-    "mod-minimizer-greedymini-v2": {
-        "description": "Mod-minimizer: like mod-minimizer-greedymini, but ranks t-mers (t=11) by an alternate/updated GreedyMini w21_k11 rank table -- an A/B comparison against the original table (config.yaml's mod_t_gm_labels)",
-        "cli": "-O mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/w21_k11_canonical_v2.gm --t-length 11 -s SEED",
-    },
 }
+
+
+def order_info(order: str) -> dict:
+    """ORDER_DESCRIPTIONS entry for `order`; a plain-greedymini table/projection
+    variant (greedymini-<label>[-at1], see scripts/orders.py) gets one generated
+    from its config.yaml label and suffix."""
+    if order in ORDER_DESCRIPTIONS:
+        return ORDER_DESCRIPTIONS[order]
+    plain = parse_greedymini_order(order)
+    if plain is None:
+        return {"description": "", "cli": ""}
+    label, proj = plain
+    try:
+        gm_name = greedymini_label_file(label).name
+    except SystemExit:
+        gm_name = "?"
+    flipped = proj == "at1-cg0"
+    return {
+        "description": (
+            f"Ranks minimizers by the GreedyMini {gm_name} table extended to the m-mer around its "
+            "centre gm_k-mer (ties by min(Sigma, reverse Sigma) then Gamma)"
+            + (", with the DNA->binary projection polarity flipped (AT->1, CG->0 instead of AT->0, CG->1)" if flipped else "")
+        ),
+        "cli": f"-O greedymini --greedy-mini-file orders/GreedyMini/{gm_name}"
+        + (" --gm-projection at1-cg0" if flipped else "")
+        + " -s SEED",
+    }
 
 
 DATASET_ORDER_PREFERENCE = ("cod", "kestrel", "human")
@@ -1146,57 +1379,64 @@ def summary_datasets(summary: list[dict]) -> list[str]:
     return sorted({r["dataset"] for r in summary if r.get("dataset")}, key=_dataset_sort_key)
 
 
-def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) -> list[dict]:
-    """One row per (order, t) -- not per dataset x order x t -- w, expected
-    density, and description/CLI don't vary by dataset, so repeating them per
-    dataset is pure duplication): the order's description/CLI/w/expected
-    density_factor, plus each dataset's particular (measured, mean/std over
-    seeds) density_factor pivoted into its own columns (see
-    orders_field_order). t is None (blank) for the 4 base orders and a
-    labeled table variant like mod-minimizer-greedymini-v2 (fixed at t=11 --
-    see orders/README.md), and 10 or 11 for the 3 hash-based mod-minimizer
-    orders and mod-minimizer-greedymini itself (see
-    scripts/orders.py::order_t_values). Raw minimizer_density isn't kept
-    anywhere -- density_factor is enough."""
+def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) -> list[dict]:
+    """One row per order -- not per dataset x order -- w, expected density, and
+    description/CLI don't vary by dataset, so repeating them per dataset is
+    pure duplication: the order's description/CLI/w/expected density_factor,
+    plus each dataset's particular (measured, mean/std over seeds)
+    density_factor pivoted into its own columns (see orders_field_order). Raw
+    minimizer_density isn't kept anywhere -- density_factor is enough."""
     expected = expected or {}
     datasets = summary_datasets(summary)
-    by_order_t: dict[tuple, dict[str, dict]] = {}
+    by_order: dict[str, dict[str, dict]] = {}
     for r in summary:
-        order_id = r.get("order_id")
-        if order_id:
-            by_order_t.setdefault((order_id, r.get("t")), {})[r.get("dataset")] = r
+        if r.get("order"):
+            by_order.setdefault(r["order"], {})[r.get("dataset")] = r
 
     out = []
     for order in ORDERS:
-        for t in order_t_values(order):
-            per_dataset = by_order_t.get((order, t))
-            if not per_dataset:
-                continue
-            info = ORDER_DESCRIPTIONS.get(order, {"description": "", "cli": ""})
-            exp = expected.get((order, t), {})
-            w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
-            row = {
-                "order": order,
-                "t": t,
-                "description": info["description"],
-                "cli": info["cli"],
-                "w": w_val,
-                "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
-                "expected_density_factor_std": _num(exp.get("density_factor_std")),
-            }
-            for ds in datasets:
-                r = per_dataset.get(ds)
-                row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
-                row[f"{ds}_particular_density_factor_std"] = r.get("density_factor_std") if r else None
-            out.append(row)
+        per_dataset = by_order.get(order)
+        if not per_dataset:
+            continue
+        info = order_info(order)
+        exp = expected.get(order, {})
+        w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
+        row = {
+            "order": order,
+            "description": info["description"],
+            "cli": info["cli"],
+            "w": w_val,
+            "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
+            "expected_density_factor_std": _num(exp.get("density_factor_std")),
+        }
+        for ds in datasets:
+            r = per_dataset.get(ds)
+            row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
+            row[f"{ds}_particular_density_factor_std"] = r.get("density_factor_std") if r else None
+        out.append(row)
     return out
 
 
 def orders_field_order(summary: list[dict]) -> list[str]:
-    fields = ["order", "t", "description", "cli", "w", "expected_density_factor_mean", "expected_density_factor_std"]
+    fields = ["order", "description", "cli", "w", "expected_density_factor_mean", "expected_density_factor_std"]
     for ds in summary_datasets(summary):
         fields.extend((f"{ds}_particular_density_factor_mean", f"{ds}_particular_density_factor_std"))
     return fields
+
+
+BUCKET_METRICS = (
+    "num_buckets",
+    "avg_bucket_size",
+    "max_bucket_size",
+    "kmers_in_skew_index_pct",
+    "skew_index_bits_per_kmer",
+    "mid_load_bits_per_kmer",
+    "control_codewords_bits_per_kmer",
+    "singleton_bucket_pct",
+    "kmers_in_singleton_bucket_pct",
+    "heavy_bucket_threshold",
+    "expected_bucket_cost",
+)
 
 
 def bucket_rows(summary: list[dict]) -> list[dict]:
@@ -1204,59 +1444,26 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
     order -- see scripts/export.py:parse_bucket_stats. Explains why a
     lower-density order isn't automatically faster to query: fewer buckets
     (from lower density) means a larger *average* bucket, and a bigger share
-    of k-mers land in sshash's skew index (its structure for heavy buckets)."""
+    of k-mers land in sshash's skew index (its structure for heavy buckets).
+    These columns are the only place the bucket metrics are shown (the summary
+    sheet leaves them out)."""
     out = []
     for r in summary:
-        out.append(
-            {
-                "dataset": r.get("dataset"),
-                "modality": r.get("modality"),
-                "scheme": r.get("scheme"),
-                "order": r.get("order"),
-                "t": r.get("t"),
-                "n_seeds": r.get("n_seeds"),
-                "n_kmers": r.get("n_kmers"),
-                "num_buckets_mean": r.get("num_buckets_mean"),
-                "num_buckets_std": r.get("num_buckets_std"),
-                "avg_bucket_size_mean": r.get("avg_bucket_size_mean"),
-                "avg_bucket_size_std": r.get("avg_bucket_size_std"),
-                "avg_bucket_size_ratio": r.get("avg_bucket_size_ratio"),
-                "max_bucket_size_mean": r.get("max_bucket_size_mean"),
-                "max_bucket_size_std": r.get("max_bucket_size_std"),
-                "kmers_in_skew_index_pct_mean": r.get("kmers_in_skew_index_pct_mean"),
-                "kmers_in_skew_index_pct_std": r.get("kmers_in_skew_index_pct_std"),
-                "skew_index_bits_per_kmer_mean": r.get("skew_index_bits_per_kmer_mean"),
-                "skew_index_bits_per_kmer_std": r.get("skew_index_bits_per_kmer_std"),
-                "mid_load_bits_per_kmer_mean": r.get("mid_load_bits_per_kmer_mean"),
-                "control_codewords_bits_per_kmer_mean": r.get("control_codewords_bits_per_kmer_mean"),
-            }
-        )
+        row = {k: r.get(k) for k in ("dataset", "modality", "order", "n_seeds", "n_kmers")}
+        for metric in BUCKET_METRICS:
+            row[f"{metric}_mean"] = r.get(f"{metric}_mean")
+            row[f"{metric}_std"] = r.get(f"{metric}_std")
+        row["expected_bucket_cost_ratio"] = r.get("expected_bucket_cost_ratio")
+        out.append(row)
     return out
 
 
 def bucket_field_order() -> list[str]:
-    return [
-        "dataset",
-        "modality",
-        "scheme",
-        "order",
-        "t",
-        "n_seeds",
-        "n_kmers",
-        "num_buckets_mean",
-        "num_buckets_std",
-        "avg_bucket_size_mean",
-        "avg_bucket_size_std",
-        "avg_bucket_size_ratio",
-        "max_bucket_size_mean",
-        "max_bucket_size_std",
-        "kmers_in_skew_index_pct_mean",
-        "kmers_in_skew_index_pct_std",
-        "skew_index_bits_per_kmer_mean",
-        "skew_index_bits_per_kmer_std",
-        "mid_load_bits_per_kmer_mean",
-        "control_codewords_bits_per_kmer_mean",
-    ]
+    fields = ["dataset", "modality", "order", "n_seeds", "n_kmers"]
+    for metric in BUCKET_METRICS:
+        fields.extend((f"{metric}_mean", f"{metric}_std"))
+    fields.append("expected_bucket_cost_ratio")
+    return fields
 
 
 def datasets_rows(rows: list[dict]) -> list[dict]:
@@ -1280,10 +1487,28 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     out_root = Path(args.results_dir).resolve()
     runs_root = out_root / "runs"
     rows: list[dict] = []
+    bucket_hist: list[dict] = []
+    super_kmer_hist: list[dict] = []
     for run_dir in iter_run_dirs(runs_root):
         row = load_run_row(run_dir, runs_root)
         if row and row.get("dataset") not in EXCLUDED_DATASETS:
             rows.append(row)
+            hist = parse_bucket_histograms(run_dir / "build.log")
+            ident = {f: row.get(f) for f in HISTOGRAM_ID_FIELDS}
+            bucket_hist.extend(
+                {**ident, "bucket_size": s, "num_buckets": b, "num_kmers_in_buckets": n}
+                for s, b, n in hist["bucket_sizes"]
+            )
+            over = histogram_overflow(hist["bucket_sizes"], row.get("num_kmers"), row.get("num_buckets"))
+            if over:
+                bucket_hist.append(
+                    {**ident, "bucket_size": f">{BUCKET_HISTOGRAM_CAP}", "num_buckets": over[0],
+                     "num_kmers_in_buckets": over[1]}
+                )
+            super_kmer_hist.extend(
+                {**ident, "kmers_in_super_kmer": l, "num_super_kmers": c}
+                for l, c in hist["super_kmer_lengths"]
+            )
     if not rows:
         die(f"no completed runs in {runs_root}")
 
@@ -1297,24 +1522,21 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         key=lambda r: (
             r.get("dataset") or "",
             0 if (r.get("modality") or "canonical") == "canonical" else 1,
-            r.get("order_id") or "",
-            r.get("t") if r.get("t") is not None else -1,
+            r.get("order") or "",
             int(r.get("seed_idx") or 0),
         )
     )
     summary = summary_rows(rows)
     attach_native_ratios(summary)
-    vs_ref = vs_reference_rows(rows, summary)
+    vs_ref = vs_reference_rows(rows)
 
     m_val = next((r.get("m") for r in summary if r.get("m") is not None), None)
     w_val = next((r.get("w") for r in summary if r.get("w") is not None), None)
-    expected: dict[tuple, dict] = {}
+    expected: dict[str, dict] = {}
     if m_val is not None and w_val is not None:
-        from scripts.config import default_gm_file, mod_t_gm_file as _mod_t_gm_file
-
         expected = ensure_expected_orders(
             out_root, int(m_val), int(w_val), list(bench_seeds())[:5],
-            gm_file=default_gm_file(), mod_t_gm_file=_mod_t_gm_file(),
+            orders={r["order"] for r in summary if r.get("order")},
         )
     orders = orders_rows(summary, expected)
     buckets = bucket_rows(summary)
@@ -1323,6 +1545,9 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     write_csv(out_root / "sshash_summary.csv", summary, summary_field_order())
     write_csv(out_root / "sshash_vs_reference.csv", vs_ref, vs_reference_field_order())
     write_csv(out_root / "sshash_buckets.csv", buckets, bucket_field_order())
+    write_csv(out_root / "sshash_bucket_histogram.csv", bucket_hist, BUCKET_HISTOGRAM_FIELDS)
+    write_csv(out_root / "sshash_super_kmer_histogram.csv", super_kmer_hist,
+              SUPER_KMER_HISTOGRAM_FIELDS)
 
     sheets = [
         ("index", ["sheet", "column", "meaning"], index_rows()),
@@ -1332,8 +1557,13 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         ("buckets", bucket_field_order(), buckets),
         ("runs", list(RUN_FIELDS), rows),
         ("vs_reference", vs_reference_field_order(), vs_ref),
+        ("bucket_histogram", BUCKET_HISTOGRAM_FIELDS, bucket_hist),
+        ("super_kmer_histogram", SUPER_KMER_HISTOGRAM_FIELDS, super_kmer_hist),
     ]
-    write_xlsx(out_root / "sshash_results.xlsx", sheets)
+    write_xlsx(
+        out_root / "sshash_results.xlsx", sheets,
+        charts={"bucket_histogram": bucket_histogram_charts(bucket_hist)},
+    )
 
     print(f"equivalence OK: {n_cmp} run(s) checked across {len({r['dataset'] for r in rows})} dataset(s)")
 
