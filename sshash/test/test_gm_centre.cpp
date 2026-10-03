@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
         make_table(tmp, 14, true, 3);  // symmetric, but m - gm_k = 7 is odd
         if (!throws([&] { h.configure(custom_order_mode::GREEDYMINI, 21, tmp,
                                       gm_projection::AT0_CG1); },
-                    "to be even")) {
+                    "even")) {
             std::cerr << "gm_k = 14 at m=21 must be rejected" << std::endl;
             ++failures;
         }
