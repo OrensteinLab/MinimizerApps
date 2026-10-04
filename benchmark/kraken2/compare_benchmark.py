@@ -921,7 +921,7 @@ def _row_sort_key(row):
 def collect_per_seed_rows(by_scheme, metrics_by_scheme):
     """One dict per (scheme x dataset x seed): identity + collect_run_metrics()
     (incl. the per-repeat `class_walls`); the export layer pivots these into the
-    `runs` sheet (export_layout.build_runs)."""
+    `classify_runs` sheet (export_layout.build_tables)."""
     per_seed = []
     for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
         runs = by_scheme.get(scheme, [])

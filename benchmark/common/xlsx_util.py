@@ -4,7 +4,7 @@ Cell reference math, XML escaping, the fixed root .rels part and CSV writing
 are used by every app's own sheet writer (sshash/kmc build their worksheets
 in their own export.py). The minimal .xlsx *reader* (load_xlsx) and the
 CSV/TSV table loader (load_table) are used by kraken2; the styled
-multi-sheet writer used by kraken2 lives in xlsx_book.py (+ xlsx_charts.py).
+multi-sheet writer used by kraken2 lives in xlsx_book.py.
 
 Python 3.6 compatible (kraken2's run_benchmark.sh calls `python3`).
 """

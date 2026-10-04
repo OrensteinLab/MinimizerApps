@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
 """Kraken 2 benchmark export layer: sheets, CSVs and the results workbook.
 
-Same layout as the other apps (benchmark/sshash/scripts/export.py,
-benchmark/kmc/scripts/export.py) -- one workbook, `kraken2_results.xlsx`, and
-one CSV per sheet, `kraken2_<sheet>.csv`:
+Same layout and naming as the other apps (benchmark/sshash/scripts/export.py,
+benchmark/kmc/scripts/export.py): one workbook, `kraken2_results.xlsx`, and one
+CSV per sheet, `kraken2_<sheet>.csv`. Column names follow sshash: the raw
+value carries its unit (`build_wall_s`, `classify_max_rss_gb`,
+`classified_pct`), `classify`-type sheets add `<metric>_mean`, `<metric>_std`
+and (for metrics with a direction) `<metric>_ratio` = mean / the Random mean.
 
-  overview   column reference / legend (the role `index` has in the other apps)
-  libraries  one row per Kraken library (db size, taxonomy, role, query sets run)
-  datasets   one row per query set (reads, read length, truth, provenance)
-  orders     one row per minimizer scheme/order (CLI, l/k/w, spaced seed, density)
-  summary    library x dataset x order, mean/std over seeds + ratio to Random
-  runs       one row per seed x library x dataset x order (raw per-run numbers)
-  ...then the detail sheets: vs_reference, timing_correlation, classify_repeats,
-  strain_exclusion_{summary,runs}, fda_argos_{summary,runs}, cami_{summary,runs},
-  mock_{summary,runs}.
+  overview        column reference / legend (the role `index` has elsewhere)
+  libraries       one row per Kraken library
+  datasets        one row per query set
+  orders          one row per minimizer scheme/order (CLI, l/k/w, spaced seed)
+  build           library x order: build time / RSS / index size and the
+                  density microbenchmark, mean / std / ratio over seeds
+  build_runs      the per-seed rows behind `build`
+  classify        library x dataset x order: classify-phase measures + accuracy
+  classify_runs   the per-seed rows behind `classify`
+  profile         NextMinimizer / phase profile, library x dataset x order
+  vs_reference    paired agreement with Random, library x dataset x order
+  accuracy_<dataset> (strain_exclusion, fda_argos, cami, mock) every per-seed accuracy
+                  row of that dataset (domain / group / SRR / threshold slices)
+
+Build values are a property of (library, order), not of the query set, so they
+live once on `build`; `classify`/`classify_runs` hold only classify-phase measures.
 
 compare_benchmark.py collects the raw numbers of one library (one
 `run_benchmark.sh` invocation) and calls `export_library()`, which writes that
 library's tables under <run_root>/tables/ and its workbook
 <run_root>/benchmark_comparison.xlsx; `export_results()` then merges every
 library under <base>/runs/*/tables/ into <base>/results/kraken2_results.xlsx
-(+ kraken2_*.csv). The summary-level sheets are always *derived* from the base
-tables (`derive_tables`), so a per-library export and the merged export use
-the same code.
+(+ kraken2_*.csv). `classify` and `build` are always *derived* from the base
+tables (`derive_tables`), so a per-library and the merged export share code.
 
 Python 3.6 compatible (run_benchmark.sh calls `python3`).
 """
@@ -49,43 +58,33 @@ from xlsx_util import write_csv  # noqa: E402
 
 PREFIX = "kraken2_"
 WORKBOOK = "kraken2_results.xlsx"
-CORE_SHEETS = ("overview", "libraries", "datasets", "orders", "summary", "runs")
-DETAIL_SHEETS = (
-    "vs_reference",
-    "timing_correlation",
-    "classify_repeats",
-    "strain_exclusion_summary",
-    "strain_exclusion_runs",
-    "fda_argos_summary",
-    "fda_argos_runs",
-    "cami_summary",
-    "cami_runs",
-    "mock_summary",
-    "mock_runs",
-)
-ALL_SHEETS = CORE_SHEETS + DETAIL_SHEETS
-# Base tables: what a per-library export persists and a merge reads back.
-BASE_SHEETS = (
-    "runs",
-    "classify_repeats",
-    "strain_exclusion_runs",
-    "fda_argos_runs",
-    "cami_runs",
-    "mock_runs",
-    "orders",
+SHEETS = (
+    "overview",
+    "libraries",
     "datasets",
+    "orders",
+    "build",
+    "build_runs",
+    "classify",
+    "classify_runs",
+    "profile",
+    "vs_reference",
+    "accuracy_strain_exclusion",
+    "accuracy_fda_argos",
+    "accuracy_cami",
+    "accuracy_mock",
 )
-
-# Pre-export-layout per-library CSV names (and binning leftovers) that this
-# layer replaces; removed from <run_root>/tables/ when the new tables are written.
-LEGACY_TABLES = (
-    "contents.csv", "query_sets.csv", "scheme_summary.csv", "per_seed.csv",
-    "vs_ref.csv", "vs_random.csv", "classify_repeats.csv",
-    "accuracy_strain_exclusion.csv", "accuracy_strain_exclusion_summary.csv",
-    "accuracy_fda_argos.csv", "accuracy_fda_argos_summary.csv",
-    "accuracy_cami.csv", "accuracy_cami_summary.csv",
-    "accuracy_mock.csv", "accuracy_mock_summary.csv",
-)
+# accuracy sheet of each dataset kind (compare_benchmark's acc_rows key)
+ACCURACY_SHEETS = OrderedDict([
+    ("labeled", "accuracy_strain_exclusion"),
+    ("argos", "accuracy_fda_argos"),
+    ("cami", "accuracy_cami"),
+    ("mock", "accuracy_mock"),
+])
+# Base tables: what a per-library export persists and a merge reads back
+# (build / classify are derived from build_runs / classify_runs).
+BASE_SHEETS = ("build_runs", "classify_runs", "profile", "vs_reference") + tuple(ACCURACY_SHEETS.values()) + (
+    "orders", "datasets")
 
 LIBRARY_ORDER = ("standard", "standard_p10", "standard_p0.5", "strain_exclusion")
 DATASET_ORDER = {
@@ -98,12 +97,12 @@ RANK_ORDER = {"genus": 0, "species": 1}
 MOCK_HEADLINE_MIN_FRAC = 1e-4
 TEXT_FIELDS = frozenset([
     "library", "dataset", "order", "scheme", "run_id", "seed", "context", "domain",
-    "rank", "scope", "group", "sra_run", "species", "sources", "path", "table",
+    "rank", "scope", "group", "sra_run", "species", "sources", "path", "gm_table",
     "cli", "description", "sketching", "rank_order", "spaced_seed_mask", "role",
     "taxonomy", "db_path", "run_root", "query_sets_run", "orders_run", "libraries",
-    "status", "truth", "provenance", "paired", "read_length_bp", "fragments_per_source",
-    "metric", "sheet", "column", "meaning", "category", "top_off_target",
-    "library_fraction", "flag", "fasta_dir", "n_sequences_note",
+    "status", "truth", "scoring", "truth_detail", "provenance", "paired", "read_length_bp",
+    "fragments_per_source", "metric", "sheet", "column", "meaning", "category",
+    "top_off_target", "fraction", "flag", "build_measured",
 ])
 
 
@@ -184,11 +183,41 @@ def read_csv(path):
 
 
 def family(order):
-    """Scheme family of an order id: 'GreedyMini_w5_k15_canonical' -> 'GreedyMini'."""
+    """Scheme family of an order id (long or short): 'GreedyMini_w5_k15_canonical' -> 'GreedyMini'."""
     for fam in sorted(SCHEME_ORDER, key=len, reverse=True):
         if order == fam or order.startswith(fam + "_"):
             return fam
     return order.split("_")[0]
+
+
+GM_FAMILIES = ("GreedyMiniDNA", "GreedyMini", "ModGreedyMini")
+
+
+def short_order(order):
+    """Display name of an order: the run directory name without the GreedyMini
+    table ('GreedyMini_w5_k15_canonical' -> 'GreedyMini'). Short names pass through."""
+    for fam in GM_FAMILIES:
+        if order.startswith(fam + "_"):
+            return "GreedyMini" if fam == "GreedyMiniDNA" else fam
+    return order
+
+
+def gm_table(order):
+    """Table part of a long order name ('w5_k15_canonical'), else None."""
+    for fam in GM_FAMILIES:
+        if order.startswith(fam + "_"):
+            return order[len(fam) + 1:]
+    return None
+
+
+def display_orders(long_names):
+    """{long: short} for the run directory names of one library; two different
+    long names that would collapse to the same short name keep their long name."""
+    names = _dedupe(long_names)
+    count = defaultdict(set)
+    for n in names:
+        count[short_order(n)].add(n)
+    return dict((n, short_order(n) if len(count[short_order(n)]) == 1 else n) for n in names)
 
 
 def order_key(order):
@@ -220,117 +249,6 @@ def split_context(context):
     return lib, order, (parts[2] if len(parts) > 2 else "")
 
 
-# ---------------------------------------------------------------------------
-# metric catalogue: one place defines columns, categories, meanings, ratio sense
-# ---------------------------------------------------------------------------
-# (name, category, meaning, ratio direction: lower/higher better, or None)
-# Categories double as the row-1 band labels of the runs/summary sheets.
-
-CAT_ID = "id / params"
-CAT_BUILD = "build"
-CAT_CLASSIFY = "classify"
-CAT_DENSITY = "density"
-CAT_NEXTMIN = "nextminimizer"
-CAT_VSREF = "vs reference"
-CAT_ACC = "accuracy"
-
-METRICS = [
-    ("build_s", CAT_BUILD, "k2 build wall time (s)", "lower"),
-    ("build_gb", CAT_BUILD, "k2 build peak RSS (GB)", "lower"),
-    ("class_s", CAT_CLASSIFY, "classify wall time (s). runs: mean over the timed repeats of this seed (the cold round is excluded); summary: mean over seeds", "lower"),
-    ("class_gb", CAT_CLASSIFY, "classify peak RSS (GB), same averaging as class_s", "lower"),
-    ("mrd_min", CAT_CLASSIFY, "classification speed in million reads per minute", "higher"),
-    ("cls_pct", CAT_CLASSIFY, "percent of reads classified (any taxon)", None),
-    ("fac_expected", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random minimizer theory). Order-level: measured by benchmark_minimizers.sh per seed, joined to the run by seed_idx where available", "lower"),
-    ("fac_particular", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d)", "lower"),
-    ("ns_per_minimizer", CAT_DENSITY, "Rank() cost in ns per minimizer (benchmark_minimizers.sh microbenchmark)", "lower"),
-    ("nextmin_s", CAT_NEXTMIN, "time in NextMinimizer / Rank (s), needs a classify built with ENABLE_MINIMIZER_PROF=1", "lower"),
-    ("nextmin_ns", CAT_NEXTMIN, "NextMinimizer cost in ns per call", "lower"),
-    ("nextmin_frac", CAT_NEXTMIN, "NextMinimizer time as % of classify wall", "lower"),
-    ("lookups_pm", CAT_NEXTMIN, "hash-table lookups per Mbp of reads", "lower"),
-    ("lookup_frac", CAT_NEXTMIN, "lookup time as % of classify time (per-thread sums)", "lower"),
-    ("mape_g", CAT_VSREF, "paired MAPE of genus abundance vs Random of the same seed_idx (%, abundance floor --min-abund)", None),
-    ("mape_s", CAT_VSREF, "same at species rank", None),
-    ("l1_g", CAT_VSREF, "L1 distance of genus abundance vs Random (%)", None),
-    ("concordance", CAT_VSREF, "ClassConc: reads with identical taxid vs Random, % of all reads", None),
-    ("classified_concordance", CAT_VSREF, "identical taxid among reads classified by both (%)", None),
-    ("jaccard", CAT_VSREF, "Jaccard of the sets of classified read ids vs Random (%)", None),
-    ("newly_classified_pct", CAT_VSREF, "reads unclassified by Random but classified by this order (% of all reads)", None),
-    ("newly_unclassified_pct", CAT_VSREF, "reads classified by Random but unclassified by this order (% of all reads)", None),
-]
-# runs-only extras (not aggregated into summary): within-seed std, counts, phases
-RUN_ONLY = [
-    ("class_s_std", CAT_CLASSIFY, "std of classify wall over the timed repeats of this seed (s)"),
-    ("class_gb_std", CAT_CLASSIFY, "std of classify RSS over the timed repeats (GB)"),
-    ("mrd_min_std", CAT_CLASSIFY, "std of speed over repeats (Mread/min)"),
-    ("cls_pct_std", CAT_CLASSIFY, "std of classified % over repeats"),
-    ("n_classify", CAT_CLASSIFY, "number of timed classify repeats (cold round excluded)"),
-    ("n_reads", CAT_CLASSIFY, "reads (read pairs) in the query set"),
-    ("nextmin_s_std", CAT_NEXTMIN, "std of nextmin_s over repeats"),
-    ("nextmin_cpm", CAT_NEXTMIN, "NextMinimizer calls per Mbp of reads"),
-    ("scan_s", CAT_NEXTMIN, "scan phase (minimizer + tokens), sum of per-thread seconds"),
-    ("lookup_s", CAT_NEXTMIN, "lookup phase (GetBatch), sum of per-thread seconds"),
-    ("resolve_s", CAT_NEXTMIN, "resolve phase (token replay + ResolveTree), sum of per-thread seconds"),
-    ("repeats_pm", CAT_NEXTMIN, "repeated-key hits per Mbp of reads"),
-    ("uhs_frac", CAT_NEXTMIN, "% of Rank() calls on the finite-rank (UHS) path; GreedyMini orders only"),
-    ("non_uhs_frac", CAT_NEXTMIN, "% of Rank() calls on the infinity early-out path"),
-]
-# headline accuracy columns pivoted into runs/summary: (name, meaning, ratio dir,
-# dataset, selector of the detail row, source field)
-ACC_COLS = []
-for _rank in ("genus", "species"):
-    for _m, _lbl in (("sensitivity", "sens"), ("ppv", "ppv"), ("f1", "f1")):
-        ACC_COLS.append(("se_%s_%s" % (_lbl, _rank), "strain-exclusion",
-                         "strain-exclusion %s at %s rank, domain all (Mason held-out genomes)" % (_m, _rank),
-                         "higher", ("labeled", {"domain": "all", "rank": _rank}, _m)))
-for _k, _lbl in (("concordant", "concordant"), ("discordant", "discordant"),
-                 ("ancestor", "ancestor"), ("unclassified", "unclassified")):
-    ACC_COLS.append(("argos_%s" % _lbl, "fda-argos",
-                     "FDA-ARGOS genus (%s) fraction of fragments, unweighted mean over the experiments" % _lbl,
-                     "higher" if _lbl == "concordant" else ("lower" if _lbl == "discordant" else None),
-                     ("argos", {"rank": "genus", "scope": "unweighted_mean"}, _k + "_frac")))
-for _rank in ("genus", "species"):
-    for _m, _lbl in (("sensitivity", "sens"), ("ppv", "ppv"), ("f1", "f1"),
-                     ("excluded_frac", "excluded")):
-        ACC_COLS.append(("cami_%s_%s" % (_lbl, _rank), "cami",
-                         "CAMI %s at %s rank, group all, reads whose true taxon is in the library%s" % (
-                             _m, _rank, " (reads with no reference: reported, not scored)" if _m == "excluded_frac" else ""),
-                         "higher" if _m != "excluded_frac" else None,
-                         ("cami", {"group": "all", "rank": _rank}, _m)))
-for _rank in ("genus", "species"):
-    for _m, _lbl, _dir in (("f1", "f1", "higher"), ("bray_curtis", "bray_curtis", "lower"),
-                           ("off_target_frac", "off_target", "lower")):
-        ACC_COLS.append(("mock_%s_%s" % (_lbl, _rank), "mock",
-                         "mock community (ZymoBIOMICS D6300) %s at %s rank, scope all, detection threshold min_frac=1e-4" % (_m, _rank),
-                         _dir, ("mock", {"scope": "all", "rank": _rank, "min_frac": MOCK_HEADLINE_MIN_FRAC}, _m)))
-
-RUN_ID_FIELDS = ["run_id", "library", "dataset", "order", "seed_idx", "seed"]
-SUMMARY_ID_FIELDS = ["library", "dataset", "order", "n_seeds"]
-METRIC_DIR = dict((m[0], m[3]) for m in METRICS)
-for _c in ACC_COLS:
-    METRIC_DIR[_c[0]] = _c[3]
-METRIC_CAT = dict((m[0], m[1]) for m in METRICS)
-for _m in RUN_ONLY:
-    METRIC_CAT[_m[0]] = _m[1]
-for _c in ACC_COLS:
-    METRIC_CAT[_c[0]] = CAT_ACC
-# which accuracy columns exist for which dataset (prune the others per dataset)
-SUMMARY_METRICS = [m[0] for m in METRICS] + [c[0] for c in ACC_COLS]
-# the paired-vs-reference metrics are already relative to Random: no ratio
-NO_RATIO = frozenset(m[0] for m in METRICS if m[1] == CAT_VSREF)
-
-
-def runs_field_order():
-    return (RUN_ID_FIELDS + [m[0] for m in METRICS if m[1] in (CAT_BUILD,)]
-            + [m[0] for m in METRICS if m[1] == CAT_CLASSIFY]
-            + [m[0] for m in RUN_ONLY if m[1] == CAT_CLASSIFY]
-            + [m[0] for m in METRICS if m[1] == CAT_DENSITY]
-            + [m[0] for m in METRICS if m[1] == CAT_NEXTMIN]
-            + [m[0] for m in RUN_ONLY if m[1] == CAT_NEXTMIN]
-            + [m[0] for m in METRICS if m[1] == CAT_VSREF]
-            + [c[0] for c in ACC_COLS])
-
-
 def _dedupe(seq):
     seen = set()
     out = []
@@ -341,32 +259,187 @@ def _dedupe(seq):
     return out
 
 
-def summary_field_order():
-    fields = list(SUMMARY_ID_FIELDS)
+# ---------------------------------------------------------------------------
+# metric catalogue: one place defines columns, categories, meanings, ratio sense
+# ---------------------------------------------------------------------------
+# Metric = (name, category, meaning, direction, source key in compare_benchmark's
+# per-run dict). direction: "lower" / "higher" = better; None = neutral (no ratio).
+
+CAT_ID = "id / params"
+CAT_BUILD = "build"
+CAT_DENSITY = "density"
+CAT_CLASSIFY = "classify"
+CAT_PROFILE = "profile"
+CAT_VSREF = "vs reference"
+
+# Accuracy column groups. The accuracy kinds differ per dataset and are NOT
+# comparable across datasets; a column name is shared only where the definition
+# is identical (strain-exclusion and CAMI both score reads against read-level truth).
+BAND_READ = "accuracy: simulated reads, read-level truth (strain-exclusion; cami: library-aware)"
+BAND_CAMI = "accuracy: cami (library-aware)"
+BAND_ARGOS = "accuracy: fda-argos (real, genus concordance)"
+BAND_MOCK = "accuracy: mock (real, known composition)"
+ACC_BANDS = (BAND_READ, BAND_CAMI, BAND_ARGOS, BAND_MOCK)
+
+BUILD_METRICS = [
+    ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
+    ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS (GB)", "lower", "build_gb"),
+    ("index_size_gb", CAT_BUILD, "size of the built hash table (db/hash.k2d) in GB; blank when the db is not on disk", "lower", None),
+    ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from tables/minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
+    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d)", "lower", None),
+]
+CLASSIFY_METRICS = [
+    ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s). classify_runs: mean over the timed repeats of this seed (the cold round is excluded); classify: mean over seeds", "lower", "class_s"),
+    ("classify_max_rss_gb", CAT_CLASSIFY, "classify peak RSS (GB), same averaging as classify_wall_s", "lower", "class_gb"),
+    ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads per minute", "higher", "mrd_min"),
+    ("classified_pct", CAT_CLASSIFY, "percent of reads classified (any taxon). Neutral: more classified is not better or worse by itself (it can be false positives)", None, "cls_pct"),
+]
+RUN_ONLY = [
+    ("classify_wall_s_repeat_std", CAT_CLASSIFY, "std of classify wall over the timed repeats of this seed (s)", "class_s_std"),
+    ("classify_max_rss_gb_repeat_std", CAT_CLASSIFY, "std of classify RSS over the timed repeats (GB)", "class_gb_std"),
+    ("classify_mreads_per_min_repeat_std", CAT_CLASSIFY, "std of speed over the timed repeats (Mread/min)", "mrd_min_std"),
+    ("classified_pct_repeat_std", CAT_CLASSIFY, "std of classified % over the timed repeats", "cls_pct_std"),
+    ("n_classify_repeats", CAT_CLASSIFY, "number of timed classify repeats (cold round excluded)", "n_classify"),
+    ("n_reads", CAT_CLASSIFY, "reads (read pairs) in the query set", "n_reads"),
+]
+# profile sheet: NextMinimizer / phase instrumentation (classify built with
+# ENABLE_MINIMIZER_PROF=1)
+PROFILE_METRICS = [
+    ("nextminimizer_s", CAT_PROFILE, "time in NextMinimizer / Rank (s)", "lower", "nextmin_s"),
+    ("nextminimizer_ns_per_call", CAT_PROFILE, "NextMinimizer cost in ns per call", "lower", "nextmin_ns"),
+    ("nextminimizer_pct_of_classify", CAT_PROFILE, "NextMinimizer time as % of classify wall", "lower", "nextmin_frac"),
+    ("lookups_per_mbp", CAT_PROFILE, "hash-table lookups per Mbp of reads", "lower", "lookups_pm"),
+    ("lookup_pct_of_classify", CAT_PROFILE, "lookup time as % of classify time (per-thread sums)", "lower", "lookup_frac"),
+    ("scan_s", CAT_PROFILE, "scan phase (minimizer + tokens), sum of per-thread seconds", "lower", "scan_s"),
+    ("lookup_s", CAT_PROFILE, "lookup phase (GetBatch), sum of per-thread seconds", "lower", "lookup_s"),
+    ("resolve_s", CAT_PROFILE, "resolve phase (token replay + ResolveTree), sum of per-thread seconds", "lower", "resolve_s"),
+    ("nextminimizer_calls_per_mbp", CAT_PROFILE, "NextMinimizer calls per Mbp of reads. Neutral: a workload count", None, "nextmin_cpm"),
+    ("repeats_per_mbp", CAT_PROFILE, "repeated-key hits per Mbp of reads. Neutral: a workload count", None, "repeats_pm"),
+    ("uhs_pct", CAT_PROFILE, "% of Rank() calls on the finite-rank (UHS) path; GreedyMini orders only. Neutral: a path split, not a quality", None, "uhs_frac"),
+    ("non_uhs_pct", CAT_PROFILE, "% of Rank() calls on the infinity early-out path. Neutral", None, "non_uhs_frac"),
+]
+# paired agreement with Random of the same seed (vs_reference sheet only; no ratio)
+VSREF_METRICS = [
+    ("genus_mape_pct", CAT_VSREF, "paired MAPE of genus abundance vs Random of the same seed_idx (%, abundance floor --min-abund)", None, "mape_g"),
+    ("species_mape_pct", CAT_VSREF, "same at species rank", None, "mape_s"),
+    ("genus_l1_pct", CAT_VSREF, "L1 distance of genus abundance vs Random (%)", None, "l1_g"),
+    ("concordance_pct", CAT_VSREF, "ClassConc: reads with identical taxid vs Random, % of all reads", None, "concordance"),
+    ("classified_concordance_pct", CAT_VSREF, "identical taxid among reads classified by both (%)", None, "classified_concordance"),
+    ("jaccard_pct", CAT_VSREF, "Jaccard of the sets of classified read ids vs Random (%)", None, "jaccard"),
+    ("newly_classified_pct", CAT_VSREF, "reads unclassified by Random but classified by this order (% of all reads)", None, "newly_classified_pct"),
+    ("newly_unclassified_pct", CAT_VSREF, "reads classified by Random but unclassified by this order (% of all reads)", None, "newly_unclassified_pct"),
+]
+
+# Headline accuracy columns of classify_runs / classify. One dict per column:
+# name, band, meaning, direction, selectors {dataset: (detail kind, row match, source field)}.
+# Every row of classify_runs / classify is one dataset, so the names carry no dataset prefix.
+ACC_COLS = []
+
+
+def _acc(name, band, meaning, direction, selectors):
+    ACC_COLS.append({"name": name, "band": band, "meaning": meaning,
+                     "dir": direction, "sel": selectors})
+
+
+for _rank in ("genus", "species"):
+    for _m, _src in (("sensitivity", "sensitivity"), ("ppv", "ppv"), ("f1", "f1")):
+        _acc("%s_%s" % (_rank, _m), BAND_READ,
+             "%s %s against read-level truth. strain-exclusion: domain all, Mason held-out genomes; "
+             "cami: group all, over the reads whose true taxon is in the library" % (_rank, _m),
+             "higher",
+             {"strain-exclusion": ("labeled", {"domain": "all", "rank": _rank}, _src),
+              "cami": ("cami", {"group": "all", "rank": _rank}, _src)})
+for _rank in ("genus", "species"):
+    _acc("%s_excluded_fraction" % _rank, BAND_CAMI,
+         "cami: fraction of reads whose true %s has no sequence in the library (reported, not scored). "
+         "Neutral: a property of library x query set, not of the order" % _rank, None,
+         {"cami": ("cami", {"group": "all", "rank": _rank}, "excluded_frac")})
+for _k, _dir in (("concordant", "higher"), ("discordant", "lower"),
+                 ("ancestor", None), ("unclassified", None)):
+    _acc("genus_%s_fraction" % _k, BAND_ARGOS,
+         "fda-argos: fraction of fragments whose genus call is %s with the SRA-assigned taxon, "
+         "unweighted mean over the experiments (no read-level truth)%s" % (
+             _k, "" if _dir else ". Neutral: neither right nor wrong"),
+         _dir, {"fda-argos": ("argos", {"rank": "genus", "scope": "unweighted_mean"}, _k + "_frac")})
+for _rank in ("genus", "species"):
+    for _m, _src, _dir in (("taxa_f1", "f1", "higher"), ("bray_curtis", "bray_curtis", "lower"),
+                           ("off_target_fraction", "off_target_frac", "lower")):
+        _acc("%s_%s" % (_rank, _m), BAND_MOCK,
+             "mock (ZymoBIOMICS D6300), scope all, detection threshold min_frac=1e-4: %s at %s rank. "
+             "A taxa-detection / profile metric, not read-level (so not named like the read-level f1)" % (_m, _rank),
+             _dir, {"mock": ("mock", {"scope": "all", "rank": _rank, "min_frac": MOCK_HEADLINE_MIN_FRAC}, _src)})
+
+RUN_ID_FIELDS = ["run_id", "library", "dataset", "order", "seed_idx", "seed"]
+BUILD_ID_FIELDS = ["run_id", "library", "order", "seed_idx", "seed"]
+AGG_ID = {"classify": ["library", "dataset", "order", "n_seeds"],
+          "build": ["library", "order", "n_seeds"]}
+
+METRIC_DIR = {}
+METRIC_CAT = {}
+for _m in BUILD_METRICS + CLASSIFY_METRICS + PROFILE_METRICS + VSREF_METRICS:
+    METRIC_DIR[_m[0]] = _m[3]
+    METRIC_CAT[_m[0]] = _m[1]
+for _m in RUN_ONLY:
+    METRIC_CAT[_m[0]] = _m[1]
+for _c in ACC_COLS:
+    METRIC_DIR[_c["name"]] = _c["dir"]
+    METRIC_CAT[_c["name"]] = _c["band"]
+METRIC_CAT["build_measured"] = CAT_BUILD
+BUILD_NAMES = [m[0] for m in BUILD_METRICS]
+SUMMARY_NAMES = [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
+PROFILE_NAMES = [m[0] for m in PROFILE_METRICS]
+VSREF_NAMES = [m[0] for m in VSREF_METRICS]
+SUMMARY_CATS = (CAT_CLASSIFY,) + ACC_BANDS
+
+
+def runs_field_order():
+    return (RUN_ID_FIELDS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
+            + [c["name"] for c in ACC_COLS])
+
+
+def build_runs_field_order():
+    return BUILD_ID_FIELDS + BUILD_NAMES + ["build_measured"]
+
+
+def agg_field_order(ids, metrics, cat_order):
+    """ids, then per metric `_mean`, `_std` and -- for metrics with a direction --
+    `_ratio`, grouped by category."""
+    fields = list(ids)
     by_cat = OrderedDict()
-    for m in SUMMARY_METRICS:
+    for m in metrics:
         by_cat.setdefault(METRIC_CAT[m], []).append(m)
-    order = (CAT_BUILD, CAT_CLASSIFY, CAT_DENSITY, CAT_NEXTMIN, CAT_VSREF, CAT_ACC)
-    for cat in order:
+    for cat in cat_order:
         for m in by_cat.get(cat, []):
-            fields += [m + "_mean", m + "_std"] + ([] if m in NO_RATIO else [m + "_ratio"])
+            fields += [m + "_mean", m + "_std"] + ([m + "_ratio"] if METRIC_DIR.get(m) else [])
     return fields
 
 
+def summary_field_order():
+    return agg_field_order(AGG_ID["classify"], SUMMARY_NAMES, SUMMARY_CATS)
+
+
+def build_field_order():
+    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_BUILD, CAT_DENSITY)) + ["build_measured"]
+
+
+def profile_field_order():
+    return agg_field_order(AGG_ID["classify"], PROFILE_NAMES, (CAT_PROFILE,))
+
+
+def vs_reference_field_order():
+    return agg_field_order(AGG_ID["classify"], VSREF_NAMES, (CAT_VSREF,))
+
+
 def field_category(field):
-    if field in RUN_ID_FIELDS or field in SUMMARY_ID_FIELDS:
+    if field in RUN_ID_FIELDS or field in BUILD_ID_FIELDS or field in AGG_ID["classify"]:
         return CAT_ID
     base = field
     for suf in ("_mean", "_std", "_ratio"):
         if base.endswith(suf):
             base = base[: -len(suf)]
             break
-    return METRIC_CAT.get(base) or METRIC_CAT.get(field) or ""
+    return METRIC_CAT.get(field) or METRIC_CAT.get(base) or ""
 
-
-# ---------------------------------------------------------------------------
-# runs (+ classify_repeats) from the collected per-seed metrics
-# ---------------------------------------------------------------------------
 
 def _detail_pick(rows, selector, ds_key):
     """First detail row of (seed) matching `selector` -> value of the source field."""
@@ -392,62 +465,155 @@ def _detail_pick(rows, selector, ds_key):
     return None
 
 
-def build_runs(library, per_seed_rows, acc_rows, dens_rows):
+
+
+# ---------------------------------------------------------------------------
+# per-run rows from the collected per-seed metrics
+# ---------------------------------------------------------------------------
+
+BUILD_MEASURED_DEFAULT = "this run"
+
+
+def short_measured(text):
+    """'previous session (db built 2026-08-18 with the earlier binaries ...)' ->
+    'previous session (2026-08-18)'; other texts pass through (long explanation
+    lives in the overview)."""
+    m = re.match(r"^(.*?) \(db built (\d{4}-\d{2}-\d{2})\b", text)
+    return "%s (%s)" % (m.group(1), m.group(2)) if m else text
+
+
+def join_measured(values):
+    """Distinct per-seed provenance values of one library x order, compactly:
+    ['previous session (2026-08-18)', 'previous session (2026-08-19)'] ->
+    'previous session (2026-08-18/19)'; mixed -> 'this run; previous session (...)'."""
+    labels = OrderedDict()
+    for v in values:
+        if not v:
+            continue
+        m = re.match(r"^(.*) \((\d{4}-\d{2}-\d{2})\)$", v)
+        label, date = (m.group(1), m.group(2)) if m else (v, None)
+        dates = labels.setdefault(label, [])
+        if date and date not in dates:
+            dates.append(date)
+    out = []
+    for label, dates in labels.items():
+        if not dates:
+            out.append(label)
+            continue
+        dates.sort()
+        txt = dates[0]
+        for d in dates[1:]:
+            txt += "/" + (d[8:] if d[:7] == txt.split("/")[-1][:7] else d)
+        out.append("%s (%s)" % (label, txt))
+    return "; ".join(out) or None
+
+
+def _build_measured(run_root, order, seed_idx):
+    """Provenance of the build numbers: the first line of
+    <run_root>/<order>/<seed>/results/build_measured.txt when present (a build
+    taken over from an earlier session), else `this run`."""
+    if run_root:
+        p = os.path.join(run_root, order, str(seed_idx), "results", "build_measured.txt")
+        try:
+            with open(p) as f:
+                line = f.readline().strip()
+            if line:
+                return short_measured(line)
+        except (IOError, OSError):
+            pass
+    return BUILD_MEASURED_DEFAULT
+
+
+def _index_size_gb(run_root, order, seed_idx):
+    if not run_root:
+        return None
+    p = os.path.join(run_root, order, str(seed_idx), "db", "hash.k2d")
+    try:
+        return round(os.path.getsize(p) / 1e9, 4)
+    except OSError:
+        return None
+
+
+def order_map(per_seed_rows, acc_rows):
+    """{run directory name: display name} for every order of one library."""
+    longs = [split_context(r.get("context"))[1] for r in per_seed_rows]
+    for rows in acc_rows.values():
+        longs += [split_context(r.get("context"))[1] for r in rows]
+    return display_orders([x for x in longs if x])
+
+
+def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, omap=None):
     """per_seed_rows: dicts from compare_benchmark (scheme, dataset, seed_idx,
-    context, seed + collect_run_metrics keys incl. class_walls).
-    acc_rows: {'labeled'|'argos'|'cami'|'mock': [rows with context/dataset/seed_idx]}.
-    dens_rows: density_per_seed rows ({scheme, seed_idx, fac_*...})."""
+    context, seed + collect_run_metrics keys). acc_rows: {'labeled'|'argos'|
+    'cami'|'mock': raw metric rows with context/dataset/seed_idx}. dens_rows:
+    density microbenchmark rows ({scheme, seed_idx, fac_*}); the scheme is the
+    family (Random, GreedyMini, ...) or an order name, long or short.
+
+    Returns an OrderedDict of raw (per-seed) tables: runs, build_runs,
+    profile_raw, vs_reference_raw."""
+    omap = omap if omap is not None else order_map(per_seed_rows, acc_rows)
     dens = {}
     for d in dens_rows:
         dens[(d.get("scheme"), _int(d.get("seed_idx")))] = d
-    # index accuracy rows by (order, dataset, seed_idx)
     idx = defaultdict(lambda: defaultdict(list))
     for kind, rows in acc_rows.items():
         for r in rows:
             _lib, order, _ = split_context(r.get("context"))
+            order = omap.get(order, short_order(order))
             key = (order, r.get("dataset") or _kind_dataset(kind), _int(r.get("seed_idx")))
             idx[key][kind].append(r)
-    fields = runs_field_order()
-    runs, repeats = [], []
+    rfields = runs_field_order()
+    runs, builds, prof, vsr = [], [], [], []
+    seen_build = set()
     for row in per_seed_rows:
-        _lib, order, _ = split_context(row.get("context"))
+        _lib, long_order, _ = split_context(row.get("context"))
+        order = omap.get(long_order, short_order(long_order))   # display name; paths use long_order
         ds = row.get("dataset") or "speed"
         seed_idx = _int(row.get("seed_idx"))
-        out = OrderedDict((f, None) for f in fields)
-        out["run_id"] = "%s/%s/%s" % (library, order, seed_idx)
-        out["library"] = library
-        out["dataset"] = ds
-        out["order"] = order
-        out["seed_idx"] = seed_idx
-        out["seed"] = _seed_hex(row.get("seed"))
-        for f in fields:
-            if f in RUN_ID_FIELDS:
-                continue
-            if f in row:
-                out[f] = clean_value(row[f])
-        # per-seed density row, else the scheme-level one (summary text: no seed_idx)
-        d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
-             or dens.get((family(order), None)))
-        if d:
-            for f in ("fac_expected", "fac_particular", "ns_per_minimizer"):
-                out[f] = clean_value(d.get(f))
+        ident = OrderedDict([
+            ("run_id", "%s/%s/%s" % (library, order, seed_idx)), ("library", library),
+            ("dataset", ds), ("order", order), ("seed_idx", seed_idx),
+            ("seed", _seed_hex(row.get("seed")))])
+        out = OrderedDict((f, ident.get(f)) for f in rfields)
+        for m in CLASSIFY_METRICS:
+            out[m[0]] = clean_value(row.get(m[4]))
+        for m in RUN_ONLY:
+            v = clean_value(row.get(m[3]))
+            if m[0].endswith("_repeat_std") and _num(v) and abs(v) < 1e-9:
+                v = 0.0          # std of identical repeats: float noise
+            out[m[0]] = v
         picked = idx.get((order, ds, seed_idx), {})
-        for name, cds, _mean, _dir, selector in ACC_COLS:
-            if cds != ds:
-                continue
-            out[name] = clean_value(_detail_pick(picked, selector, ds))
+        for c in ACC_COLS:
+            sel = c["sel"].get(ds)
+            if sel:
+                out[c["name"]] = clean_value(_detail_pick(picked, sel, ds))
         runs.append(out)
-        for i, w in enumerate(row.get("class_walls") or [], 1):
-            repeats.append(OrderedDict([
-                ("library", library), ("dataset", ds), ("order", order),
-                ("seed_idx", seed_idx), ("repeat", i), ("class_s", w)]))
-    runs.sort(key=_run_sort_key)
-    repeats.sort(key=lambda r: (library_key(r["library"]), dataset_key(r["dataset"]),
-                                order_key(r["order"]), r["seed_idx"] or 0, r["repeat"]))
-    return runs, repeats
-
-
-CLASSIFY_REPEAT_FIELDS = ["library", "dataset", "order", "seed_idx", "repeat", "class_s"]
+        # build: one row per (order, seed), whatever the number of datasets
+        if (order, seed_idx) not in seen_build:
+            seen_build.add((order, seed_idx))
+            b = OrderedDict((f, ident.get(f)) for f in build_runs_field_order())
+            for m in BUILD_METRICS:
+                if m[4]:
+                    b[m[0]] = clean_value(row.get(m[4]))
+            b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
+            b["build_measured"] = _build_measured(run_root, long_order, seed_idx)
+            # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
+            d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
+                 or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
+            if d:
+                b["expected_density_factor"] = clean_value(d.get("fac_expected"))
+                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
+            builds.append(b)
+        for names, dest in ((PROFILE_METRICS, prof), (VSREF_METRICS, vsr)):
+            o2 = OrderedDict((f, ident.get(f)) for f in RUN_ID_FIELDS)
+            for m in names:
+                o2[m[0]] = clean_value(row.get(m[4]))
+            if any(o2[m[0]] is not None for m in names):
+                dest.append(o2)
+    for rows in (runs, builds, prof, vsr):
+        rows.sort(key=_run_sort_key)
+    return OrderedDict([("classify_runs", runs), ("build_runs", builds), ("profile_raw", prof),
+                        ("vs_reference_raw", vsr)])
 
 
 def _kind_dataset(kind):
@@ -474,39 +640,45 @@ def _run_sort_key(r):
 
 
 # ---------------------------------------------------------------------------
-# derived sheets: summary, vs_reference, timing_correlation, detail summaries
+# aggregation: classify / build / profile / vs_reference
 # ---------------------------------------------------------------------------
 
-def summary_rows(runs):
+def aggregate(rows, metrics, keys=("library", "dataset", "order")):
+    """One row per `keys` group: mean / std over seeds of every metric, then the
+    ratio to the reference order of the same library (and dataset)."""
     groups = OrderedDict()
-    for r in runs:
-        groups.setdefault((r.get("library"), r.get("dataset"), r.get("order")), []).append(r)
+    for r in rows:
+        groups.setdefault(tuple(r.get(k) for k in keys), []).append(r)
     out = []
-    for (lib, ds, order), parts in groups.items():
-        row = OrderedDict([("library", lib), ("dataset", ds), ("order", order),
-                           ("n_seeds", len(set(p.get("seed_idx") for p in parts)))])
-        for m in SUMMARY_METRICS:
-            vals = [p.get(m) for p in parts if _num(p.get(m))]
-            mu, sd = mean_std(vals)
+    for key, parts in groups.items():
+        row = OrderedDict(zip(keys, key))
+        row["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
+        if "build_measured" in parts[0]:
+            row["build_measured"] = join_measured([p.get("build_measured") for p in parts])
+        for m in metrics:
+            mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
             row[m + "_mean"] = round_sig(mu)
             row[m + "_std"] = round_std(sd)
         out.append(row)
-    out.sort(key=lambda r: (library_key(r["library"]), dataset_key(r["dataset"]), order_key(r["order"])))
-    attach_ratios(out)
+    out.sort(key=lambda r: (library_key(r["library"]), dataset_key(r.get("dataset") or ""),
+                            order_key(r["order"])))
+    attach_ratios(out, metrics, keys)
     return out
 
 
-def attach_ratios(rows):
+def attach_ratios(rows, metrics, keys=("library", "dataset", "order")):
     """{metric}_ratio = this order's mean / the reference (Random) mean of the
-    same library and dataset (reference = 1)."""
+    same library (and dataset); the reference = 1. Only for metrics with a
+    direction; blank when either mean is missing or the reference mean is 0."""
+    group = [k for k in keys if k != "order"]
     base = {}
     for r in rows:
         if family(r["order"]) == REF_SCHEME:
-            base[(r["library"], r["dataset"])] = r
+            base[tuple(r.get(k) for k in group)] = r
     for r in rows:
-        b = base.get((r["library"], r["dataset"]))
-        for m in SUMMARY_METRICS:
-            if m in NO_RATIO:
+        b = base.get(tuple(r.get(k) for k in group))
+        for m in metrics:
+            if not METRIC_DIR.get(m):
                 continue
             mu = r.get(m + "_mean")
             bm = b.get(m + "_mean") if b else None
@@ -522,184 +694,150 @@ def prune_empty(fields, rows, keep):
     return out
 
 
-VS_REF_METRICS = [m[0] for m in METRICS if m[1] == CAT_VSREF]
+def vs_reference_aggregate(raw):
+    """Paired metrics per non-reference order (the reference compares to itself)."""
+    return aggregate([r for r in raw if family(r["order"]) != REF_SCHEME], VSREF_NAMES)
 
 
-def vs_reference_rows(runs):
-    groups = OrderedDict()
-    for r in runs:
-        if family(r["order"]) == REF_SCHEME:
-            continue
-        groups.setdefault((r["library"], r["dataset"], r["order"]), []).append(r)
-    out = []
-    for (lib, ds, order), parts in groups.items():
-        if not any(_num(p.get(m)) for p in parts for m in VS_REF_METRICS):
-            continue
-        row = OrderedDict([("library", lib), ("dataset", ds), ("order", order),
-                           ("ref_order", REF_SCHEME), ("n_seeds", len(parts))])
-        for m in VS_REF_METRICS:
-            mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
-            row[m + "_mean"] = round_sig(mu)
-            row[m + "_std"] = round_std(sd)
-        out.append(row)
-    out.sort(key=lambda r: (library_key(r["library"]), dataset_key(r["dataset"]), order_key(r["order"])))
-    return out
+# ---------------------------------------------------------------------------
+# accuracy_detail: every per-seed accuracy row, shared column names
+# ---------------------------------------------------------------------------
+
+MOCK_RENAME = {"precision": "taxa_precision", "recall": "taxa_recall", "f1": "taxa_f1",
+               "l1": "l1_distance"}
+DETAIL_LEAD = ["library", "dataset", "order", "seed_idx", "seed", "scope", "domain", "group",
+               "sra_run", "species", "min_frac", "rank"]
+DETAIL_ID = ("library", "dataset", "order", "seed_idx", "seed")
+DETAIL_SLICE = ("scope", "domain", "group", "sra_run", "species", "min_frac", "rank")
 
 
-def vs_reference_fields():
-    return (["library", "dataset", "order", "ref_order", "n_seeds"]
-            + [x for m in VS_REF_METRICS for x in (m + "_mean", m + "_std")])
+def detail_name(kind, key):
+    if kind == "mock" and key in MOCK_RENAME:
+        return MOCK_RENAME[key]
+    if key.endswith("_frac") and key != "min_frac":
+        return key[:-5] + "_fraction"
+    return key
 
 
-def _pearson(xs, ys):
-    n = len(xs)
-    if n < 2:
-        return None
-    mx, my = sum(xs) / float(n), sum(ys) / float(n)
-    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
-    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
-    if dx == 0 or dy == 0:
-        return None
-    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (dx * dy)
+def detail_rows(library, acc_rows, omap=None):
+    """{accuracy sheet: rows} -- every per-seed accuracy row of each dataset kind
+    (strain-exclusion, fda-argos, cami, mock): library / dataset / order / seed +
+    the slice (rank, domain, group, scope, SRR, threshold) + counts and metrics."""
+    omap = omap if omap is not None else order_map([], acc_rows)
+    result = OrderedDict()
+    for kind, sheet in ACCURACY_SHEETS.items():
+        out = []
+        for r in acc_rows.get(kind) or []:
+            _lib, order, _ = split_context(r.get("context"))
+            row = OrderedDict()
+            row["library"] = library
+            row["dataset"] = r.get("dataset") or _kind_dataset(kind)
+            row["order"] = omap.get(order, short_order(order))
+            for k, v in r.items():
+                if k in ("scheme", "context", "dataset", "order", "library"):
+                    continue
+                row[detail_name(kind, k)] = _seed_hex(v) if k == "seed" else clean_value(v)
+            out.append(row)
+        out.sort(key=lambda r: (order_key(r["order"]), _int(r.get("seed_idx")) or 0,
+                                DOMAIN_ORDER.get(r.get("domain"), 9), RANK_ORDER.get(r.get("rank"), 9),
+                                str(r.get("scope") or ""), str(r.get("sra_run") or ""),
+                                str(r.get("group") or ""),
+                                str(r.get("min_frac") if r.get("min_frac") is not None else "")))
+        result[sheet] = out
+    return result
 
 
-CORREL_FIELDS = ["library", "dataset", "metric", "n_orders", "r_fac_expected", "r_fac_particular"]
+COUNT_FIELDS = frozenset([
+    "n", "n_truth", "n_calls", "n_scored", "tp", "fp", "fn", "vp", "no", "excluded",
+    "ex_unclassified", "ex_consistent", "ex_off", "n_reads", "n_expected", "n_detected",
+    "tp_taxa", "fp_taxa", "fn_taxa"])
+# direction of the accuracy metrics (ratio + colour); everything else is neutral
+DETAIL_DIR = {
+    "sensitivity": "higher", "ppv": "higher", "f1": "higher",
+    "concordant_fraction": "higher", "discordant_fraction": "lower",
+    "taxa_precision": "higher", "taxa_recall": "higher", "taxa_f1": "higher",
+    "on_target_fraction": "higher", "bray_curtis": "lower", "l1_distance": "lower",
+    "off_target_fraction": "lower",
+}
+SCOPE_ORDER = {"unweighted_mean": 0, "all": 0, "pooled": 1, "bacteria": 1, "experiment": 2}
+DETAIL_TEXT_DROP = frozenset(["top_off_target"])
 
 
-def timing_correlation_rows(summary):
-    """Pearson r (over orders) of the density factor vs build / classify time and
-    RSS: does a lower density factor (fewer minimizers) mean a faster / smaller run?"""
-    out = []
-    groups = OrderedDict()
-    for r in summary:
-        groups.setdefault((r["library"], r["dataset"]), []).append(r)
-    for (lib, ds), rows in groups.items():
-        for metric in ("build_s", "build_gb", "class_s", "class_gb"):
-            xs = {}
-            for tag, col in (("e", "fac_expected_mean"), ("p", "fac_particular_mean")):
-                pts = [(r[col], r[metric + "_mean"]) for r in rows
-                       if _num(r.get(col)) and _num(r.get(metric + "_mean"))]
-                xs[tag] = (_pearson([p[0] for p in pts], [p[1] for p in pts]), len(pts))
-            n = max(xs["e"][1], xs["p"][1])
-            if n < 3:
-                continue
-            out.append(OrderedDict([
-                ("library", lib), ("dataset", ds), ("metric", metric), ("n_orders", n),
-                ("r_fac_expected", round(xs["e"][0], 4) if xs["e"][0] is not None else None),
-                ("r_fac_particular", round(xs["p"][0], 4) if xs["p"][0] is not None else None)]))
-    return out
+def _slice_sort(r):
+    mf = r.get("min_frac")
+    return (SCOPE_ORDER.get(r.get("scope"), 9), DOMAIN_ORDER.get(r.get("domain"), 9),
+            str(r.get("group") or ""), str(r.get("sra_run") or ""), str(r.get("species") or ""),
+            mf if _num(mf) else -1.0, RANK_ORDER.get(r.get("rank"), 9))
 
 
-def _group_summary(rows, key_fields, metrics, order_field="order"):
+def detail_aggregate(rows):
+    """Per-seed accuracy rows (detail_rows) -> one row per library x dataset x
+    slice x order: <metric>_mean / _std over seeds (counts: _mean only) and
+    <metric>_ratio to Random of the same slice for metrics with a direction.
+    Sorted by slice first, order last, so a slice's orders are consecutive."""
+    skip = set(DETAIL_ID) | set(DETAIL_SLICE) | DETAIL_TEXT_DROP
+    metrics = []
+    for r in rows:
+        for k, v in r.items():
+            if k not in skip and k not in metrics and _num(v):
+                metrics.append(k)
     groups = OrderedDict()
     for r in rows:
-        groups.setdefault(tuple(r.get(k) if r.get(k) is not None else "" for k in key_fields), []).append(r)
-    fields = list(key_fields) + ["n_seeds"] + [x for m in metrics for x in (m + "_mean", m + "_std")]
+        key = (r["library"], r["dataset"]) + tuple(r.get(k) for k in DETAIL_SLICE) + (r["order"],)
+        groups.setdefault(key, []).append(r)
     out = []
     for key, parts in groups.items():
-        rec = OrderedDict(zip(key_fields, key))
-        rec["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
+        row = OrderedDict([("library", key[0]), ("dataset", key[1])])
+        for k, v in zip(DETAIL_SLICE, key[2:2 + len(DETAIL_SLICE)]):
+            row[k] = v
+        row["order"] = key[-1]
+        row["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
         for m in metrics:
             mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
-            rec[m + "_mean"] = round_sig(mu)
-            rec[m + "_std"] = round_std(sd)
-        out.append(rec)
-
-    def sk(r):
-        return (library_key(r.get("library") or ""), dataset_key(r.get("dataset") or ""),
-                order_key(r.get("order") or ""), DOMAIN_ORDER.get(r.get("domain"), 9),
-                RANK_ORDER.get(r.get("rank"), 9), str(r.get("scope") or ""),
-                str(r.get("group") or ""), str(r.get("min_frac") if r.get("min_frac") is not None else ""))
-    out.sort(key=sk)
-    return fields, out
-
-
-def strain_exclusion_summary(rows):
-    return _group_summary(rows, ("library", "dataset", "order", "domain", "rank"),
-                          ("sensitivity", "ppv", "f1"))
-
-
-def _argos_headline(r):
-    if r.get("rank") not in (None, "", "genus"):
-        return False
-    scope = r.get("scope") or ""
-    if scope:
-        return scope == "unweighted_mean"
-    return not (r.get("sra_run") or "")
-
-
-def fda_argos_summary(rows):
-    head = [r for r in rows if _argos_headline(r)]
-    fields, out = _group_summary(
-        head, ("library", "dataset", "order"),
-        ("concordant_frac", "discordant_frac", "ancestor_frac", "unclassified_frac"))
-    n_exp = defaultdict(set)
-    for r in rows:
-        if (r.get("scope") or "") == "experiment" and r.get("sra_run"):
-            n_exp[(r.get("library"), r.get("order"))].add(r["sra_run"])
-    for rec in out:
-        rec["n_experiments"] = len(n_exp.get((rec["library"], rec["order"]), ()))
-    fields = ["library", "dataset", "order", "n_seeds", "n_experiments"] + [
-        x for m in ("concordant", "discordant", "ancestor", "unclassified")
-        for x in (m + "_mean", m + "_std")]
-    for rec in out:
-        for m in ("concordant", "discordant", "ancestor", "unclassified"):
-            rec[m + "_mean"] = rec.pop(m + "_frac_mean")
-            rec[m + "_std"] = rec.pop(m + "_frac_std")
-    return fields, out
-
-
-CAMI_METRICS = ("sensitivity", "ppv", "f1", "excluded_frac", "n_scored")
-MOCK_METRICS = ("precision", "recall", "f1", "l1", "bray_curtis", "classified_frac",
-                "on_target_frac", "off_target_frac")
-
-
-def cami_summary(rows):
-    return _group_summary(rows, ("library", "dataset", "order", "group", "rank"), CAMI_METRICS)
-
-
-def mock_summary(rows):
-    return _group_summary(rows, ("library", "dataset", "order", "scope", "rank", "min_frac"), MOCK_METRICS)
-
-
-DETAIL_KEYS = {
-    "strain_exclusion_runs": "labeled",
-    "fda_argos_runs": "argos",
-    "cami_runs": "cami",
-    "mock_runs": "mock",
-}
-
-
-def detail_rows(library, kind_rows):
-    """Prefix accuracy rows (from compare_benchmark.load_accuracy_sheets) with
-    library / order columns. Returns (fields, rows)."""
-    if not kind_rows:
-        return [], []
-    out = []
-    for r in kind_rows:
-        _lib, order, _ = split_context(r.get("context"))
-        row = OrderedDict()
-        row["library"] = library
-        row["dataset"] = r.get("dataset") or None
-        row["order"] = order
-        for k, v in r.items():
-            if k in ("scheme", "context", "dataset"):
-                continue
-            row[k] = clean_value(v)
+            row[m + "_mean"] = round_sig(mu)
+            if m not in COUNT_FIELDS:
+                row[m + "_std"] = round_std(sd)
         out.append(row)
-    out.sort(key=lambda r: (dataset_key(r.get("dataset") or ""), order_key(r["order"]),
-                            _int(r.get("seed_idx")) or 0, DOMAIN_ORDER.get(r.get("domain"), 9),
-                            RANK_ORDER.get(r.get("rank"), 9), str(r.get("scope") or ""),
-                            str(r.get("sra_run") or ""), str(r.get("group") or ""),
-                            str(r.get("min_frac") if r.get("min_frac") is not None else "")))
-    fields = []
+    out.sort(key=lambda r: (library_key(r["library"]), dataset_key(r["dataset"]), _slice_sort(r),
+                            order_key(r["order"])))
+    base = {}
     for r in out:
-        for k in r:
-            if k not in fields:
-                fields.append(k)
-    lead = ["library", "dataset", "order", "seed_idx", "seed"]
-    fields = [f for f in lead if f in fields] + [f for f in fields if f not in lead]
-    return fields, out
+        if family(r["order"]) == REF_SCHEME:
+            base[(r["library"], r["dataset"]) + tuple(r.get(k) for k in DETAIL_SLICE)] = r
+    for r in out:
+        b = base.get((r["library"], r["dataset"]) + tuple(r.get(k) for k in DETAIL_SLICE))
+        for m in metrics:
+            if m in DETAIL_DIR:
+                mu = r.get(m + "_mean")
+                bm = b.get(m + "_mean") if b else None
+                r[m + "_ratio"] = round(mu / bm, 4) if (_num(mu) and _num(bm) and bm) else None
+    return out
+
+
+def detail_fields(rows):
+    """Columns of an aggregated accuracy sheet: library, dataset, the slice keys
+    this dataset uses, order, n_seeds, then the metrics (columns blank in every
+    row are dropped)."""
+    seen = []
+    for r in rows:
+        for k, v in r.items():
+            if k not in seen and v not in (None, ""):
+                seen.append(k)
+    lead = (["library", "dataset"] + [k for k in DETAIL_SLICE if k in seen] + ["order", "n_seeds"])
+    for k in lead:
+        if k not in seen:
+            seen.append(k)
+    rest = []
+    for f in seen:
+        if f in lead:
+            continue
+        base = re.sub(r"_(mean|std|ratio)$", "", f)
+        if base not in rest:
+            rest.append(base)
+    out = list(lead)
+    for base in rest:
+        out += [c for c in (base + "_mean", base + "_std", base + "_ratio") if c in seen]
+    return out + [f for f in seen if f not in out]
 
 
 # ---------------------------------------------------------------------------
@@ -739,28 +877,32 @@ def order_params_from_db(run_root, order):
     return None
 
 
-def build_orders(library, run_root, runs, dens_rows):
-    """One row per order seen in `runs`: CLI, l/k/w, spaced seed, density."""
+def build_orders(library, run_root, runs, dens_rows, omap=None):
+    """One row per order seen in `runs`: CLI, l / k / w, spaced seed and the
+    density factors (mean / std over the density microbenchmark rows of the
+    order: expected = random DNA, particular = this library's FASTAs; one
+    particular column pair per library). Density is also on `build`."""
+    long_of = dict((short, long_) for long_, short in (omap or {}).items())
     order_ids = _dedupe(r["order"] for r in runs)
     rows = []
     for order in sorted(order_ids, key=order_key):
+        long_order = long_of.get(order, order)        # run directory name
         fam = family(order)
         sketching, rank_order, cli, desc = ORDER_INFO.get(fam, ("", "", "", ""))
-        table = order[len(fam) + 1:] if order.startswith(fam + "_") else None
+        table = gm_table(long_order)
         if table:
             cli = cli.replace("<table>", "<orders>/GreedyMini/" + table)
-        d_rows = [d for d in dens_rows if d.get("scheme") in (order, fam)]
         row = OrderedDict([
             ("order", order), ("scheme", fam), ("sketching", sketching),
-            ("rank_order", rank_order), ("table", table), ("cli", cli),
+            ("rank_order", rank_order), ("gm_table", table), ("cli", cli),
             ("description", desc)])
         l = k = None
-        for d in d_rows:
-            if _num(d.get("l")) and _num(d.get("k")):
+        for d in dens_rows:
+            if d.get("scheme") in (order, long_order, fam) and _num(d.get("l")) and _num(d.get("k")):
                 l, k = int(d["l"]), int(d["k"])
                 break
         mask = None
-        opts = order_params_from_db(run_root, order) if run_root else None
+        opts = order_params_from_db(run_root, long_order) if run_root else None
         if opts:
             k, l, mask = opts[0], opts[1], opts[2]
         row["l"] = l
@@ -768,26 +910,26 @@ def build_orders(library, run_root, runs, dens_rows):
         row["w"] = (k - l + 1) if (k is not None and l is not None) else None
         spaces = None
         if mask is not None and l:
-            kept = bin(mask).count("1") // 2
-            spaces = l - kept if mask else 0
+            spaces = l - bin(mask).count("1") // 2 if mask else 0
         row["minimizer_spaces"] = spaces
         row["spaced_seed_mask"] = ("0x%x" % mask) if mask else ("none" if mask == 0 else None)
-        e_mu, e_sd = mean_std([d.get("fac_expected") for d in d_rows if _num(d.get("fac_expected"))])
-        p_mu, p_sd = mean_std([d.get("fac_particular") for d in d_rows if _num(d.get("fac_particular"))])
-        row["expected_density_factor_mean"] = round_sig(e_mu)
-        row["expected_density_factor_std"] = round_std(e_sd)
-        row[library + "_particular_density_factor_mean"] = round_sig(p_mu)
-        row[library + "_particular_density_factor_std"] = round_std(p_sd)
+        mine = [d for d in dens_rows if d.get("scheme") in (order, long_order, fam)]
+        for col, src in (("expected_density_factor", "fac_expected"),
+                         (library + "_particular_density_factor", "fac_particular")):
+            mu, sd = mean_std([d.get(src) for d in mine if _num(d.get(src))])
+            row[col + "_mean"] = round_sig(mu)
+            row[col + "_std"] = round_std(sd)
         rows.append(row)
     return rows
 
 
-ORDERS_LEAD = ["order", "scheme", "sketching", "rank_order", "table", "cli", "description",
-               "l", "k", "w", "minimizer_spaces", "spaced_seed_mask",
-               "expected_density_factor_mean", "expected_density_factor_std"]
+ORDERS_FIELDS = ["order", "scheme", "sketching", "rank_order", "gm_table", "cli", "description",
+                 "l", "k", "w", "minimizer_spaces", "spaced_seed_mask",
+                 "expected_density_factor_mean", "expected_density_factor_std"]
 
 
 def orders_fields(rows):
+    """ORDERS_FIELDS plus one particular-density column pair per library present."""
     libs = []
     for r in rows:
         for k in r:
@@ -795,10 +937,21 @@ def orders_fields(rows):
             if m and m.group(1) not in libs:
                 libs.append(m.group(1))
     libs.sort(key=library_key)
-    f = list(ORDERS_LEAD)
+    out = list(ORDERS_FIELDS)
     for lib in libs:
-        f += [lib + "_particular_density_factor_mean", lib + "_particular_density_factor_std"]
-    return f
+        out += [lib + "_particular_density_factor_mean", lib + "_particular_density_factor_std"]
+    return out
+
+
+def orders_category(field):
+    if field in ("order", "scheme", "sketching", "rank_order", "gm_table", "cli", "description"):
+        return "order"
+    if field.startswith("expected_density_factor"):
+        return "density (random DNA)"
+    m = re.match(r"^(.*)_particular_density_factor_", field)
+    if m:
+        return "density (%s)" % m.group(1)
+    return "minimizer params"
 
 
 def merge_orders(lists):
@@ -814,49 +967,42 @@ def merge_orders(lists):
     return sorted(by.values(), key=lambda r: order_key(r["order"]))
 
 
-def orders_category(field):
-    if field in ("order", "scheme", "sketching", "rank_order", "table", "cli", "description"):
-        return "order"
-    if field in ("l", "k", "w", "minimizer_spaces", "spaced_seed_mask"):
-        return "minimizer params"
-    if field.startswith("expected_density_factor"):
-        return "expected (theoretical)"
-    marker = "_particular_density_factor_"
-    if marker in field:
-        return field.split(marker, 1)[0]
-    return ""
-
-
 # ---------------------------------------------------------------------------
 # datasets (query sets) and libraries
 # ---------------------------------------------------------------------------
 
+# dataset -> (sources, truth, scoring, truth_detail, provenance)
 DATASET_INFO = {
     "strain-exclusion": (
         "simulated reads (Mason) from the 50 Table S3 held-out genomes",
+        "simulated", "read-level truth",
         "per-read taxid: the source genome (truth.tsv); genus/species sensitivity / PPV / F1",
         "Wood et al. 2019 Table S1; Mason 2 reads from Zenodo (download_data.sh / prepare_strex_data.sh)"),
     "fda-argos": (
         "real Illumina SRA runs (FDA-ARGOS, Table S5)",
-        "per-experiment species (Table S5); genus concordance a-d, no sensitivity/PPV",
+        "real", "concordance with SRA taxon",
+        "per-experiment species (Table S5), no per-read truth; genus concordance a-d, no sensitivity/PPV",
         "Wood et al. 2019 Table S5; ENA download of the sra_run accessions (prepare_fda_argos_reads.py)"),
     "cami": (
         "simulated reads (ART) of CAMI II marine genomes",
-        "per-read true taxid (truth.tsv); library-aware sens / PPV / F1, excluded reads reported",
+        "simulated", "library-aware read-level truth",
+        "per-read true taxid (truth.tsv); sens / PPV / F1 over reads whose taxon is in the library, excluded reads reported",
         "CAMI II marine sample, subsampled (prepare_cami_reads.py, SOURCE.txt)"),
     "mock": (
         "real reads of the ZymoBIOMICS D6300 mock community",
-        "expected community composition only (composition.csv); profile-level precision/recall/L1/Bray-Curtis",
+        "real", "profile vs expected composition",
+        "expected community composition only (composition.csv); profile-level precision/recall/F1, L1, Bray-Curtis, off-target",
         "SRR12324251, subsampled (prepare_mock_reads.py, SOURCE.txt)"),
     "speed": (
         "unlabeled NCBI-library speed corpus",
-        "none (timing only)",
+        "real (unlabeled)", "none (timing only)",
+        "no truth",
         "data/speed/ or legacy data/benchmark_R*.fastq"),
 }
 
-DATASET_FIELDS = ["dataset", "sources", "n_sources", "fragments_per_source", "n_fragments",
-                  "read_length_bp", "paired", "total_bases_r1_r2", "truth", "provenance",
-                  "libraries", "path"]
+DATASET_FIELDS = ["dataset", "truth", "scoring", "sources", "n_sources", "fragments_per_source",
+                  "n_fragments", "read_length_bp", "paired", "total_bases_r1_r2", "truth_detail",
+                  "provenance", "libraries", "path"]
 
 
 def decorate_datasets(query_rows, runs):
@@ -879,7 +1025,9 @@ def decorate_datasets(query_rows, runs):
             if not row.get("sources"):
                 row["sources"] = info[0]
             row["truth"] = info[1]
-            row["provenance"] = info[2]
+            row["scoring"] = info[2]
+            row["truth_detail"] = info[3]
+            row["provenance"] = info[4]
         libs = sorted(libs_by_ds.get(ds, []), key=library_key)
         row["libraries"] = ", ".join(libs) if libs else None
     return sorted(out.values(), key=lambda r: dataset_key(r["dataset"]))
@@ -992,14 +1140,11 @@ def _save_cache(path, cache):
 
 
 def build_libraries(base, runs, cache_path=None):
-    """One row per library: every id in LIBRARY_ORDER with a db/<id> or runs/<id>
-    dir, plus any other library present in `runs`."""
+    """One row per library that has rows in `runs` (a db/<id> dir or an empty
+    runs/<id> without results does not list: libraries without runs, e.g. the
+    standard ones, stay out of the workbook)."""
     cache = _load_cache(cache_path) if cache_path else {}
-    ids = [i for i in LIBRARY_ORDER
-           if os.path.isdir(os.path.join(base, "db", i)) or os.path.isdir(os.path.join(base, "runs", i))]
-    for r in runs:
-        if r["library"] not in ids:
-            ids.append(r["library"])
+    ids = sorted(set(r["library"] for r in runs), key=library_key)
     rows = []
     for lib in ids:
         db = os.path.join(base, "db", lib)
@@ -1028,7 +1173,8 @@ def build_libraries(base, runs, cache_path=None):
             ("db_path", db if os.path.isdir(db) else None),
             ("run_root", os.path.join(base, "runs", lib) if os.path.isdir(os.path.join(base, "runs", lib)) else None)]))
     if cache_path:
-        _save_cache(cache_path, cache)
+        keep = set(os.path.join(base, "db", r["library"]) for r in rows)
+        _save_cache(cache_path, dict((k, v) for k, v in cache.items() if k in keep))
     return rows
 
 
@@ -1039,55 +1185,53 @@ def build_libraries(base, runs, cache_path=None):
 SHEET_DOC = OrderedDict([
     ("overview", "this sheet: what every sheet and column means, grouped by category"),
     ("libraries", "one row per Kraken library: size, taxonomy, role in the benchmark, which query sets / orders ran on it"),
-    ("datasets", "one row per query set: reads, read length, truth type, provenance"),
-    ("orders", "one row per minimizer scheme/order: CLI flags, l/k/w, spaced seed, expected and per-library particular density factor"),
-    ("summary", "library x dataset x order: mean / std over seeds, and `_ratio` = mean / the Random mean of the same library and dataset"),
-    ("runs", "one row per seed x library x dataset x order: the raw per-run numbers"),
-    ("vs_reference", "paired agreement with Random of the same seed (MAPE, concordance, Jaccard, new classified/unclassified), mean / std over seeds"),
-    ("timing_correlation", "Pearson r over orders of density factor vs build / classify time and RSS (does fewer minimizers mean faster?)"),
-    ("classify_repeats", "one row per timed classify repeat (wall seconds): the distribution behind class_s"),
-    ("strain_exclusion_summary", "strain-exclusion sensitivity / PPV / F1 mean / std over seeds per domain x rank"),
-    ("strain_exclusion_runs", "strain-exclusion per seed: TP / VP / FP / FN and sens / PPV / F1 per domain x rank"),
-    ("fda_argos_summary", "FDA-ARGOS genus concordance (concordant / discordant / ancestor / unclassified) mean / std over seeds"),
-    ("fda_argos_runs", "FDA-ARGOS per seed: per SRR experiment, the unweighted mean and the pooled fragment row"),
-    ("cami_summary", "CAMI II marine library-aware sens / PPV / F1 and excluded fraction, mean / std over seeds per group x rank"),
-    ("cami_runs", "CAMI II per seed: TP / VP / FP / FN, excluded reads and what was called for them"),
-    ("mock_summary", "ZymoBIOMICS D6300 mock precision / recall / F1, L1, Bray-Curtis and off-target fraction mean / std per scope x rank x threshold"),
-    ("mock_runs", "mock community profile metrics per seed"),
+    ("datasets", "one row per query set: reads, read length, truth type, how it is scored, provenance"),
+    ("orders", "one row per minimizer scheme/order: CLI flags, l / k / w, spaced seed and the density factors (also on `build`: the duplication is deliberate, `orders` is the per-order reference card)"),
+    ("build", "library x order, mean / std over seeds and `_ratio` to Random: build time, build RSS, index size and the density microbenchmark. Build values do not depend on the query set, so they appear here once, not on every dataset row"),
+    ("build_runs", "the per-seed rows behind `build` (`build_measured` says where the build numbers come from; same split as summary / runs in the sshash / kmc apps)"),
+    ("classify", "library x dataset x order, classify phase only: mean / std over seeds and `_ratio` to Random of classify time / RSS / speed / classified % and the headline accuracy of the dataset"),
+    ("classify_runs", "one row per seed x library x dataset x order: the raw classify-phase numbers behind `classify` (mean and std over the timed repeats are on the row)"),
+    ("profile", "NextMinimizer / phase profile (needs a classify built with ENABLE_MINIMIZER_PROF=1): library x dataset x order, mean / std over seeds and `_ratio` to Random"),
+    ("vs_reference", "paired agreement with Random of the same seed (MAPE, concordance, Jaccard, newly classified / unclassified): library x dataset x order, mean / std over seeds"),
+    ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (domain x rank): one row per order, mean / std over seeds and `_ratio` to Random of the same slice (TP / VP / FP / FN counts as means)"),
+    ("accuracy_fda_argos", "FDA-ARGOS accuracy per slice (scope: unweighted mean / pooled / each SRR experiment): genus concordance, one row per order, mean / std over seeds and `_ratio` to Random"),
+    ("accuracy_cami", "CAMI accuracy per slice (group x rank): sens / PPV / F1 and the excluded fraction, one row per order, mean / std over seeds and `_ratio` to Random"),
+    ("accuracy_mock", "mock-community accuracy per slice (scope x detection threshold x rank): taxa precision / recall / F1, distances, off-target, one row per order, mean / std over seeds and `_ratio` to Random"),
 ])
 
 COMMON_DOC = [
-    ("all", CAT_ID, "library", "Kraken library id: standard | standard_p10 | standard_p0.5 | strain_exclusion (see `libraries`)"),
+    ("all", CAT_ID, "library", "Kraken library id (only libraries with runs are exported, here strain_exclusion; see `libraries`)"),
     ("all", CAT_ID, "dataset", "query set: strain-exclusion | fda-argos | cami | mock | speed (see `datasets`)"),
-    ("all", CAT_ID, "order", "minimizer scheme/order id = the run directory name: Random, RandomPcg, GreedyMini_<table>, ModRandom, ModGreedyMini_<table> (see `orders`)"),
-    ("runs", CAT_ID, "run_id", "<library>/<order>/<seed_idx>"),
-    ("runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
-    ("summary", CAT_ID, "n_seeds", "number of seeds aggregated into the row"),
-    ("summary", "all metrics", "{metric}_mean / {metric}_std", "mean / sample std over seeds of the per-seed value in `runs` (std rounded to >= 4 significant digits)"),
-    ("summary", "all metrics", "{metric}_ratio", "this order's mean / the Random mean of the same library and dataset (Random = 1); colour scale: green = better, red = worse. Not given for the paired vs-reference metrics (already relative to Random)"),
-    ("summary", CAT_DENSITY, "fac_* / ns_per_minimizer (summary)", "mean / std over the seeds that have a density measurement (tables/density_per_seed.csv; an order measured only once, e.g. from minimizer_density_summary.txt, repeats that value, std 0)"),
-    ("runs", CAT_ACC, "se_* / argos_* / cami_* / mock_*", "headline accuracy of the dataset the row belongs to (blank for the other datasets); the full domain x rank / per-SRR / per-group detail is in the *_runs / *_summary sheets"),
-    ("libraries", "libraries", "n_sequences / n_taxa / fasta_gb", "sequences and distinct taxids in the library's prelim_map*.txt, FASTA size on disk (GB, library.fna files; not re-read)"),
+    ("all", CAT_ID, "order", "minimizer scheme/order: Random, RandomPcg, GreedyMini, ModRandom, ModGreedyMini (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
+    ("classify_runs/build_runs", CAT_ID, "run_id", "<library>/<order>/<seed_idx>"),
+    ("classify_runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
+    ("build/classify/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row"),
+    ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb gigabytes, _pct percent, _ns_per_call, _per_mbp, _fraction 0-1); `classify`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
+    ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the Random mean of the same library (and dataset); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant, Bray-Curtis, off-target) or higher is better (speed, sensitivity, PPV, F1, concordant, taxa F1). Colour scale: green = better than Random, white = 1, red = worse (colours reversed for higher-is-better columns)"),
+    ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / repeats_per_mbp and the path split uhs_pct / non_uhs_pct"),
+    ("classify_runs", "classify", "<metric>_repeat_std / n_classify_repeats", "std of the metric over the timed repeats of this seed (the seed's value is their mean) and the number of repeats (cold round excluded)"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
+    ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching-scheme (Minimizer | Mod), the --order it ranks by, the GreedyMini table (gm_table, e.g. w5_k15_canonical for GreedyMini and w5_k6_canonical for ModGreedyMini; blank for random orders) and a one-line description"),
+    ("orders", "density", "expected_density_factor_mean / _std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density microbenchmark rows of the order (tables/minimizer_density.csv; independent of the library; blank for orders without density rows)"),
+    ("orders", "density", "<library>_particular_density_factor_mean / _std", "the same factor measured on that library's FASTAs, one column pair per library (never averaged across libraries)"),
     ("orders", "minimizer params", "l / k / w / minimizer_spaces / spaced_seed_mask", "minimizer length l, k-mer length k, window w = k - l + 1, spaced-seed spaces s (pattern 1*(l-2s) + (01)*s, so l - s kept positions) and its mask, read from the order's db/opts.k2d"),
-    ("orders", "expected (theoretical)", "expected_density_factor_mean / std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density seeds (independent of the library)"),
-    ("orders", "<library>", "<library>_particular_density_factor_mean / std", "the same factor measured on that library's FASTAs"),
-    ("orders", "order", "scheme / sketching / rank_order / table / description", "scheme family (Random, RandomPcg, GreedyMini, ModRandom, ModGreedyMini), k2 --sketching-scheme (Minimizer | Mod), the --order it ranks by, the GreedyMini table (w<w>_k<gm_k>_<variant>.gm, blank for random orders) and a one-line description"),
+    ("libraries", "libraries", "n_sequences / n_taxa / n_fasta_files / fasta_gb", "sequences and distinct taxids in the library's prelim_map*.txt, library.fna files found and their size on disk (GB; not re-read)"),
     ("libraries", "libraries", "role / flag / fraction / taxonomy", "what the library is for in the benchmark, the run_benchmark.sh flag that selects it, how much of NCBI it holds, and the taxonomy it uses"),
-    ("libraries", "libraries", "n_fasta_files / n_orders / n_runs", "library.fna files found, orders and distinct runs (order x seed) present under runs/<library>"),
-    ("libraries", "libraries", "query_sets_run / orders_run / status", "datasets and orders classified on this library; whether it has runs and/or a db"),
+    ("libraries", "libraries", "n_orders / n_runs / query_sets_run / orders_run / status", "orders and distinct runs (order x seed) under runs/<library>, datasets and orders classified on it, whether it has runs and / or a db"),
     ("libraries", "libraries", "db_path / run_root", "shared library FASTA dir (db/<id>) and the run tree (runs/<id>)"),
     ("datasets", "dataset", "sources / n_sources / fragments_per_source", "what the reads come from, how many source genomes / taxa / experiments, fragments per source"),
     ("datasets", "dataset", "n_fragments / read_length_bp / paired / total_bases_r1_r2 / path", "read pairs, read length (bp, or min-max), paired-end flag, bases in R1+R2, location of the FASTQs"),
-    ("datasets", "dataset", "truth / provenance / libraries", "truth type used for scoring, where the reads come from, libraries the set was classified against"),
-    ("vs_reference", CAT_ID, "ref_order / n_seeds", "the reference order of the comparison (Random) and the number of paired seeds"),
-    ("timing_correlation", CAT_ID, "metric / n_orders", "time or RSS metric correlated with the density factor, and the number of orders in the correlation"),
-    ("classify_repeats", CAT_ID, "seed_idx", "seed the repeat belongs to"),
-]
-SHEET_FIELD_DOC = [
-    ("vs_reference", CAT_VSREF, "{metric}_mean / {metric}_std", "mean / std over seeds of the paired per-seed metric; one row per non-reference order"),
-    ("timing_correlation", "correlation", "r_fac_expected / r_fac_particular", "Pearson r over the orders of that library and dataset (n_orders >= 3)"),
-    ("classify_repeats", "classify", "repeat / class_s", "timed repeat number (the cold round is excluded) and its classify wall time (s)"),
+    ("datasets", "dataset", "truth / scoring", "truth: simulated | real. scoring: read-level truth (strain-exclusion) | concordance with SRA taxon (fda-argos) | library-aware read-level truth (cami) | profile vs expected composition (mock)"),
+    ("datasets", "dataset", "truth_detail / provenance / libraries", "what the truth file holds, where the reads come from, libraries the set was classified against"),
+    ("classify/classify_runs", "accuracy", "accuracy column groups", "one group per kind of accuracy, because the kinds differ per dataset and are NOT comparable across datasets (accuracy is never averaged across datasets). simulated reads with read-level truth (strain-exclusion; cami restricted to reads whose taxon is in the library): genus_/species_ sensitivity, ppv, f1. cami only: genus_/species_excluded_fraction. fda-argos (real reads, no per-read truth): genus_concordant / discordant / ancestor / unclassified _fraction. mock (real reads, known composition): genus_/species_ taxa_f1, bray_curtis, off_target_fraction (a taxa-detection F1, so named taxa_f1, not f1). A row fills only its own dataset's group; the other cells are blank, columns that no row of the sheet uses are dropped"),
+    ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_seeds", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics.tsv). Rows are sorted by slice first, order last: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / Random mean of the same slice (blank when Random's mean is 0 or missing), colour green = better, red = worse"),
+    ("accuracy_*", "ratio", "ratio direction and neutral columns", "higher is better (ratio coloured, reversed scale): sensitivity, ppv, f1, concordant_fraction, taxa_precision, taxa_recall, taxa_f1, on_target_fraction. Lower is better: discordant_fraction, bray_curtis, l1_distance, off_target_fraction. Neutral (mean / std only, no ratio, no colour): ancestor_fraction, unclassified_fraction, excluded_fraction (a property of library x query set), classified_fraction, above_rank_fraction and the read counts. top_off_target (text) is not aggregated"),
+    ("accuracy_*", "slice", "rank / domain / group / scope / sra_run / species / min_frac", "the slice of the row: rank (genus | species); strain-exclusion domain (all | prokaryote | virus); cami group (all | bacteria | archaea ...); fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species; mock scope (all | bacteria) and detection threshold min_frac"),
+    ("accuracy_*", "accuracy detail", "n / n_truth / n_calls / n_scored / tp / vp / fp / fn / no", "read counts of the slice. TP = true rank taxon or descendant, VP = ancestor, FP = off-lineage, FN = unclassified (Wood et al. 2019); no = reads without a call in a truth-less slice"),
+    ("accuracy_*", "accuracy detail", "sensitivity / ppv / f1", "read-level: sensitivity = TP/(TP+VP+FN+FP), PPV = TP/(TP+FP), F1 their harmonic mean (strain-exclusion, cami)"),
+    ("accuracy_*", "accuracy detail", "excluded / excluded_fraction / ex_unclassified / ex_consistent / ex_off", "cami: reads whose true taxon has no sequence in the library, their fraction, and what was called for them"),
+    ("accuracy_*", "accuracy detail", "concordant_fraction / discordant_fraction / ancestor_fraction / unclassified_fraction", "fda-argos genus concordance of the fragments with the SRA-assigned taxon"),
+    ("accuracy_*", "accuracy detail", "taxa_precision / taxa_recall / taxa_f1 / l1_distance / bray_curtis / classified_fraction / on_target_fraction / off_target_fraction / above_rank_fraction / unclassified_fraction / n_reads / n_expected / n_detected / tp_taxa / fp_taxa / fn_taxa / top_off_target", "mock profile-level metrics against the expected composition at detection threshold min_frac (taxa-level, not read-level)"),
 ]
 
 
@@ -1103,22 +1247,24 @@ def overview_rows():
             add("sheets", "sheets", name, doc)
     for sheet, cat, col, meaning in COMMON_DOC:
         add(sheet, cat, col, meaning)
-    for name, cat, meaning, dir_ in METRICS:
-        add("summary/runs", cat, name, meaning)
-    for name, cat, meaning in RUN_ONLY:
-        add("runs", cat, name, meaning)
-    for name, ds, meaning, dir_, _sel in ACC_COLS:
-        add("summary/runs", CAT_ACC, name, meaning)
-    for sheet, cat, col, meaning in SHEET_FIELD_DOC:
-        add(sheet, cat, col, meaning)
-    add("strain_exclusion_*", "strain-exclusion", "domain / rank / n_truth / n_calls / tp / vp / fp / fn / sensitivity / ppv / f1",
-        "TP = true rank taxon or descendant, VP = ancestor, FP = off-lineage, FN = unclassified; sensitivity = TP/(TP+VP+FN+FP), PPV = TP/(TP+FP) (Wood et al. 2019)")
-    add("fda_argos_*", "fda-argos", "scope / sra_run / concordant / discordant / ancestor / unclassified",
-        "scope: experiment (one SRR) | unweighted_mean (headline, mean of the experiments) | pooled (all fragments); fractions of fragments")
-    add("cami_*", "cami", "group / rank / excluded_frac / n_scored / sensitivity / ppv / f1",
-        "group: all | bacteria | archaea ...; excluded = reads whose true taxon has no reference in the library (reported, not scored)")
-    add("mock_*", "mock", "scope / rank / min_frac / precision / recall / f1 / l1 / bray_curtis / off_target_frac",
-        "profile-level agreement with the expected composition at detection threshold min_frac; L1 and Bray-Curtis distances, off-target fraction")
+    for name, cat, meaning, _dir, _src in BUILD_METRICS:
+        add("build/build_runs", cat, name, meaning)
+    add("build/build_runs", CAT_BUILD, "build_measured",
+        "provenance of build_wall_s / build_max_rss_gb: `this run` = built in the benchmark pass that classified it; "
+        "`previous session ...` = the database was built earlier (different session, binaries and host load) and only "
+        "its recorded k2 build time / RSS were taken over, so build times of such rows are NOT strictly comparable "
+        "with `this run` rows (classify times are always from the same pass). Shown shortened, e.g. `previous session (2026-08-18/19)`: "
+        "the date(s) the db was built; taken from results/build_measured.txt of each seed, distinct values listed once on `build`")
+    for name, cat, meaning, _dir, _src in CLASSIFY_METRICS:
+        add("classify/classify_runs", cat, name, meaning)
+    for name, cat, meaning, _src in RUN_ONLY:
+        add("classify_runs", cat, name, meaning)
+    for c in ACC_COLS:
+        add("classify/classify_runs", c["band"], c["name"], c["meaning"])
+    for name, cat, meaning, _dir, _src in PROFILE_METRICS:
+        add("profile", cat, name, meaning)
+    for name, cat, meaning, _dir, _src in VSREF_METRICS:
+        add("vs_reference", cat, name, meaning)
     return rows
 
 
@@ -1130,10 +1276,11 @@ OVERVIEW_FIELDS = ["sheet", "category", "column", "meaning"]
 # ---------------------------------------------------------------------------
 
 def derive_tables(base, base_dir=None, libraries=None):
-    """base: {runs, classify_repeats, strain_exclusion_runs, fda_argos_runs,
-    cami_runs, mock_runs, orders, datasets} -> OrderedDict name -> (fields, rows)
-    for every sheet (empty detail sheets are omitted)."""
-    runs = base.get("runs") or []
+    """base: {build_runs, classify_runs, profile, vs_reference, accuracy_<dataset>...,
+    orders, datasets} -> OrderedDict name -> (fields, rows) for every sheet (sheets
+    without rows -- no profile data, no accuracy -- are omitted)."""
+    runs = base.get("classify_runs") or []
+    build_runs = base.get("build_runs") or []
     t = OrderedDict()
     t["overview"] = (OVERVIEW_FIELDS, overview_rows())
     lib_rows = libraries if libraries is not None else build_libraries(base_dir, runs) if base_dir else []
@@ -1141,45 +1288,29 @@ def derive_tables(base, base_dir=None, libraries=None):
     t["datasets"] = (DATASET_FIELDS, base.get("datasets") or [])
     orders = base.get("orders") or []
     t["orders"] = (orders_fields(orders), orders)
-    summ = summary_rows(runs)
-    sfields = prune_empty(summary_field_order(), summ, set(SUMMARY_ID_FIELDS))
-    t["summary"] = (sfields, summ)
-    rfields = prune_empty(runs_field_order(), runs, set(RUN_ID_FIELDS))
-    t["runs"] = (rfields, runs)
-    vr = vs_reference_rows(runs)
-    if vr:
-        t["vs_reference"] = (vs_reference_fields(), vr)
-    corr = timing_correlation_rows(summ)
-    if corr:
-        t["timing_correlation"] = (CORREL_FIELDS, corr)
-    if base.get("classify_repeats"):
-        t["classify_repeats"] = (CLASSIFY_REPEAT_FIELDS, base["classify_repeats"])
-    for name, summarize, sname in (
-            ("strain_exclusion_runs", strain_exclusion_summary, "strain_exclusion_summary"),
-            ("fda_argos_runs", fda_argos_summary, "fda_argos_summary"),
-            ("cami_runs", cami_summary, "cami_summary"),
-            ("mock_runs", mock_summary, "mock_summary")):
+    build = aggregate(build_runs, BUILD_NAMES, ("library", "order"))
+    t["build"] = (prune_empty(build_field_order(), build, set(AGG_ID["build"])), build)
+    t["build_runs"] = (prune_empty(build_runs_field_order(), build_runs, set(BUILD_ID_FIELDS)), build_runs)
+    summ = aggregate(runs, SUMMARY_NAMES)
+    t["classify"] = (prune_empty(summary_field_order(), summ, set(AGG_ID["classify"])), summ)
+    t["classify_runs"] = (prune_empty(runs_field_order(), runs, set(RUN_ID_FIELDS)), runs)
+    for name, order_fn in (("profile", profile_field_order), ("vs_reference", vs_reference_field_order)):
         rows = base.get(name) or []
-        if not rows:
-            continue
-        sf, sr = summarize(rows)
-        if sr:
-            t[sname] = (sf, sr)
-        fields = []
-        for r in rows:
-            for k in r:
-                if k not in fields:
-                    fields.append(k)
-        t[name] = (fields, rows)
+        if rows:
+            t[name] = (prune_empty(order_fn(), rows, set(AGG_ID["classify"])), rows)
+    for sheet in ACCURACY_SHEETS.values():
+        detail = base.get(sheet) or []
+        if detail:
+            t[sheet] = (detail_fields(detail), detail)
     return t
 
 
 # ---------------------------------------------------------------------------
-# workbook assembly (+ charts)
+# workbook assembly
 # ---------------------------------------------------------------------------
 
 def _categories(sheet, fields):
-    if sheet in ("runs", "summary"):
+    if sheet in ("build", "build_runs", "classify", "classify_runs", "profile", "vs_reference"):
         return [field_category(f) for f in fields]
     if sheet == "orders":
         return [orders_category(f) for f in fields]
@@ -1189,263 +1320,92 @@ def _categories(sheet, fields):
         return ["library"] * len(fields)
     if sheet == "datasets":
         return ["dataset"] * len(fields)
-    if sheet == "vs_reference":
-        return [CAT_ID if f in ("library", "dataset", "order", "ref_order", "n_seeds") else CAT_VSREF for f in fields]
-    if sheet == "timing_correlation":
-        return [CAT_ID if f in ("library", "dataset", "metric", "n_orders") else "correlation" for f in fields]
-    if sheet == "classify_repeats":
-        return [CAT_ID if f != "class_s" else CAT_CLASSIFY for f in fields]
-    # detail accuracy sheets
-    ids = ("library", "dataset", "order", "seed_idx", "seed", "n_seeds", "context")
-    return [CAT_ID if f in ids else CAT_ACC for f in fields]
+    # accuracy_<dataset>
+    band = {"accuracy_strain_exclusion": BAND_READ, "accuracy_fda_argos": BAND_ARGOS,
+            "accuracy_cami": BAND_CAMI, "accuracy_mock": BAND_MOCK}.get(sheet, "accuracy detail")
+    return [CAT_ID if f in ("library", "dataset", "order", "n_seeds") else
+            "slice" if f in DETAIL_SLICE else band for f in fields]
 
 
-def sheet_spec(name, fields, rows, charts=None):
+def sheet_spec(name, fields, rows):
     spec = {"name": name, "fields": list(fields), "rows": rows,
-            "categories": _categories(name, fields), "charts": charts or []}
+            "categories": _categories(name, fields)}
     block = ()
     merge = ()
-    if name in ("runs", "summary", "vs_reference", "timing_correlation", "classify_repeats") \
-            or name.endswith("_runs") or name.endswith("_summary"):
+    if name in ("classify", "classify_runs", "profile", "vs_reference"):
         block = tuple(f for f in ("library", "dataset") if f in fields)
-        merge = tuple(f for f in ("library", "dataset", "order", "metric") if f in fields)
-        if name == "runs":
-            merge = tuple(f for f in ("library", "dataset", "order") if f in fields)
+        merge = tuple(f for f in ("library", "dataset", "order") if f in fields)
+    if name.startswith("accuracy_"):
+        # border between slices; library / dataset cells span the whole sheet block
+        slices = tuple(f for f in DETAIL_SLICE if f in fields)
+        block = ("library", "dataset") + slices
+        merge = ("library", "dataset") + slices
+        spec["merge_scope"] = {"library": ("library",), "dataset": ("library", "dataset")}
+    if name in ("build", "build_runs"):
+        block = ("library",)
+        merge = ("library", "order") if name == "build_runs" else ("library",)
     if name == "overview":
         block = ("sheet",)
         merge = ("sheet",)
         spec["wrap_fields"] = ["meaning"]
         spec["widths"] = {"sheet": 22, "category": 18, "column": 44, "meaning": 110}
-        spec["freeze_cols"] = 0
     if name in ("libraries", "datasets", "orders"):
-        spec["wrap_fields"] = [f for f in ("role", "fraction", "taxonomy", "sources", "truth", "provenance",
-                                           "query_sets_run", "orders_run", "description", "cli") if f in fields]
+        spec["wrap_fields"] = [f for f in ("role", "fraction", "taxonomy", "sources", "truth_detail", "scoring",
+                                           "provenance", "query_sets_run", "orders_run", "description", "cli")
+                               if f in fields]
         spec["widths"] = dict((f, w) for f, w in (
-            ("role", 40), ("fraction", 40), ("taxonomy", 30), ("sources", 38), ("truth", 48),
-            ("provenance", 52), ("query_sets_run", 28), ("orders_run", 36), ("description", 56),
-            ("cli", 52), ("path", 40), ("db_path", 40), ("run_root", 40)) if f in fields)
+            ("role", 40), ("fraction", 40), ("taxonomy", 30), ("sources", 38), ("truth_detail", 48),
+            ("scoring", 26), ("truth", 14), ("provenance", 52), ("query_sets_run", 28),
+            ("orders_run", 36), ("description", 56), ("cli", 52), ("path", 40), ("db_path", 40),
+            ("run_root", 40)) if f in fields)
     spec["block_fields"] = block
     spec["merge_fields"] = merge
-    if name == "summary":
+    if name in ("build", "classify", "profile"):
         spec["ratio_fields"] = dict(
             (f, METRIC_DIR[f[:-6]]) for f in fields if f.endswith("_ratio") and METRIC_DIR.get(f[:-6]))
-    if name in ("runs", "summary"):
-        spec["freeze_cols"] = 3
+    if name.startswith("accuracy_"):
+        spec["ratio_fields"] = dict(
+            (f, DETAIL_DIR[f[:-6]]) for f in fields if f.endswith("_ratio") and DETAIL_DIR.get(f[:-6]))
+    if name in ("build", "build_runs", "classify", "classify_runs", "profile", "vs_reference"):
+        spec["freeze_cols"] = 3 if name not in ("build", "build_runs") else 2
     return spec
 
 
-# ---- charts (column charts with mean +/- std error bars; scatter vs classify time)
-
-def _chart_num(v):
-    if v in ("", None):
-        return 0.0
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _orders_in(rows):
-    seen = []
-    for r in rows:
-        o = r.get("order") or ""
-        if o and o not in seen:
-            seen.append(o)
-    return sorted(seen, key=order_key)
-
-
-def _series(rows, orders, name, mean_key, std_key, match):
-    means, stds = [], []
-    for o in orders:
-        hit = None
-        for r in rows:
-            if (r.get("order") or "") != o:
-                continue
-            if all((r.get(k) if r.get(k) is not None else "") == v for k, v in match.items()):
-                hit = r
-                break
-        means.append(_chart_num(hit.get(mean_key) if hit else None))
-        stds.append(_chart_num(hit.get(std_key) if hit and std_key else None))
-    if not any(means) and not any(stds):
-        return None
-    return {"name": name, "means": means, "stds": stds}
-
-
-def _by_dataset(rows, orders, metrics, tag):
-    datasets = sorted(set(r.get("dataset") or "" for r in rows), key=dataset_key)
-    charts = []
-    for title, mk, sk in metrics:
-        series = [s for s in (_series(rows, orders, ds, mk, sk, {"dataset": ds}) for ds in datasets if ds) if s]
-        if series:
-            charts.append({"title": "%s %s" % (title, tag), "y_title": title, "cats": orders, "series": series})
-    return charts
-
-
-def _one_series(rows, orders, title, mk, sk, tag):
-    first_ds = None
-    for r in rows:
-        if r.get("dataset"):
-            first_ds = r["dataset"]
-            break
-    s = _series(rows, orders, title, mk, sk, {"dataset": first_ds} if first_ds else {})
-    if not s:
-        return None
-    return {"title": "%s %s" % (title, tag), "y_title": title, "cats": orders, "series": [s]}
-
-
-def _class_times(summary, datasets):
-    out = {}
-    for r in summary:
-        if r.get("dataset") in datasets and r["order"] not in out:
-            out[r["order"]] = (_chart_num(r.get("class_s_mean")), _chart_num(r.get("class_s_std")))
-    return out
-
-
-def _scatter(rows, orders, title, y_title, mk, sk, class_times, match):
-    series = []
-    for o in orders:
-        hit = None
-        for r in rows:
-            if (r.get("order") or "") == o and all((r.get(k) if r.get(k) is not None else "") == v for k, v in match.items()):
-                hit = r
-                break
-        xs = class_times.get(o)
-        if not hit or not xs:
-            continue
-        series.append({"name": o, "x": [xs[0]], "y": [_chart_num(hit.get(mk))], "stds": [_chart_num(hit.get(sk))]})
-    if not series:
-        return None
-    return {"type": "scatter", "title": title, "x_title": "Classify wall (s)", "y_title": y_title, "series": series}
-
-
-def summary_charts(summary):
-    charts = []
-    for lib in _dedupe(r["library"] for r in summary):
-        rows = [r for r in summary if r["library"] == lib]
-        orders = _orders_in(rows)
-        tag = "[%s]" % lib
-        for spec in (
-            _one_series(rows, orders, "Build wall (s)", "build_s_mean", "build_s_std", tag),
-            _one_series(rows, orders, "Build RSS (GB)", "build_gb_mean", "build_gb_std", tag),
-        ):
-            if spec:
-                charts.append(spec)
-        charts += _by_dataset(rows, orders, (("Classify wall (s)", "class_s_mean", "class_s_std"),
-                                             ("Classify RSS (GB)", "class_gb_mean", "class_gb_std")), tag)
-        fe = _series(rows, orders, "expected (random DNA)", "fac_expected_mean", "fac_expected_std", {"dataset": rows[0]["dataset"]})
-        fp = _series(rows, orders, "particular (library)", "fac_particular_mean", "fac_particular_std", {"dataset": rows[0]["dataset"]})
-        fac = [s for s in (fe, fp) if s]
-        if fac:
-            charts.append({"title": "Minimizer density factor " + tag, "y_title": "Density factor",
-                           "y_min": 1.0, "y_max": 2.1, "cats": orders, "series": fac})
-        charts += _by_dataset(rows, orders, (("Lookups / Mbp", "lookups_pm_mean", "lookups_pm_std"),), tag)
-        charts += _by_dataset(rows, orders, (("NextMinimizer (s)", "nextmin_s_mean", "nextmin_s_std"),), tag)
-        rk = _one_series(rows, orders, "Rank (ns)", "ns_per_minimizer_mean", "ns_per_minimizer_std", tag)
-        if rk:
-            charts.append(rk)
-    return charts
-
-
-def accuracy_charts(sheet, rows, summary):
-    charts = []
-    for lib in _dedupe(r["library"] for r in rows):
-        lrows = [r for r in rows if r["library"] == lib]
-        srows = [r for r in summary if r["library"] == lib]
-        orders = _orders_in(lrows)
-        tag = "[%s]" % lib
-        if sheet == "strain_exclusion_summary":
-            ct = _class_times(srows, ("strain-exclusion", "simulated", "labeled"))
-            slices = sorted(set((r.get("domain") or "", r.get("rank") or "") for r in lrows),
-                            key=lambda s: (DOMAIN_ORDER.get(s[0], 9), RANK_ORDER.get(s[1], 9), s))
-            for title, mk, sk in (("Sensitivity", "sensitivity_mean", "sensitivity_std"),
-                                  ("PPV", "ppv_mean", "ppv_std"), ("F1", "f1_mean", "f1_std")):
-                series = []
-                for dom, rank in slices:
-                    s = _series(lrows, orders, "%s / %s" % (dom, rank) if dom else rank, mk, sk,
-                                {"domain": dom, "rank": rank})
-                    if s:
-                        series.append(s)
-                if series:
-                    charts.append({"title": "%s %s" % (title, tag), "y_title": title, "cats": orders, "series": series})
-                sc = _scatter(lrows, orders, "%s vs classify time (all / genus) %s" % (title, tag), title,
-                              mk, sk, ct, {"domain": "all", "rank": "genus"})
-                if sc:
-                    charts.append(sc)
-        elif sheet == "fda_argos_summary":
-            ct = _class_times(srows, ("fda-argos", "argos"))
-            for title, mk, sk in (("Concordant", "concordant_mean", "concordant_std"),
-                                  ("Discordant", "discordant_mean", "discordant_std"),
-                                  ("Ancestor", "ancestor_mean", "ancestor_std"),
-                                  ("Unclassified", "unclassified_mean", "unclassified_std")):
-                s = _series(lrows, orders, title, mk, sk, {})
-                if s:
-                    charts.append({"title": "%s (fraction of fragments) %s" % (title, tag),
-                                   "y_title": "Fraction", "cats": orders, "series": [s]})
-                sc = _scatter(lrows, orders, "%s vs classify time %s" % (title, tag), title, mk, sk, ct, {})
-                if sc:
-                    charts.append(sc)
-        elif sheet == "cami_summary":
-            ct = _class_times(srows, ("cami",))
-            for title, mk, sk in (("Sensitivity", "sensitivity_mean", "sensitivity_std"),
-                                  ("PPV", "ppv_mean", "ppv_std"), ("F1", "f1_mean", "f1_std")):
-                series = [s for s in (_series(lrows, orders, "all / " + rk, mk, sk, {"group": "all", "rank": rk})
-                                      for rk in ("genus", "species")) if s]
-                if series:
-                    charts.append({"title": "CAMI %s (in-library reads) %s" % (title, tag),
-                                   "y_title": title, "cats": orders, "series": series})
-                sc = _scatter(lrows, orders, "CAMI %s vs classify time (all / genus) %s" % (title, tag), title,
-                              mk, sk, ct, {"group": "all", "rank": "genus"})
-                if sc:
-                    charts.append(sc)
-        elif sheet == "mock_summary":
-            ct = _class_times(srows, ("mock",))
-            head = [r for r in lrows if _chart_num(r.get("min_frac")) == MOCK_HEADLINE_MIN_FRAC]
-            for title, mk, sk in (("F1 (taxa)", "f1_mean", "f1_std"),
-                                  ("Bray-Curtis", "bray_curtis_mean", "bray_curtis_std"),
-                                  ("Off-target fraction", "off_target_frac_mean", "off_target_frac_std")):
-                series = []
-                for scope in ("all", "bacteria"):
-                    for rk in ("genus", "species"):
-                        s = _series(head, orders, "%s / %s" % (scope, rk), mk, sk, {"scope": scope, "rank": rk})
-                        if s:
-                            series.append(s)
-                if series:
-                    charts.append({"title": "Mock %s %s" % (title, tag), "y_title": title,
-                                   "cats": orders, "series": series})
-                sc = _scatter(head, orders, "Mock %s vs classify time (all / species) %s" % (title, tag), title,
-                              mk, sk, ct, {"scope": "all", "rank": "species"})
-                if sc:
-                    charts.append(sc)
-    return charts
-
-
 def build_sheet_specs(tables):
-    summary = tables["summary"][1] if "summary" in tables else []
-    specs = []
-    for name in ALL_SHEETS:
-        if name not in tables:
-            continue
-        fields, rows = tables[name]
-        charts = []
-        if name == "summary":
-            charts = summary_charts(rows)
-        elif name in ("strain_exclusion_summary", "fda_argos_summary", "cami_summary", "mock_summary"):
-            charts = accuracy_charts(name, rows, summary)
-        specs.append(sheet_spec(name, fields, rows, charts))
-    return specs
+    return [sheet_spec(name, tables[name][0], tables[name][1]) for name in SHEETS if name in tables]
 
 
 def write_outputs(tables, csv_dir, xlsx_path):
-    """kraken2_<sheet>.csv for every sheet in csv_dir + the workbook."""
+    """kraken2_<sheet>.csv for every sheet in csv_dir + the workbook; kraken2_*.csv
+    files of sheets that no longer exist (earlier layouts) are removed."""
     for name, (fields, rows) in tables.items():
         write_csv(os.path.join(csv_dir, PREFIX + name + ".csv"), fields, rows)
-    names = write_book(xlsx_path, build_sheet_specs(tables))
-    return names
+    keep = set(PREFIX + n + ".csv" for n in tables)
+    for f in os.listdir(csv_dir):
+        if f.startswith(PREFIX) and f.endswith(".csv") and f not in keep:
+            try:
+                os.remove(os.path.join(csv_dir, f))
+                print("removed stale table {}".format(f))
+            except OSError:
+                pass
+    return write_book(xlsx_path, build_sheet_specs(tables))
 
 
 # ---------------------------------------------------------------------------
 # entry points
 # ---------------------------------------------------------------------------
+
+# Pre-export-layout per-library CSV names (and binning leftovers) that this
+# layer replaces; removed from <run_root>/tables/ when the new tables are written.
+LEGACY_TABLES = (
+    "contents.csv", "query_sets.csv", "scheme_summary.csv", "per_seed.csv",
+    "vs_ref.csv", "vs_random.csv", "classify_repeats.csv",
+    "accuracy_strain_exclusion.csv", "accuracy_strain_exclusion_summary.csv",
+    "accuracy_fda_argos.csv", "accuracy_fda_argos_summary.csv",
+    "accuracy_cami.csv", "accuracy_cami_summary.csv",
+    "accuracy_mock.csv", "accuracy_mock_summary.csv",
+)
+
 
 def resolve_base_dir(run_root):
     """<base> of <base>/runs/<library> (derived from the path; KRAKEN2_BENCHMARK_DIR
@@ -1477,19 +1437,23 @@ def export_library(run_root, out_xlsx, library, per_seed_rows, acc_rows, dens_ro
     Returns (xlsx_path, tables_dir, tables)."""
     tables_dir = os.path.join(run_root, "tables")
     base_dir = resolve_base_dir(run_root)
-    runs, repeats = build_runs(library, per_seed_rows, acc_rows, dens_rows)
-    base = {"runs": runs, "classify_repeats": repeats}
-    for sheet, kind in DETAIL_KEYS.items():
-        base[sheet] = detail_rows(library, acc_rows.get(kind))[1]
-    base["orders"] = build_orders(library, run_root, runs, dens_rows)
-    base["datasets"] = decorate_datasets(query_rows, runs)
+    omap = order_map(per_seed_rows, acc_rows)
+    raw = build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root, omap)
+    runs = raw["classify_runs"]
+    base = {"classify_runs": runs, "build_runs": raw["build_runs"],
+            "profile": aggregate(raw["profile_raw"], PROFILE_NAMES),
+            "vs_reference": vs_reference_aggregate(raw["vs_reference_raw"]),
+            "orders": build_orders(library, run_root, runs, dens_rows, omap),
+            "datasets": decorate_datasets(query_rows, runs)}
+    for sheet, drows in detail_rows(library, acc_rows, omap).items():
+        base[sheet] = detail_aggregate(drows)
     cache = os.path.join(base_dir, "results", ".libraries_cache.json") if base_dir else None
     libs = build_libraries(base_dir, runs, cache) if base_dir else build_libraries_standalone(library, runs)
     libs = [r for r in libs if r["library"] == library]
     tables = derive_tables(base, libraries=libs)
     for old in _remove_legacy(tables_dir):
         print("removed legacy table {}".format(old))
-    names = write_outputs(tables, tables_dir, out_xlsx)
+    write_outputs(tables, tables_dir, out_xlsx)
     return out_xlsx, tables_dir, tables
 
 
@@ -1502,9 +1466,11 @@ def build_libraries_standalone(library, runs):
 
 
 def export_results(base_dir, quiet=False):
-    """Merge every <base>/runs/*/tables/kraken2_runs.csv into
+    """Merge every <base>/runs/*/tables/kraken2_classify_runs.csv into
     <base>/results/kraken2_results.xlsx + kraken2_*.csv. Returns (xlsx, csv_dir,
-    n_libraries) or None when no library has been exported yet."""
+    n_libraries) or None when no library has been exported yet. A library whose
+    tables come from an earlier layout (no classify_wall_s column) is skipped
+    until it is exported again."""
     runs_dir = os.path.join(base_dir, "runs")
     if not os.path.isdir(runs_dir):
         return None
@@ -1512,7 +1478,27 @@ def export_results(base_dir, quiet=False):
     libs_found = []
     for lib in sorted(os.listdir(runs_dir), key=library_key):
         tdir = os.path.join(runs_dir, lib, "tables")
-        if not os.path.isfile(os.path.join(tdir, PREFIX + "runs.csv")):
+        fields, _rows = read_csv(os.path.join(tdir, PREFIX + "classify_runs.csv"))
+        if not fields:
+            # previous layout: sheets `summary` / `runs` (kraken2_runs.csv) -> old layout, skipped
+            if os.path.isfile(os.path.join(tdir, PREFIX + "runs.csv")):
+                print("skipping {}: tables from an earlier layout (summary / runs sheets), "
+                      "re-run compare_benchmark.py".format(lib), file=sys.stderr)
+            continue
+        if os.path.isfile(os.path.join(tdir, PREFIX + "accuracy_detail.csv")):
+            # layout with one accuracy_detail sheet and long order names
+            print("skipping {}: tables from an earlier layout (accuracy_detail sheet), "
+                  "re-run compare_benchmark.py".format(lib), file=sys.stderr)
+            continue
+        stale = [n for n in ACCURACY_SHEETS.values()
+                 if "seed_idx" in read_csv(os.path.join(tdir, PREFIX + n + ".csv"))[0]]
+        if stale:
+            print("skipping {}: tables from an earlier layout (per-seed {} sheets), "
+                  "re-run compare_benchmark.py".format(lib, stale[0]), file=sys.stderr)
+            continue
+        if "classify_wall_s" not in fields:
+            print("skipping {}: tables from an earlier layout, re-run compare_benchmark.py".format(lib),
+                  file=sys.stderr)
             continue
         libs_found.append(lib)
         for sheet in BASE_SHEETS:
@@ -1522,17 +1508,16 @@ def export_results(base_dir, quiet=False):
     if not libs_found:
         return None
     base = {}
-    for sheet in ("runs", "classify_repeats", "strain_exclusion_runs", "fda_argos_runs",
-                  "cami_runs", "mock_runs"):
+    for sheet in ("build_runs", "classify_runs", "profile", "vs_reference") + tuple(ACCURACY_SHEETS.values()):
         rows = [r for part in parts[sheet] for r in part]
-        if sheet == "runs":
+        if sheet in ("build_runs", "classify_runs"):
             rows.sort(key=_run_sort_key)
         base[sheet] = rows
     base["orders"] = merge_orders(parts["orders"])
     base["datasets"] = merge_datasets(parts["datasets"])
     results = os.path.join(base_dir, "results")
     tables = derive_tables(base, base_dir=base_dir,
-                           libraries=build_libraries(base_dir, base["runs"],
+                           libraries=build_libraries(base_dir, base["classify_runs"],
                                                      os.path.join(results, ".libraries_cache.json")))
     write_outputs(tables, results, os.path.join(results, WORKBOOK))
     return os.path.join(results, WORKBOOK), results, len(libs_found)
@@ -1545,7 +1530,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     res = export_results(args.base_dir)
     if not res:
-        print("no runs/*/tables/kraken2_runs.csv under {}".format(args.base_dir), file=sys.stderr)
+        print("no runs/*/tables/kraken2_classify_runs.csv under {}".format(args.base_dir), file=sys.stderr)
         return 1
     print("wrote {} ({} libraries) and kraken2_*.csv under {}".format(res[0], res[2], res[1]))
     return 0

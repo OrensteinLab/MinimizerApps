@@ -11,6 +11,9 @@ A sheet is a dict:
   rows        list of dicts (or lists) keyed by field
   categories  optional list, one category label per field (band + header fill)
   merge_fields  fields merged vertically inside a block (identical values)
+  merge_scope   optional {field: [fields]}: merge that field across runs of rows
+                that agree on those fields instead of inside a block (so a
+                library / dataset cell can span several bordered blocks)
   block_fields  fields whose change starts a new block (border after each
                 block; merges never cross a block). Default: no blocks.
   ratio_fields  {field: "lower" | "higher"} colour scale; "lower" = below 1
@@ -18,7 +21,6 @@ A sheet is a dict:
   widths      {field: column width in characters} (default: from content)
   wrap_fields fields with wrapped text (long prose columns)
   freeze_cols number of leading columns to freeze (default 0)
-  charts      list of chart specs (see xlsx_charts.py), placed below the table
 
 Numbers are written as numbers, None / "" / NaN / inf as blank cells. Python
 3.6 compatible.
@@ -31,7 +33,6 @@ import os
 import re
 import zipfile
 
-from xlsx_charts import chart_xml, drawing_anchor_xml, CT_CHART, CT_DRAW
 from xlsx_util import col_letter, root_rels_xml, xml_escape
 
 HEADER_ROW = 2
@@ -53,7 +54,13 @@ CATEGORY_FILLS = {
     "build": "FFDDEBF7",
     "classify": "FFE2EFDA",
     "density": "FFFFF2CC",
-    "nextminimizer": "FFFCE4D6",
+    "profile": "FFFCE4D6",
+    "accuracy: simulated reads, read-level truth (strain-exclusion; cami: library-aware)": "FFE2EFDA",
+    "accuracy: cami (library-aware)": "FFD0E0E3",
+    "accuracy: fda-argos (real, genus concordance)": "FFE4DFEC",
+    "accuracy: mock (real, known composition)": "FFEAD1DC",
+    "slice": "FFE7E6E6",
+    "accuracy detail": "FFE2EFDA",
     "vs reference": "FFEDEDED",
     "accuracy": "FFE4DFEC",
     "expected (theoretical)": "FFFFF2CC",
@@ -249,7 +256,7 @@ def _color_scales(fields, rows, ratio_fields, last_row):
     return "".join(parts)
 
 
-def _sheet_xml(sheet, styles, cat_fill, drawing_rid):
+def _sheet_xml(sheet, styles, cat_fill):
     fields = list(sheet["fields"])
     rows = [r if isinstance(r, dict) else dict(zip(fields, r)) for r in sheet["rows"]]
     cats = sheet.get("categories") or [""] * len(fields)
@@ -315,6 +322,24 @@ def _sheet_xml(sheet, styles, cat_fill, drawing_rid):
         block_ids.append(cur)
     last_in_block = set(k for k in range(n)
                         if k == n - 1 or block_ids[k] != block_ids[k + 1])
+    scope_cache = {}
+
+    def ids_for(f):
+        scope = (sheet.get("merge_scope") or {}).get(f)
+        if not scope:
+            return block_ids
+        key = tuple(scope)
+        if key not in scope_cache:
+            ids, c0, p0 = [], -1, None
+            for k2, r2 in enumerate(rows):
+                b2 = tuple(_mergekey(r2.get(x)) for x in key)
+                if k2 == 0 or b2 != p0:
+                    c0 += 1
+                    p0 = b2
+                ids.append(c0)
+            scope_cache[key] = ids
+        return scope_cache[key]
+
     # vertical merge plan
     skip = set()
     anchor = set()
@@ -323,9 +348,10 @@ def _sheet_xml(sheet, styles, cat_fill, drawing_rid):
             if f not in merge_fields:
                 continue
             c = fields.index(f)
+            ids = ids_for(f)
             start = 0
             for k in range(1, n + 1):
-                same = (k < n and block_ids[k] == block_ids[start]
+                same = (k < n and ids[k] == ids[start]
                         and _mergekey(rows[k].get(f)) == _mergekey(rows[start].get(f))
                         and _mergekey(rows[start].get(f)) is not None)
                 if same:
@@ -361,8 +387,6 @@ def _sheet_xml(sheet, styles, cat_fill, drawing_rid):
             len(merges), "".join('<mergeCell ref="%s"/>' % m for m in merges)))
     if ratio_fields and rows:
         out.append(_color_scales(fields, rows, ratio_fields, DATA_START_ROW + n - 1))
-    if drawing_rid:
-        out.append('<drawing r:id="%s"/>' % drawing_rid)
     out.append("</worksheet>")
     return "\n".join(out)
 
@@ -393,8 +417,6 @@ def write_book(path, sheets):
     ]
     wb_sheets = []
     rels = ['<Relationship Id="rIdStyles" Type="%s/styles" Target="styles.xml"/>' % _NS_REL]
-    chart_seq = 0
-    drawing_seq = 0
     for i, sh in enumerate(sheets, 1):
         name = sanitize_sheet_name(sh["name"], used)
         names.append(name)
@@ -402,30 +424,7 @@ def write_book(path, sheets):
         rels.append('<Relationship Id="rIdSheet%d" Type="%s/worksheet" Target="worksheets/sheet%d.xml"/>'
                     % (i, _NS_REL, i))
         overrides.append('<Override PartName="/xl/worksheets/sheet%d.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' % i)
-        charts = sh.get("charts") or []
-        drawing_rid = None
-        if charts:
-            drawing_seq += 1
-            drawing_rid = "rId1"
-            drels = []
-            rids = []
-            for j, spec in enumerate(charts, 1):
-                chart_seq += 1
-                parts.append(("xl/charts/chart%d.xml" % chart_seq, chart_xml(spec)))
-                overrides.append('<Override PartName="/xl/charts/chart%d.xml" ContentType="%s"/>' % (chart_seq, CT_CHART))
-                drels.append('<Relationship Id="rId%d" Type="%s/chart" Target="../charts/chart%d.xml"/>' % (j, _NS_REL, chart_seq))
-                rids.append("rId%d" % j)
-            start_row = DATA_START_ROW + len(sh["rows"]) + 2
-            parts.append(("xl/drawings/drawing%d.xml" % drawing_seq, drawing_anchor_xml(start_row, rids)))
-            parts.append(("xl/drawings/_rels/drawing%d.xml.rels" % drawing_seq,
-                          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                          '<Relationships xmlns="%s">%s</Relationships>' % (_NS_PKG, "".join(drels))))
-            parts.append(("xl/worksheets/_rels/sheet%d.xml.rels" % i,
-                          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                          '<Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/drawing" '
-                          'Target="../drawings/drawing%d.xml"/></Relationships>' % (_NS_PKG, _NS_REL, drawing_seq)))
-            overrides.append('<Override PartName="/xl/drawings/drawing%d.xml" ContentType="%s"/>' % (drawing_seq, CT_DRAW))
-        parts.append(("xl/worksheets/sheet%d.xml" % i, _sheet_xml(sh, styles, cat_fill, drawing_rid)))
+        parts.append(("xl/worksheets/sheet%d.xml" % i, _sheet_xml(sh, styles, cat_fill)))
 
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
