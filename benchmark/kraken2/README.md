@@ -256,35 +256,72 @@ results/                             # all libraries merged
   kraken2_<sheet>.csv
 ```
 
-- **Results workbook** (same layout as the sshash / kmc apps: `export_layout.py`,
-  helpers in `../common/xlsx_book.py`). Each `compare_benchmark.py` call (the
-  one at the end of `run_benchmark.sh`, or `-c`) writes this library's
-  `kraken2_<sheet>.csv` under `runs/<id>/tables/` plus
-  `runs/<id>/benchmark_comparison.xlsx`, then merges every library that has
-  been exported into `<base>/results/kraken2_results.xlsx` and
-  `<base>/results/kraken2_<sheet>.csv` (also runnable alone:
-  `python3 benchmark/kraken2/export_layout.py --base-dir <base>`). One CSV per
-  sheet, same rows and columns as the sheet. Sheets, in order:
+- **Results workbook** (same layout and column naming as the sshash / kmc apps:
+  `export_layout.py`, writer in `../common/xlsx_book.py`; no charts, the PNGs in
+  `figures/` are separate). Each `compare_benchmark.py` call (the one at the end
+  of `run_benchmark.sh`, or `-c`) writes this library's `kraken2_<sheet>.csv`
+  under `runs/<id>/tables/` plus `runs/<id>/benchmark_comparison.xlsx`, then
+  merges every library that has been exported into
+  `<base>/results/kraken2_results.xlsx` and `<base>/results/kraken2_<sheet>.csv`
+  (also runnable alone: `python3 benchmark/kraken2/export_layout.py --base-dir
+  <base>`). One CSV per sheet, same rows and columns as the sheet. Column names:
+  the raw value carries its unit (`build_wall_s`, `classify_max_rss_gb`,
+  `classified_pct`, `lookups_per_mbp`); the aggregated sheets add
+  `<metric>_mean`, `<metric>_std` and, for metrics with a direction,
+  `<metric>_ratio` = mean / the Random mean of the same library (and dataset),
+  coloured green = better, red = worse. Sheets, in order:
 
   | Sheet | Rows |
   |---|---|
   | `overview` | column reference: what every sheet and column means, by category |
   | `libraries` | one per Kraken library: sequences, taxa, FASTA GB, role, query sets and orders run |
-  | `datasets` | one per query set: reads, read length, truth type, provenance, libraries |
-  | `orders` | one per scheme/order: CLI, l / k / w, spaced seed, expected and per-library particular density factor |
-  | `summary` | library × dataset × order: mean / std over seeds (std rounded to ≥ 4 significant digits) and `_ratio` to Random of the same library and dataset (green = better, red = worse); build, classify, density, NextMinimizer, vs-Random agreement and the headline accuracy of the dataset (`se_*` strain-exclusion, `argos_*`, `cami_*`, `mock_*`) |
-  | `runs` | one per seed × library × dataset × order: the raw per-run numbers (library / dataset / order cells merged, a border after each library × dataset block) |
-  | `vs_reference` | paired agreement with Random (MAPE, concordance, Jaccard, new classified / unclassified) |
-  | `timing_correlation` | Pearson r over orders of density factor vs build / classify time and RSS |
-  | `classify_repeats` | every timed classify repeat |
-  | `strain_exclusion_summary` / `_runs`, `fda_argos_summary` / `_runs`, `cami_summary` / `_runs`, `mock_summary` / `_runs` | accuracy detail (domain × rank, per-SRR, per group, per detection threshold); the `_summary` sheets carry the charts (metric vs scheme, metric vs classify time), `summary` carries the timing / density charts, per library |
+  | `datasets` | one per query set: reads, read length, `truth` (simulated / real), `scoring`, provenance, libraries |
+  | `orders` | one per scheme/order: CLI, density factors (`expected_density_factor_mean/_std`, and per library `<library>_particular_density_factor_mean/_std`; also on `build`), `gm_table` (`w5_k15_canonical` / `w5_k6_canonical`), l / k / w, spaced seed. Orders are shown by short name (`GreedyMini`, `ModGreedyMini`; the table is in `gm_table`) |
+  | `build` | library × order, mean / std / ratio over seeds: `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `particular_density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
+  | `build_runs` | the per-seed rows behind `build` (same split as `summary` / `runs` in the sshash / kmc apps); last column `build_measured` = provenance of the build numbers (see below) |
+  | `classify` | library × dataset × order, classify phase only: `classify_wall_s`, `classify_max_rss_gb`, `classify_mreads_per_min`, `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
+  | `classify_runs` | one per seed × library × dataset × order, the rows behind `classify`: the raw classify numbers (with the std and count of the timed repeats) |
+  | `profile` | NextMinimizer / phase profile (`nextminimizer_*`, `lookups_per_mbp`, `scan_s`, ...; needs `ENABLE_MINIMIZER_PROF=1`), library × dataset × order, mean / std / ratio |
+  | `vs_reference` | paired agreement with Random of the same seed (`genus_mape_pct`, `concordance_pct`, `jaccard_pct`, ...), mean / std |
+  | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami`, `accuracy_mock` | accuracy of that dataset per slice (domain × rank / SRA run / group / detection threshold): one row per order, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to Random of the same slice; sorted by slice then order, slice cells merged, border between slices. Higher-is-better ratios: sensitivity, ppv, f1, concordant, taxa precision / recall / F1; lower: discordant, bray_curtis, l1_distance, off_target; neutral (no ratio): ancestor, unclassified, excluded, classified / above-rank fractions, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics.tsv`). Omitted when the dataset did not run |
 
-  Detail sheets appear only for the query sets that ran. These replace the
-  former `tables/{contents,query_sets,scheme_summary,per_seed,vs_ref,
-  classify_repeats,accuracy_*}.csv` and the numbered `0 contents` … `11 mock
-  per seed` tabs; `compare_benchmark.py` deletes those legacy CSV names from
-  `tables/` when it writes the new ones. `tables/density_per_seed.csv` /
-  `minimizer_density.csv` (density microbenchmark) are inputs and are kept.
+  Accuracy columns have no dataset prefix because each `classify` / `classify_runs` row is
+  one dataset. The kinds differ and are not comparable across datasets (never
+  averaged): strain-exclusion and CAMI share the read-level names
+  `genus_` / `species_` `sensitivity` / `ppv` / `f1` (CAMI over reads whose taxon
+  is in the library, plus `*_excluded_fraction`); FDA-ARGOS has
+  `genus_{concordant,discordant,ancestor,unclassified}_fraction`; the mock has the
+  taxa-level `genus_` / `species_` `taxa_f1`, `bray_curtis`, `off_target_fraction`
+  (`taxa_f1`, not `f1`, since it is a taxa-detection F1). A row fills only its
+  own dataset's column group; columns no row uses are dropped. Neutral columns
+  without ratio: `classified_pct`, `genus_ancestor_fraction`,
+  `genus_unclassified_fraction`, `*_excluded_fraction`, the profile counts and
+  path split. Tables from earlier layouts (`tables/{contents,query_sets,
+  scheme_summary,per_seed,vs_ref,vs_random,classify_repeats,accuracy_*}.csv`,
+  and `kraken2_*` CSVs of dropped sheets) are deleted when the new ones are
+  written; `tables/density_per_seed.csv` / `minimizer_density.csv` (density
+  microbenchmark) are inputs and are kept. A library whose tables predate this
+  layout is skipped by the merge until it is exported again; that includes a
+  library exported with the previous sheet names (`kraken2_summary.csv` /
+  `kraken2_runs.csv`, now `kraken2_classify.csv` / `kraken2_classify_runs.csv`:
+  the merge sees no `kraken2_classify_runs.csv`, prints a notice and skips it).
+  Only libraries that have runs are listed (`libraries`, `datasets`, every sheet):
+  `db/<id>` directories without runs (e.g. the standard libraries) never appear.
+- **One unified benchmark dir, several invocations.** Run
+  `run_benchmark.sh -E -S <schemes> ...` several times into the same `-o` dir
+  (e.g. `-S Random GreedyMini`, then `-S RandomPcg ModRandom ModGreedyMini`): an
+  invocation replaces only the `.benchmark_run_manifest` lines of ITS schemes
+  (other schemes' lines and `classify_round_tables.txt` are kept), so the final
+  `compare_benchmark.py` / merged workbook cover every order. A scheme/seed whose
+  `runs/<lib>/<scheme>/<seed>/db/hash.k2d` exists is not rebuilt, only classified
+  (`db/` may be a directory of symlinks to a database built elsewhere, with
+  `results/build_performance.txt` copied next to it). Such a taken-over build
+  carries `results/build_measured.txt` (one line, e.g. `previous session
+  (2026-08-18 build; ...)`); it is shown in `build_measured` of `build` /
+  `build_runs` (`this run` otherwise). Build times / RSS of a taken-over build were
+  measured in an earlier session on a differently loaded host and with older
+  binaries, so `build_wall_s` is NOT strictly comparable across `build_measured`
+  values; classify times are always from the same pass.
 - `figures/` — histograms prefixed `strain-exclusion_` / `fda-argos_` / `cami_` / `mock_` when those
   sets ran; `fda-argos_genus_concordance.png` is the four Table S5 percentages
 
@@ -331,24 +368,51 @@ GreedyMini tables (`../../orders/GreedyMini/`): `-g` / `GM_FILE` (`w5_k15_canoni
 | `benchmark_minimizers.sh` | density microbench (CSV) |
 | `density_sweep.sh` / `density_summary.py` | density factor vs ℓ over several random streams (calls `benchmark_minimizers`), mean ± std table |
 
-## Minimizer density (`benchmark_minimizers.sh`)
+## Density microbench (`benchmark_minimizers.sh`)
 
-Density microbench uses NCBI FASTAs, not query reads. Default `db/standard` →
-`runs/standard`; `-m` / `-z` match `standard_p10` / `standard_p0.5`. Writes
-`tables/minimizer_density.csv`.
+Measures the minimizer density of every scheme at the benchmark's own
+configuration (ℓ = 31, k = 35 so w = 5, minimizer spaces s = 7, GreedyMini table
+`-g`, same as the built databases) and the `NextMinimizer` cost. Two densities:
 
-Per scheme:
+- **expected** (`dens_expected`, `fac_expected`) — random i.i.d. ACGT of
+  `-N` bases (default 100 Mbp in the script; the tool is Monte Carlo, so it varies
+  slightly with the RNG seed `--seed`);
+- **particular** (`dens_particular`, `fac_particular`) — the library FASTAs of
+  the shared DB (`db/<lib>/library/**/*.f{na,a,asta}`), read in full (8.7 GB, ~9.3
+  Gbp for `strain_exclusion`), no sampling;
+- `fac_* = dens_* × (w+1)` (random minimizer ⇒ 2), `dens_theory` is
+  `2/(w+1)` (Minimizer) / `1/w` (Mod); `ns_per_minimizer`, super-mer lengths
+  `sm_mean_*` / `sm_max_*`.
 
-- `dens_theory` — Minimizer `2/(w+1)`, Mod `1/w`
-- `dens_expected` — i.i.d. random DNA
-- `dens_particular` — library FASTAs
-- `fac_* = dens_* × (w+1)` — density factor
-- `ns/minimizer`, super-mer `sm_mean` / `sm_max` (identical-key run lengths)
+**Per seed.** Seed *i* uses the toggle mask `DEFAULT_SEEDS[i-1]`
+(`bench_const.py`, bit string converted to `0x…`, the value `k2 build
+--toggle-mask` gets), passed as `-T` with `--seed-idx i`. One row per scheme and
+seed goes into `runs/<lib>/tables/minimizer_density.csv` (columns `scheme,
+seed_idx, toggle_hex, l, k, w, spaces, dens_*, fac_*, ns_per_minimizer, sm_*`).
+Re-running replaces the rows of the same scheme + seed and keeps the rest; a
+scheme/seed whose row (same toggle, ℓ, k, s) exists is skipped unless `-f`.
+Cost: ~8 min per (seed, all schemes) with `-j 2` on the 9 Gbp library, dominated
+by the particular pass. `ns_per_minimizer` is a single-thread micro-timing: run
+on an idle machine for comparable numbers.
+
+**In the pipeline.** `run_benchmark.sh` runs it after the builds of all seeds
+(and also with `-c`), for the same `-S` schemes, `-n` seeds, GM tables and library
+as the run, writing the log to `runs/<lib>/density_microbench.log`; `-D` skips it
+(`DENSITY_JOBS` sets `-j`, default 0 = all cores). `compare_benchmark.py` then
+reads the CSV (`load_density_rows`) into the `build` sheet. The binary must exist:
+`make -C kraken2/src benchmark_minimizers` (otherwise a warning, no density).
 
 ```bash
 make -C kraken2/src benchmark_minimizers
-./benchmark/kraken2/benchmark_minimizers.sh -m -S Random ModRandom
+# all seeds of a run, e.g. the strain-exclusion library (-m / -z / default: other libraries)
+./benchmark/kraken2/benchmark_minimizers.sh -o "$KRAKEN2_BENCHMARK_DIR" -E \
+    -S Random GreedyMini -n 5 -j 2
+./benchmark/kraken2/benchmark_minimizers.sh -E -S Random -n 5 -f   # redo
+./benchmark/kraken2/benchmark_minimizers.sh -m -S Random ModRandom -T 0xe37e28c4271b5a2d  # one toggle, seed_idx 0
 ```
+
+(`-N` here is the random-DNA length, not the full-NCBI library flag; the default
+library is `db/standard`, `-m` / `-z` / `-E` pick the others, or set `SHARED_DB`.)
 
 Density **sweeps** over ℓ and streams (mean ± std per ℓ, old vs new revision,
 `Random` baselines) use the same tool through `density_sweep.sh` +

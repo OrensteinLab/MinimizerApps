@@ -54,6 +54,8 @@ SCHEME=""
 SKIP_CAMI="${SKIP_CAMI:-0}"
 SKIP_MOCK="${SKIP_MOCK:-0}"
 EXTRA_SETS="${EXTRA_SETS:-0}"
+SKIP_DENSITY="${SKIP_DENSITY:-0}"
+DENSITY_JOBS="${DENSITY_JOBS:-0}"   # benchmark_minimizers -j (0 = all cores)
 COMPARE_ONLY="${COMPARE_ONLY:-0}"
 
 N_SEEDS="${N_SEEDS:-5}"
@@ -94,6 +96,12 @@ $(bench_common_options_help)
   -K            Skip the mock-community query set (data/mock)
   -Q            With -m/-z/-N also classify data/cami and data/mock
                 (default for them: speed set only; -E always includes them)
+  -D            Skip the density microbench (benchmark_minimizers.sh). By default
+                it runs after the builds for every -S scheme x seed 1..N that has
+                no row yet in runs/<lib>/tables/minimizer_density.csv (density
+                factor on random DNA and on the library FASTAs, same toggle as
+                the seed's databases); DENSITY_JOBS sets its -j (default 0 = all
+                cores)
   -c            Compare only (existing results + manifest; also plots).
                 Reuses -m/-z/-N/-E when given; otherwise auto-detects a single
                 tree under runs/ that has a manifest
@@ -102,7 +110,7 @@ EOF
     exit 0
 }
 
-while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATCKQh-" opt; do
+while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATCKQDh-" opt; do
     case "${opt}" in
         S)
             bench_handle_S_opt "$@"
@@ -116,6 +124,7 @@ while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATCKQh-" opt; do
         C) SKIP_CAMI=1 ;;
         K) SKIP_MOCK=1 ;;
         Q) EXTRA_SETS=1 ;;
+        D) SKIP_DENSITY=1 ;;
         A) : ;; # ARGOS on by default in paper mode (compat with old run_eval.sh -A)
         T) : ;; # seed list already includes the paper toggle (old run_eval.sh -T)
         h) show_help ;;
@@ -738,8 +747,29 @@ run_seed_with_schemes() {
 
 run_all_scheme_benchmarks() {
     mkdir -p "${RUN_ROOT}"
-    : > "${RUN_MANIFEST}"
-    : > "${ROUND_TABLES}"
+    # Several invocations may share one run root (e.g. -S Random GreedyMini first,
+    # later -S RandomPcg ModRandom ModGreedyMini): only the manifest lines of the
+    # schemes of THIS invocation are replaced; other schemes' lines (and the
+    # round tables they wrote) stay, so compare reads all orders of the library.
+    local keep_other=0
+    if [[ -s "${RUN_MANIFEST}" ]]; then
+        local tmp_manifest="${RUN_MANIFEST}.tmp.$$" sch
+        local -a names=()
+        for sch in "${DEFAULT_SCHEMES[@]}"; do
+            configure_scheme "${sch}" || exit 1
+            names+=("${SCHEME}")
+        done
+        awk -F'\t' -v names="$(IFS=,; echo "${names[*]}")" \
+            'BEGIN { n = split(names, a, ","); for (i = 1; i <= n; i++) drop[a[i]] = 1 }
+             !($1 in drop)' "${RUN_MANIFEST}" > "${tmp_manifest}"
+        mv -f "${tmp_manifest}" "${RUN_MANIFEST}"
+        if [[ -s "${RUN_MANIFEST}" ]]; then keep_other=1; fi
+    else
+        : > "${RUN_MANIFEST}"
+    fi
+    if [[ "${keep_other}" -eq 0 ]]; then
+        : > "${ROUND_TABLES}"
+    fi
     local idx fail=0
     for ((idx = 1; idx <= N_SEEDS; idx++)); do
         run_seed_with_schemes "${idx}" || fail=1
@@ -769,6 +799,34 @@ compare_results() {
         --out "${SUMMARY_FILE}"
 }
 
+# Density microbench (expected = random DNA, particular = the library FASTAs
+# SHARED_DB) per seed with the seed's toggle; fills only the (scheme, seed)
+# rows missing from ${RUN_ROOT}/tables/minimizer_density.csv, which
+# compare_benchmark.py reads. Failures warn and never abort the benchmark.
+run_density() {
+    if [[ "${SKIP_DENSITY}" -eq 1 ]]; then
+        echo "[*] Density microbench skipped (-D)."
+        return 0
+    fi
+    local script="${SCRIPT_DIR}/benchmark_minimizers.sh"
+    local bin="${CODEBASE}/src/benchmark_minimizers"
+    if [[ ! -x "${bin}" ]]; then
+        echo "Warning: missing ${bin}; density microbench skipped (make -C kraken2/src benchmark_minimizers)." >&2
+        return 0
+    fi
+    echo ""
+    echo "[*] Density microbench (${LIB_ID}; library ${SHARED_DB})..."
+    if ! SHARED_DB="${SHARED_DB}" OUT_FILE="${RUN_ROOT}/tables/minimizer_density.csv" \
+        bash "${script}" -o "${BASE_DIR}" -S "${DEFAULT_SCHEMES[@]}" \
+        -n "${N_SEEDS}" -j "${DENSITY_JOBS}" \
+        -g "${GM_FILE}" -G "${GM_DNA_FILE}" -M "${MOD_GM_FILE}" \
+        > "${RUN_ROOT}/density_microbench.log" 2>&1; then
+        echo "Warning: density microbench failed; see ${RUN_ROOT}/density_microbench.log" >&2
+        return 0
+    fi
+    grep '^\[\*\] seed' "${RUN_ROOT}/density_microbench.log" || true
+}
+
 plot_histograms() {
     local plot_py="${SCRIPT_DIR}/plot_benchmark_histograms.py"
     if [[ ! -f "${plot_py}" ]]; then
@@ -788,6 +846,7 @@ plot_histograms() {
 
 if [[ "${COMPARE_ONLY}" -eq 1 ]]; then
     resolve_compare_run_root
+    run_density
     compare_results
     plot_histograms
     echo ""
@@ -800,6 +859,7 @@ fi
 
 initialize_shared_environment
 run_all_scheme_benchmarks
+run_density
 compare_results
 plot_histograms
 
