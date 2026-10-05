@@ -53,7 +53,6 @@ int main(int argc, char **argv) {
   opts.deterministic_build = true;
   opts.sketching_scheme = SketchingScheme::MINIMIZER;
   opts.order = Order::RANDOM_XOR;
-  opts.gm_alphabet = GmAlphabet::BINARY;
   ParseCommandLine(argc, argv, opts);
 
   // Load GreedyMini rank table once (cached); embed as gm.k2d for classify.
@@ -63,7 +62,7 @@ int main(int argc, char **argv) {
       errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
     try {
       opts.gm_table = MinimizerScanner::shared_gm_table(
-          opts.greedy_mini_filename, opts.gm_alphabet);
+          opts.greedy_mini_filename);
     } catch (const std::exception &ex) {
       errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
     }
@@ -72,8 +71,6 @@ int main(int argc, char **argv) {
            opts.greedy_mini_filename.c_str());
     gm_k = opts.gm_table->gm_k();
     if (opts.sketching_scheme == SketchingScheme::MOD) {
-      if (opts.gm_table->alphabet() != GmAlphabet::BINARY)
-        errx(EX_DATAERR, "MOD+GM requires BINARY alphabet table (e.g. w5_k6_canonical)");
       const int t = ModSampler::kDefaultR +
                     (((int)opts.l - ModSampler::kDefaultR) %
                      ((int)opts.k - (int)opts.l + 1));
@@ -82,17 +79,14 @@ int main(int argc, char **argv) {
     } else if (gm_k > (int)opts.l) {
       errx(EX_DATAERR, "GreedyMini k_gm=%d exceeds minimizer l=%d", gm_k,
            (int)opts.l);
-    } else if (opts.gm_table->alphabet() == GmAlphabet::BINARY &&
-               !opts.input_is_protein && gm_k < (int)opts.l &&
+    } else if (!opts.input_is_protein && gm_k < (int)opts.l &&
                (((int)opts.l - gm_k) & 1) != 0) {
       errx(EX_DATAERR,
            "GreedyMini centre extension needs l - k_gm even (l=%d, k_gm=%d); "
            "valid l: %d, %d, ... (max 31)",
            (int)opts.l, gm_k, gm_k, gm_k + 2);
     }
-    std::cerr << "Loaded GreedyMini rank table: alphabet="
-              << gm_alphabet_name(opts.gm_alphabet)
-              << ", k_gm=" << gm_k
+    std::cerr << "Loaded GreedyMini rank table: k_gm=" << gm_k
               << ", UHS=" << opts.gm_table->uhs_size()
               << "/" << opts.gm_table->size()
               << "  sketching=" << sketching_scheme_name(opts.sketching_scheme)
@@ -148,7 +142,6 @@ int main(int argc, char **argv) {
   index_opts.revcom_version = CURRENT_REVCOM_VERSION;
   index_opts.db_type = 0;
   EncodeIndexSchemes(index_opts, opts.sketching_scheme, opts.order);
-  index_opts.gm_alphabet = (uint8_t)opts.gm_alphabet;
   index_opts.gm_k = (uint16_t)gm_k;
   index_opts.gm_num_entries = opts.gm_table ? (uint64_t)opts.gm_table->size() : 0;
   ofstream opts_fs(opts.options_filename);
@@ -235,7 +228,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:a:s:O:")) != -1) {
+  while ((opt = getopt(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:s:O:")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -346,13 +339,6 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
       case 'G':
         opts.greedy_mini_filename = optarg;
         break;
-      case 'a':
-        try {
-          opts.gm_alphabet = parse_gm_alphabet(optarg);
-        } catch (const std::exception &ex) {
-          errx(EX_USAGE, "%s", ex.what());
-        }
-        break;
     }
   }
 
@@ -410,7 +396,6 @@ void usage(int exit_code) {
        << "  -C INT        CHT cell size (default: 32)\n"
        << "  -s STRING     Sketching: Minimizer (default), Mod\n"
        << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg\n"
-       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order\n"
-       << "  -a STRING     GreedyMini alphabet: binary (default), dna\n";
+       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order\n";
   exit(exit_code);
 }

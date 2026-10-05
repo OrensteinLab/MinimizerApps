@@ -110,7 +110,7 @@ EOF
     exit 0
 }
 
-while getopts ":o:d:S:g:G:M:n:r:j:t:mzaNEcATCKQDh-" opt; do
+while getopts ":o:d:S:g:M:n:r:j:t:mzaNEcATCKQDh-" opt; do
     case "${opt}" in
         S)
             bench_handle_S_opt "$@"
@@ -819,7 +819,7 @@ run_density() {
     if ! SHARED_DB="${SHARED_DB}" OUT_FILE="${RUN_ROOT}/tables/minimizer_density.csv" \
         bash "${script}" -o "${BASE_DIR}" -S "${DEFAULT_SCHEMES[@]}" \
         -n "${N_SEEDS}" -j "${DENSITY_JOBS}" \
-        -g "${GM_FILE}" -G "${GM_DNA_FILE}" -M "${MOD_GM_FILE}" \
+        -g "${GM_FILE}" -M "${MOD_GM_FILE}" \
         > "${RUN_ROOT}/density_microbench.log" 2>&1; then
         echo "Warning: density microbench failed; see ${RUN_ROOT}/density_microbench.log" >&2
         return 0

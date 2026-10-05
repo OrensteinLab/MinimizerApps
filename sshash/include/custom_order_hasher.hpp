@@ -190,7 +190,7 @@ struct custom_order_hasher {
         if (raw.empty()) {
             throw std::runtime_error("failed to load GreedyMini table: " + greedy_mini_filename);
         }
-        GreedyMiniTable table(raw, GmAlphabet::BINARY);
+        GreedyMiniTable table(raw);
         load_table(table);
         derive();
     }
@@ -389,7 +389,7 @@ private:
         for (size_t i = 0; i != raw.size(); ++i) {
             raw[i] = m_gm_ranks[i] == GreedyMiniTable::kInfRank ? raw.size() : m_gm_ranks[i];
         }
-        m_table = std::make_shared<const GreedyMiniTable>(raw, GmAlphabet::BINARY);
+        m_table = std::make_shared<const GreedyMiniTable>(raw);
         m_order = gm_centre::Order(m_table, l, m_seed, /*injective=*/true);
     }
 

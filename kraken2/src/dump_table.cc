@@ -46,6 +46,11 @@ void dump_table(CompactHashTable<Cell> &kraken_index, const Options &opts) {
   IndexOptions idx_opts = {0};
   std::ifstream idx_opt_fs(opts.options_filename);
   idx_opt_fs.read((char *) &idx_opts, sizeof(idx_opts));
+  if (idx_opts.db_version != KRAKEN2_DB_VERSION ||
+      (size_t)idx_opt_fs.gcount() < sizeof(idx_opts))
+    errx(EX_DATAERR, "%s: %s (db_version %d, expected %d)",
+         opts.options_filename.c_str(), IndexRebuildMessage(),
+         idx_opts.db_version, KRAKEN2_DB_VERSION);
 
   std::cout << "# Database options: "
     << (idx_opts.dna_db ? "nucleotide" : "protein") << " db, "
@@ -62,9 +67,6 @@ void dump_table(CompactHashTable<Cell> &kraken_index, const Options &opts) {
     << "# Min clear hash value = " << idx_opts.minimum_acceptable_hash_value << "\n";
   if (idx_opts.revcom_version != CURRENT_REVCOM_VERSION)
     std::cout << "# Built with outdated revcom version\n";
-  if (IndexUsesLegacyGmPrefix(idx_opts))
-    std::cout << "# Built with the retired prefix GreedyMini extension "
-                 "(rebuild for the centre extension)\n";
   std::cout << std::flush;
 
   if (! opts.skip_counts) {

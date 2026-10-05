@@ -43,7 +43,6 @@ struct Options {
   SketchingScheme sketching_scheme;
   Order order;
   std::string greedy_mini_filename;
-  GmAlphabet gm_alphabet;
   std::shared_ptr<const GreedyMiniTable> gm_table;
 };
 
@@ -66,7 +65,6 @@ int main(int argc, char **argv) {
   opts.block_size = DEFAULT_BLOCK_SIZE;
   opts.sketching_scheme = SketchingScheme::MINIMIZER;
   opts.order = Order::RANDOM_XOR;
-  opts.gm_alphabet = GmAlphabet::BINARY;
   ParseCommandLine(argc, argv, opts);
 
   if (opts.order == Order::GM) {
@@ -74,7 +72,7 @@ int main(int argc, char **argv) {
       errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
     try {
       opts.gm_table = MinimizerScanner::shared_gm_table(
-          opts.greedy_mini_filename, opts.gm_alphabet);
+          opts.greedy_mini_filename);
     } catch (const std::exception &ex) {
       errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
     }
@@ -127,7 +125,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:XG:a:s:O:")) != -1) {
+  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:XG:s:O:")) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -193,13 +191,6 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
       case 'G':
         opts.greedy_mini_filename = optarg;
         break;
-      case 'a':
-        try {
-          opts.gm_alphabet = parse_gm_alphabet(optarg);
-        } catch (const std::exception &ex) {
-          errx(EX_USAGE, "%s", ex.what());
-        }
-        break;
     }
   }
 
@@ -230,8 +221,7 @@ void usage(int exit_code) {
        << "  -p INT        Number of threads" << endl
        << "  -s STRING     Sketching: Minimizer (default), Mod" << endl
        << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg" << endl
-       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order" << endl
-       << "  -a STRING     GreedyMini alphabet: binary (default), dna" << endl;
+       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order" << endl;
   exit(exit_code);
 }
 

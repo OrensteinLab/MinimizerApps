@@ -38,12 +38,11 @@ both, plus a rolled Σ plane, `MinimizerScanner::SetRankFirst`;
   cost the table's density (measured 1.77 instead of 1.47 at ℓ = 31, s = 7).
   Note `s ≤ ℓ/4`, so s = 7 needs ℓ ≥ 28.
 - **Databases:** the new order selects different minimizers, so
-  `db_version` is now 2. `classify` refuses a version-1 Minimizer+GreedyMini
-  database with ℓ > gm_k (built with the old prefix order) and `dump_table`
-  flags it; `k2 build` does not reuse it as "already built". Rebuild such
-  databases (`k2 build ...`/`kraken2-build ... --order GreedyMini`).
-  Random-order, Mod and ℓ = gm_k databases are unaffected (old binaries
-  refuse version-2 files).
+  `db_version` is 2. `classify` and `dump_table` accept only `db_version` 2
+  and refuse any other database (built by an older/different Kraken 2,
+  including upstream) with a "rebuild" error; `k2 build` does not reuse it as
+  "already built". Rebuild such databases (`k2 build ...`/`kraken2-build ...
+  --order GreedyMini`).
 
 Tables now live under [`../../orders/GreedyMini/`](../../orders/GreedyMini/),
 shared with kmc's own GreedyMini order (see `orders/README.md`). Only the
@@ -56,9 +55,8 @@ from them on demand (`../benchmark/kraken2/benchmark_interface.sh`'s
 | `w5_k15_canonical.gm` | Minimizer + binary GreedyMini (`-g` / `GM_FILE`; default). Centre extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
 | `w5_k6_canonical.gm` | Mod + binary GreedyMini (`-M` / `MOD_GM_FILE`; default). gm_k=t=6 with Kraken ℓ=31,k=35 (w=5). |
 
-Kraken 2 only ever uses the binary-alphabet GreedyMini backend (its gm_k
-values make a `4^gm_k` DNA table impractical); a few other tables that used
-to live here (including a DNA-alphabet one that turned out to be
+Kraken 2 supports only binary-alphabet GreedyMini tables; a few other tables
+that used to live here (including a DNA-alphabet one that turned out to be
 non-canonical) are unused and have been moved to `~/unused-orders/kraken2/`
 outside the repo. See `orders/README.md` for the full picture.
 
@@ -68,7 +66,7 @@ Classic `.gm` encoding (see `src/greedymini_rank.h`):
 [uint64 length N][N × uint64 ranks]
 ```
 
-- `N` is `2^k` (binary) or `4^k` (DNA alphabet)
+- `N` is `2^k` (binary alphabet)
 - UHS members store a finite rank `0 .. m-1`
 - Non-UHS keys store sentinel `N`
 
@@ -106,9 +104,8 @@ Options:
 - `-k INT` — binary length (default: inferred from the largest k-mer)
 - `-o PATH` — output path (default: same basename with `.gm`)
 
-σ-extension for DNA is **not** written into the file: with `--gm-alphabet
-binary`, Kraken 2 remaps ACGT→ATCG (AT/CG key, residual lex tie-break) when
-ranking. See `src/greedymini_rank.h`.
+σ-extension for DNA is **not** written into the file: Kraken 2 remaps
+ACGT→ATCG (AT/CG key, residual lex tie-break) when ranking. See `src/greedymini_rank.h`.
 
 ## Density
 

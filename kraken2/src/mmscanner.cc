@@ -35,10 +35,6 @@ inline uint64_t nm_rdtsc() {
 std::mutex gm_table_cache_mu;
 std::map<std::string, std::weak_ptr<const GreedyMiniTable>> gm_table_cache;
 
-std::string gm_cache_key(const std::string &filename, GmAlphabet alphabet) {
-  return filename + ":" + gm_alphabet_name(alphabet);
-}
-
 bool same_gm_file(const std::string &a, const std::string &b) {
   if (a == b)
     return true;
@@ -85,18 +81,16 @@ std::string MinimizerScanner::gm_k2d_path(const std::string &hashtable_filename)
 
 void MinimizerScanner::register_shared_gm_table(
     const std::string &filename,
-    std::shared_ptr<const GreedyMiniTable> table,
-    GmAlphabet alphabet) {
+    std::shared_ptr<const GreedyMiniTable> table) {
   if (filename.empty() || !table || table->empty())
     return;
   std::lock_guard<std::mutex> lock(gm_table_cache_mu);
-  gm_table_cache[gm_cache_key(filename, alphabet)] = table;
+  gm_table_cache[filename] = table;
 }
 
 std::shared_ptr<const GreedyMiniTable>
-MinimizerScanner::shared_gm_table(const std::string &filename,
-                                  GmAlphabet alphabet) {
-  const std::string key = gm_cache_key(filename, alphabet);
+MinimizerScanner::shared_gm_table(const std::string &filename) {
+  const std::string &key = filename;
   std::lock_guard<std::mutex> lock(gm_table_cache_mu);
   auto it = gm_table_cache.find(key);
   if (it != gm_table_cache.end()) {
@@ -105,10 +99,10 @@ MinimizerScanner::shared_gm_table(const std::string &filename,
   }
   std::shared_ptr<const GreedyMiniTable> loaded;
   try {
-    loaded = load_gm_table(filename, alphabet);
+    loaded = load_gm_table(filename);
   } catch (const std::exception &ex) {
-    errx(EX_DATAERR, "GreedyMini table '%s' (alphabet=%s): %s",
-         filename.c_str(), gm_alphabet_name(alphabet), ex.what());
+    errx(EX_DATAERR, "GreedyMini table '%s': %s",
+         filename.c_str(), ex.what());
   }
   if (!loaded || loaded->empty())
     return nullptr;
@@ -122,20 +116,18 @@ void MinimizerScanner::embed_gm_table(
     std::shared_ptr<const GreedyMiniTable> table) {
   if (!table || table->empty())
     errx(EX_DATAERR, "cannot embed empty GreedyMini rank table");
-  const GmAlphabet alphabet = table->alphabet();
   const string dest_path = gm_k2d_path(hashtable_filename);
-  register_shared_gm_table(source_path, table, alphabet);
+  register_shared_gm_table(source_path, table);
   if (!same_gm_file(source_path, dest_path)) {
     write_gm_file(dest_path, gm_table_to_raw(*table));
-    register_shared_gm_table(dest_path, table, alphabet);
+    register_shared_gm_table(dest_path, table);
     std::cerr << "GreedyMini rank table written to " << dest_path
-              << " (alphabet=" << gm_alphabet_name(alphabet)
-              << ", gm_k=" << table->gm_k()
+              << " (gm_k=" << table->gm_k()
               << ", UHS=" << table->uhs_size()
               << "/" << table->size() << ")" << std::endl;
   }
   else {
-    register_shared_gm_table(dest_path, table, alphabet);
+    register_shared_gm_table(dest_path, table);
     std::cerr << "GreedyMini rank table already at " << dest_path << std::endl;
   }
 }
@@ -154,17 +146,14 @@ void MinimizerScanner::init_ranker(
   cfg.revcom_version = revcom_version_;
   cfg.greedy_mini_filename = greedy_mini_filename;
   cfg.gm_table = gm_table;
-  cfg.gm_alphabet =
-      gm_table ? gm_table->alphabet() : GmAlphabet::BINARY;
 
   if (order_ == Order::GM && !cfg.gm_table) {
     if (greedy_mini_filename.empty())
       errx(EX_USAGE, "GreedyMini order requires a rank file (.gm)");
-    cfg.gm_table = shared_gm_table(greedy_mini_filename, cfg.gm_alphabet);
+    cfg.gm_table = shared_gm_table(greedy_mini_filename);
     if (!cfg.gm_table || cfg.gm_table->empty())
       errx(EX_NOINPUT, "failed to load GreedyMini rank file: %s",
            greedy_mini_filename.c_str());
-    cfg.gm_alphabet = cfg.gm_table->alphabet();
   }
 
   if (sketching_ == SketchingScheme::MOD) {

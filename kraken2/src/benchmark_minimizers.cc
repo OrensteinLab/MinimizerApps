@@ -790,24 +790,20 @@ struct SchemeLabel {
   Order order;
   const char *name;       // CLI / display (matches run_benchmark.sh)
   bool needs_gm_bin;      // Minimizer + GreedyMini binary (-g)
-  bool needs_gm_dna;      // Minimizer + GreedyMini DNA (-G)
   bool needs_mod_gm;      // Mod + GreedyMini (-M)
 };
 
 // Same labels as ../benchmark/kraken2/run_benchmark.sh -S.
 static const SchemeLabel kAllSchemes[] = {
-    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "Random", false, false,
-     false},
-    {SketchingScheme::MINIMIZER, Order::GM, "GreedyMini", true, false, false},
-    {SketchingScheme::MINIMIZER, Order::GM, "GreedyMiniDNA", false, true,
-     false},
-    {SketchingScheme::MOD, Order::RANDOM_XOR, "ModRandom", false, false, false},
-    {SketchingScheme::MOD, Order::GM, "ModGreedyMini", false, false, true},
-    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "RandomPcg", false, false,
+    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "Random", false, false},
+    {SketchingScheme::MINIMIZER, Order::GM, "GreedyMini", true, false},
+    {SketchingScheme::MOD, Order::RANDOM_XOR, "ModRandom", false, false},
+    {SketchingScheme::MOD, Order::GM, "ModGreedyMini", false, true},
+    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "RandomPcg", false,
      false},
 };
 
-// Default list matches run_benchmark.sh (GreedyMiniDNA is opt-in via -S).
+// Default list matches run_benchmark.sh.
 static const char *kDefaultSchemeNames[] = {
     "Random", "GreedyMini", "ModRandom", "ModGreedyMini", "RandomPcg",
 };
@@ -832,7 +828,7 @@ static const SchemeLabel *find_scheme(const std::string &name) {
 }
 
 static void list_schemes_stderr() {
-  std::cerr << "  Random | GreedyMini | GreedyMiniDNA | ModRandom | "
+  std::cerr << "  Random | GreedyMini | ModRandom | "
                "ModGreedyMini | RandomPcg\n";
 }
 
@@ -1039,12 +1035,11 @@ static void usage() {
   std::cerr
       << "Usage: benchmark_minimizers [options]\n"
       << "  -S NAME   Scheme(s) to run (repeatable / space-separated):\n"
-      << "            Random | GreedyMini | GreedyMiniDNA | ModRandom |\n"
+      << "            Random | GreedyMini | ModRandom |\n"
       << "            ModGreedyMini | RandomPcg\n"
       << "            (default: Random GreedyMini ModRandom ModGreedyMini "
          "RandomPcg)\n"
       << "  -g FILE   GreedyMini binary ℓ-mer table for GreedyMini\n"
-      << "  -G FILE   GreedyMini DNA alphabet table for GreedyMiniDNA\n"
       << "  -M FILE   Mod+GreedyMini binary t-mer table (also --mod-gm)\n"
       << "  -l INT    minimizer length ℓ (default: 31)\n"
       << "  -k INT    k-mer length (default: l+4 ⇒ w=5)\n"
@@ -1188,7 +1183,6 @@ static void print_rank_path(const char *label, size_t n_mers, double nspc,
 
 int main(int argc, char **argv) {
   std::string gm_file;
-  std::string gm_dna_file;
   std::string mod_gm_file;
   int l = 31;
   int k = 0;
@@ -1243,8 +1237,6 @@ int main(int argc, char **argv) {
         append_scheme_arg(argv[++i]);
     } else if (!std::strcmp(argv[i], "-g") && i + 1 < argc)
       gm_file = argv[++i];
-    else if (!std::strcmp(argv[i], "-G") && i + 1 < argc)
-      gm_dna_file = argv[++i];
     else if ((!std::strcmp(argv[i], "-M") ||
               !std::strcmp(argv[i], "--mod-gm")) &&
              i + 1 < argc)
@@ -1319,16 +1311,13 @@ int main(int argc, char **argv) {
     }
   }
 
-  bool need_gm_bin = false, need_gm_dna = false, need_mod_gm = false;
+  bool need_gm_bin = false, need_mod_gm = false;
   for (const SchemeLabel *s : selected) {
     need_gm_bin = need_gm_bin || s->needs_gm_bin;
-    need_gm_dna = need_gm_dna || s->needs_gm_dna;
     need_mod_gm = need_mod_gm || s->needs_mod_gm;
   }
   if (need_gm_bin && gm_file.empty())
     errx(EX_USAGE, "GreedyMini requires -g FILE");
-  if (need_gm_dna && gm_dna_file.empty())
-    errx(EX_USAGE, "GreedyMiniDNA requires -G FILE");
   if (need_mod_gm && mod_gm_file.empty())
     errx(EX_USAGE, "ModGreedyMini requires -M FILE");
 
@@ -1346,27 +1335,17 @@ int main(int argc, char **argv) {
   std::shared_ptr<const GreedyMiniTable> table_bin;
   if (need_gm_bin) {
     table_bin =
-        MinimizerScanner::shared_gm_table(gm_file, GmAlphabet::BINARY);
+        MinimizerScanner::shared_gm_table(gm_file);
     if (!table_bin || table_bin->empty())
       errx(EX_NOINPUT, "failed to load %s", gm_file.c_str());
     if (table_bin->gm_k() > l)
       errx(EX_DATAERR, "gm_k=%d > l=%d", table_bin->gm_k(), l);
   }
 
-  std::shared_ptr<const GreedyMiniTable> table_dna;
-  if (need_gm_dna) {
-    table_dna =
-        MinimizerScanner::shared_gm_table(gm_dna_file, GmAlphabet::DNA);
-    if (!table_dna || table_dna->empty())
-      errx(EX_NOINPUT, "failed to load %s", gm_dna_file.c_str());
-    if (table_dna->gm_k() > l)
-      errx(EX_DATAERR, "gm_k=%d > l=%d", table_dna->gm_k(), l);
-  }
-
   std::shared_ptr<const GreedyMiniTable> mod_table;
   if (need_mod_gm) {
     mod_table =
-        MinimizerScanner::shared_gm_table(mod_gm_file, GmAlphabet::BINARY);
+        MinimizerScanner::shared_gm_table(mod_gm_file);
     if (!mod_table || mod_table->empty())
       errx(EX_NOINPUT, "failed to load %s", mod_gm_file.c_str());
   }
@@ -1403,9 +1382,6 @@ int main(int argc, char **argv) {
     if (cfg.needs_gm_bin) {
       spec.gm_path = gm_file;
       spec.gm_tbl = table_bin;
-    } else if (cfg.needs_gm_dna) {
-      spec.gm_path = gm_dna_file;
-      spec.gm_tbl = table_dna;
     } else if (cfg.needs_mod_gm) {
       spec.gm_path = mod_gm_file;
       spec.gm_tbl = mod_table;
@@ -1466,9 +1442,6 @@ int main(int argc, char **argv) {
     if (cfg.needs_gm_bin) {
       spec.gm_path = gm_file;
       spec.gm_tbl = table_bin;
-    } else if (cfg.needs_gm_dna) {
-      spec.gm_path = gm_dna_file;
-      spec.gm_tbl = table_dna;
     } else if (cfg.needs_mod_gm) {
       spec.gm_path = mod_gm_file;
       spec.gm_tbl = mod_table;
@@ -1529,19 +1502,11 @@ int main(int argc, char **argv) {
             << data_dir << "\n";
   if (table_bin)
     std::cout << "  GreedyMini:    " << gm_file
-              << "  alphabet=binary"
               << "  gm_k=" << table_bin->gm_k()
               << "  UHS=" << table_bin->uhs_size() << "/" << table_bin->size()
               << "\n";
-  if (table_dna)
-    std::cout << "  GreedyMiniDNA: " << gm_dna_file
-              << "  alphabet=dna"
-              << "  gm_k=" << table_dna->gm_k()
-              << "  UHS=" << table_dna->uhs_size() << "/" << table_dna->size()
-              << "\n";
   if (mod_table)
     std::cout << "  ModGreedyMini: " << mod_gm_file
-              << "  alphabet=binary"
               << "  gm_k=" << mod_table->gm_k()
               << "  UHS=" << mod_table->uhs_size() << "/" << mod_table->size()
               << "\n";
@@ -1605,8 +1570,6 @@ int main(int argc, char **argv) {
     const GreedyMiniTable *t = nullptr;
     if (row.cfg.needs_gm_bin)
       t = table_bin.get();
-    else if (row.cfg.needs_gm_dna)
-      t = table_dna.get();
     else if (row.cfg.needs_mod_gm)
       t = mod_table.get();
     print_uhs_hits(row.cfg.name, row.bench, t);
@@ -1632,26 +1595,6 @@ int main(int argc, char **argv) {
     time_rank_paths(ranked_lmers, gm_ranker, stride, 200000, nspc, uhs, non);
     print_rank_path("GreedyMini", ranked_lmers.size(), nspc, uhs, non);
     time_rank_batch(ranked_lmers, gm_ranker, 5);
-  }
-
-  if (table_dna) {
-    MinimizerScanner sc_log(k, l, spaced_seed_mask, true, toggle,
-                            CURRENT_REVCOM_VERSION, SketchingScheme::MINIMIZER,
-                            Order::GM, gm_dna_file, table_dna);
-    std::vector<uint64_t> ranked_lmers;
-    ranked_lmers.reserve(dna_len);
-    sc_log.SetRankedLmerLog(&ranked_lmers);
-    sc_log.LoadSequence(dna);
-    while (sc_log.NextMinimizer()) {
-    }
-    sc_log.SetRankedLmerLog(nullptr);
-
-    GMRanker gm_ranker(l, BITS_PER_CHAR_DNA, toggle, lmer_mask, true,
-                       table_dna, spaced_seed_mask);
-    PathDurationStats uhs, non;
-    const size_t stride = ranked_lmers.size() > 2000000 ? 32 : 8;
-    time_rank_paths(ranked_lmers, gm_ranker, stride, 200000, nspc, uhs, non);
-    print_rank_path("GreedyMiniDNA", ranked_lmers.size(), nspc, uhs, non);
   }
 
   if (mod_table) {

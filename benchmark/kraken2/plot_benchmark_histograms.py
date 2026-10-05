@@ -48,7 +48,6 @@ SCHEME_COLORS = {
     "Random": "#4C78A8",
     "RandomXor": "#4C78A8",  # alias
     "GreedyMini": "#F58518",
-    "GreedyMiniDNA": "#54A24B",
     "ModRandom": "#E45756",
     "ModRandomXor": "#E45756",  # alias
     "ModGreedyMini": "#72B7B2",

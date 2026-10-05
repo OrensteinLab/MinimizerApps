@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # benchmark_minimizers — time MinimizerScanner::NextMinimizer for selected
-# schemes (same -S / -m / -z / -g / -G / -M interface as run_benchmark.sh).
+# schemes (same -S / -m / -z / -g / -M interface as run_benchmark.sh).
 # Reports dens_theory/expected/particular as CSV.
 # Build via: make benchmark_minimizers (from repo root).
 
@@ -81,13 +81,13 @@ Environment:
   SHARED_DB               Override DB selected by -m/-z/-N/-E
   OUT_FILE                Density CSV (default: runs/<lib>/tables/minimizer_density.csv)
   PARALLEL_JOBS           Same as -j (0 = auto)
-  GM_FILE / GM_DNA_FILE / MOD_GM_FILE
+  GM_FILE / MOD_GM_FILE
   TIMING_FILE / LOOKUP_NS / RESOLVE_NS
 EOF
     exit 0
 }
 
-while getopts ":o:d:S:g:G:M:j:l:k:N:b:T:s:F:L:n:fmzEh-" opt; do
+while getopts ":o:d:S:g:M:j:l:k:N:b:T:s:F:L:n:fmzEh-" opt; do
     case "${opt}" in
         S) bench_handle_S_opt "$@" ;;
         j) PARALLEL_JOBS="${OPTARG}" ;;
@@ -197,7 +197,6 @@ run_one() {
     for sch in "${schemes[@]}"; do
         case "${sch}" in
             GreedyMini) args+=(-g "${GM_FILE}") ;;
-            GreedyMiniDNA) args+=(-G "${GM_DNA_FILE}") ;;
             ModGreedyMini) args+=(-M "${MOD_GM_FILE}") ;;
         esac
     done

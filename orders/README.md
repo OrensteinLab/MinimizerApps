@@ -20,7 +20,7 @@ copy.
 `common/minimizer-orders/`:
 
 - `pcg_rxs_m_xs.h` — the PCG RXS-M-XS scramble (`pcg_rxs_m_xs64`), used by all three apps' RandomPcg order.
-- `greedymini_rank.h` — the full GreedyMini implementation: the bit-manipulation helpers for extracting a DNA k-mer key, the `GreedyMiniTable` LUT class (both alphabet backends, see below), and the `.gm` binary file I/O (`load_gm_file_raw`/`write_gm_file_raw`/`load_gm_table`). All at global C++ scope, so kraken2 (via unqualified lookup from inside `namespace kraken2 {}`), kmc, and sshash (via unqualified lookup from inside `namespace sshash {}`) can all use it directly without a wrapper.
+- `greedymini_rank.h` — the full GreedyMini implementation: the bit-manipulation helpers for extracting a DNA k-mer key, the `GreedyMiniTable` LUT class (binary-alphabet tables only; kmc's DNA-alphabet tables are its own, see below), and the `.gm` binary file I/O (`load_gm_file_raw`/`write_gm_file_raw`/`load_gm_table`). All at global C++ scope, so kraken2 (via unqualified lookup from inside `namespace kraken2 {}`), kmc, and sshash (via unqualified lookup from inside `namespace sshash {}`) can all use it directly without a wrapper.
 - `greedymini_centre.h` — additive header on top of `greedymini_rank.h`: the centre extension of a canonical table (`gm_centre::Order`, compressed packing for kraken2, injective packing for sshash), the encoding-agnostic plane extraction (`TwoBitPlanes`) and rolling Sigma helpers, a slow per-base `Reference` and a density helper. Used by kraken2's `GMRanker` and sshash's `custom_order_hasher`; kmc does not use it.
 - `dna_revcomp.h` — reverse-complement of a packed 2-bit-per-base k-mer. Kept in its own header (not `greedymini_rank.h`) because kraken2 already has its own `dna_reverse_complement` in `dna_kmer.h`; combining the two into one header caused an ambiguous-overload compile error under kraken2's `using namespace kraken2;`. kmc includes this header directly (sshash does not: it runs on its own nucleotide encoding, see `sshash/README.md`); kraken2 keeps using its own (verified bit-identical).
 - `gm_serializer.cpp` (+ `Makefile`) — builds a `.gm` binary table from a GreedyMini tool's `.txt` rank-list output. C++, not Python, so all three apps share one implementation instead of independent re-serializers.
@@ -38,11 +38,11 @@ A GreedyMini table can be looked up two ways:
 - **Binary-alphabet LUT (default for all three apps)**: a `2^gm_k`-entry table over an AT/CG-collapsed alphabet, with an on-the-fly projection from the real DNA k-mer at lookup time. Compact even for large `gm_k`.
 - **DNA-alphabet LUT**: a native `4^gm_k`-entry table, keyed directly by the DNA k-mer — no projection step, but the table is 2^gm_k times larger.
 
-kraken2 only ever uses the binary backend in practice: its `gm_k` values make a `4^gm_k` DNA-alphabet table impractically large. kmc supports both, with binary as the default backend (flipped from an earlier DNA-expanded default); `_dna.gm` tables and `-ode` opt into the DNA-alphabet backend for a binary-alphabet source. sshash's minimizer length `m` has no minimizer-length-specific compile-time cap (the practical bound is `Kmer::max_m=32`, `sshash/include/kmer.hpp`, for the 2-bit DNA alphabet — `sshash/include/constants.hpp`'s `min_l`/`max_l` are unrelated, they size the skew index's bucket-size partitioning) — a `4^gm_k` DNA-alphabet table stays practical at that scale, but binary is still the default.
+kraken2 and sshash support only the binary backend (the shared `GreedyMiniTable` is binary-only; kraken2's `gm_k` values would make a `4^gm_k` DNA-alphabet table impractically large anyway). kmc supports both, with its own DNA-alphabet code, with binary as the default backend (flipped from an earlier DNA-expanded default); `_dna.gm` tables and `-ode` opt into the DNA-alphabet backend for a binary-alphabet source. sshash's minimizer length `m` has no minimizer-length-specific compile-time cap (the practical bound is `Kmer::max_m=32`, `sshash/include/kmer.hpp`, for the 2-bit DNA alphabet — `sshash/include/constants.hpp`'s `min_l`/`max_l` are unrelated, they size the skew index's bucket-size partitioning) — a `4^gm_k` DNA-alphabet table stays practical at that scale, but binary is still the default.
 
 ## Extend-k (kmc) and the centre extension (kraken2, sshash): a table built for a shorter length, used at a longer one
 
-A GreedyMini table's own `gm_k` need not equal the length `l` being ranked: when `l > gm_k`, `gm_k` bases decide the order (looked up in the table) and the remaining `l - gm_k` bases become a secondary tie-break folded in below the table's rank (`ext_bits`/`gamma_bits` in `common/minimizer-orders/greedymini_rank.h`). This prefix Extend-k is what kmc uses (and what kraken2 keeps only for its DNA-alphabet tables and for `l == gm_k`). kraken2's binary order for `l > gm_k` and sshash use the centre extension instead, implemented once in `common/minimizer-orders/greedymini_centre.h` (the order, the Sigma/Gamma plane extraction for both apps' base encodings, the rolling Sigma plane, and a per-base reference for tests); sshash's variant is described below.
+A GreedyMini table's own `gm_k` need not equal the length `l` being ranked: when `l > gm_k`, `gm_k` bases decide the order (looked up in the table) and the remaining `l - gm_k` bases become a secondary tie-break folded in below the table's rank (`ext_bits`/`gamma_bits` in `common/minimizer-orders/greedymini_rank.h`). This prefix Extend-k is what kmc uses (kraken2 keeps it only for `l == gm_k` and protein keys). kraken2's binary order for `l > gm_k` and sshash use the centre extension instead, implemented once in `common/minimizer-orders/greedymini_centre.h` (the order, the Sigma/Gamma plane extraction for both apps' base encodings, the rolling Sigma plane, and a per-base reference for tests); sshash's variant is described below.
 
 ## DNA -> binary projection polarity (sshash `--gm-projection`)
 
@@ -60,7 +60,7 @@ sshash's `-O greedymini` (binary-alphabet tables only) extends an explicit canon
 k2 build --sketching-scheme Minimizer --order RandomXor ...                         # default
 k2 build --sketching-scheme Minimizer --order RandomPcg ...
 k2 build --sketching-scheme Minimizer --order GreedyMini \
-         --greedy-mini-file orders/GreedyMini/w5_k15_canonical.gm [--gm-alphabet binary|dna] ...
+         --greedy-mini-file orders/GreedyMini/w5_k15_canonical.gm
 k2 build --sketching-scheme Mod --order GreedyMini --greedy-mini-file ... ...        # Mod sketching + any order above
 ```
 
@@ -69,7 +69,7 @@ k2 build --sketching-scheme Mod --order GreedyMini --greedy-mini-file ... ...   
 ```bash
 kmc -orhash -ol<label> [-os<seed>] ...                        # RandomXor (-ol is mandatory with -or)
 kmc -orpcg -ol<label> [-os<seed>] ...                         # RandomPcg
-kmc -co<file>.gm -ol<label> [-os<seed>] [-ode] ...             # GreedyMini (binary .gm, or _dna.gm/-ode for DNA-alphabet)
+kmc -co<file>.gm -ol<label> [-os<seed>] [-ode] ...             # GreedyMini (binary .gm, or _dna.gm/-ode for kmc's DNA-alphabet backend)
 kmc ...                                                        # no -or/-co: kmc's own lex order (not shared code)
 ```
 
@@ -90,7 +90,7 @@ kmc ...                                                        # no -or/-co: kmc
 | default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) |
 | RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
 | RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
-| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm [--gm-alphabet binary\|dna]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) |
+| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) |
 | Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a) |
 
 ## Regenerating a `.gm` table

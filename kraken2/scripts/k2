@@ -97,10 +97,7 @@ SKETCHING_MOD = 1
 ORDER_RANDOM_XOR = 0  # was ORDER_RANDOM; value 0 kept for DB compatibility
 ORDER_GM = 1
 ORDER_RANDOM_PCG = 2
-KRAKEN2_DB_VERSION_ORIGINAL = 0
-KRAKEN2_DB_VERSION_SCHEMES = 1
-KRAKEN2_DB_VERSION_GM_CENTRE = 2  # binary GM with l > gm_k ranks by the centre extension
-KRAKEN2_DB_VERSION = KRAKEN2_DB_VERSION_GM_CENTRE
+KRAKEN2_DB_VERSION = 2  # must match kraken2_data.h; other versions are rejected
 INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
 INDEX_OPTIONS_EXT_FMT = "<BBHI4xQ"
 SKETCHING_SCHEME_NAMES = {
@@ -123,12 +120,6 @@ ORDER_ALIASES = {
     "randompcg": "RandomPcg",
     "random_pcg": "RandomPcg",
     "pcg": "RandomPcg",
-}
-GM_ALPHABET_BINARY = 0
-GM_ALPHABET_DNA = 1
-GM_ALPHABET_NAMES = {
-    GM_ALPHABET_BINARY: "binary",
-    GM_ALPHABET_DNA: "dna",
 }
 
 
@@ -615,11 +606,13 @@ def wrapper_args_to_binary_args(opts, argv, binary_args):
 
 
 def read_index_options(opts_pathname):
+    """Parse opts.k2d. Returns None if it is not a database of the current
+    format (db_version == KRAKEN2_DB_VERSION); such databases must be rebuilt."""
     with open(opts_pathname, "rb") as in_file:
         data = in_file.read()
     base_size = struct.calcsize(INDEX_OPTIONS_BASE_FMT)
     ext_size = struct.calcsize(INDEX_OPTIONS_EXT_FMT)
-    if len(data) < base_size:
+    if len(data) < base_size + ext_size:
         return None
     (
         k,
@@ -632,45 +625,22 @@ def read_index_options(opts_pathname):
         db_version,
         db_type,
     ) = struct.unpack(INDEX_OPTIONS_BASE_FMT, data[:base_size])
-    if db_version > KRAKEN2_DB_VERSION:
+    if db_version != KRAKEN2_DB_VERSION:
         return None
-    result = {
+    # the gm_alphabet byte (second field) is reserved and always 0
+    sketching_scheme, _reserved_byte, gm_k, reserved, gm_num_entries = struct.unpack(
+        INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
+    )
+    return {
         "k": k,
         "l": l,
         "db_version": db_version,
-        "sketching_scheme": SKETCHING_MINIMIZER,
-        "order": ORDER_RANDOM_XOR,
-        "gm_alphabet": GM_ALPHABET_BINARY,
-        "gm_k": 0,
-        "gm_num_entries": 0,
+        "sketching_scheme": sketching_scheme,
+        "order": reserved & 0xFF,
+        "gm_k": gm_k,
+        "gm_num_entries": gm_num_entries,
+        "dna_db": bool(dna_db),
     }
-    if db_version >= KRAKEN2_DB_VERSION_SCHEMES:
-        if len(data) < base_size + ext_size:
-            return None
-        sketching_scheme, gm_alphabet, gm_k, reserved, gm_num_entries = struct.unpack(
-            INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
-        )
-        result["sketching_scheme"] = sketching_scheme
-        result["order"] = reserved & 0xFF
-        result["gm_alphabet"] = gm_alphabet
-        result["gm_k"] = gm_k
-        result["gm_num_entries"] = gm_num_entries
-    result["dna_db"] = bool(dna_db)
-    return result
-
-
-def index_uses_legacy_gm_prefix(opts):
-    """True for a Minimizer+binary-GreedyMini DB (l > gm_k) built before the
-    centre extension (db_version < 2): its minimizers differ, rebuild it."""
-    return bool(
-        opts
-        and KRAKEN2_DB_VERSION_SCHEMES <= opts["db_version"] < KRAKEN2_DB_VERSION_GM_CENTRE
-        and opts["order"] == ORDER_GM
-        and opts["sketching_scheme"] == SKETCHING_MINIMIZER
-        and opts["dna_db"]
-        and opts["gm_alphabet"] == GM_ALPHABET_BINARY
-        and 0 < opts["gm_k"] < opts["l"]
-    )
 
 
 def database_requires_gm_k2d(opts_pathname):
@@ -698,8 +668,6 @@ def sketching_order_build_key(args):
     sketching, order = sketching_order_from_args(args)
     parts = [sketching, order]
     if order == "GreedyMini":
-        alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
-        parts.append(alphabet)
         gm_file = getattr(args, "greedy_mini_file", None)
         if gm_file:
             parts.append(os.path.basename(gm_file))
@@ -717,20 +685,12 @@ def index_sketching_order_key(opts_pathname):
     od = ORDER_NAMES.get(opts["order"], "RandomXor")
     parts = [sk, od]
     if od == "GreedyMini":
-        parts.append(GM_ALPHABET_NAMES.get(opts.get("gm_alphabet", 0), "binary"))
         parts.append("gm{}".format(opts["gm_num_entries"]))
     return ":".join(parts)
 
 
 def validate_minimizer_build_args(args):
     sketching, order = sketching_order_from_args(args)
-    alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
-    if alphabet not in ("binary", "dna"):
-        LOG.error("--gm-alphabet must be 'binary' or 'dna'\n")
-        sys.exit(1)
-    if sketching == "Mod" and order == "GreedyMini" and alphabet != "binary":
-        LOG.error("MOD+GM requires --gm-alphabet binary (e.g. w5_k6_canonical.gm)\n")
-        sys.exit(1)
     if order != "GreedyMini":
         return
     gm_file = getattr(args, "greedy_mini_file", None)
@@ -745,7 +705,7 @@ def validate_minimizer_build_args(args):
 
 
 def add_sketching_args(args, argv, binary_args):
-    """Pass -s/-O/-G/-a/-T for sketching + order."""
+    """Pass -s/-O/-G/-T for sketching + order."""
     sketching, order = sketching_order_from_args(args)
     if "-s" in binary_args and sketching != "Minimizer":
         argv.extend(["-s", sketching])
@@ -755,9 +715,6 @@ def add_sketching_args(args, argv, binary_args):
         gm_file = getattr(args, "greedy_mini_file", None)
         if gm_file:
             argv.extend(["-G", gm_file])
-    alphabet = getattr(args, "gm_alphabet", "binary") or "binary"
-    if "-a" in binary_args and order == "GreedyMini" and alphabet != "binary":
-        argv.extend(["-a", alphabet])
     toggle = getattr(args, "toggle_mask", None)
     if toggle and "-T" in binary_args:
         argv.extend(["-T", str(toggle)])
@@ -767,8 +724,12 @@ def database_build_complete(args):
     if not all(os.path.isfile(f) for f in ("hash.k2d", "taxo.k2d", "opts.k2d")):
         return False
 
-    if index_uses_legacy_gm_prefix(read_index_options("opts.k2d")):
-        return False  # retired prefix extension: force a rebuild
+    if read_index_options("opts.k2d") is None:
+        LOG.info(
+            "opts.k2d is not in the current format (database was built by an "
+            "older/different Kraken 2 build); rebuilding.\n"
+        )
+        return False
     requested = sketching_order_build_key(args)
     stored = index_sketching_order_key("opts.k2d")
     _, order = sketching_order_from_args(args)
@@ -777,7 +738,7 @@ def database_build_complete(args):
         if not os.path.isfile("gm.k2d"):
             return False
         if stored is None or ":GreedyMini:" not in (":" + stored + ":"):
-            # stored like Minimizer:GreedyMini:binary:gmN
+            # stored like Minimizer:GreedyMini:gmN
             if stored is None or "GreedyMini" not in stored:
                 return False
         opts = read_index_options("opts.k2d")
@@ -5252,16 +5213,6 @@ def make_build_parser(subparsers):
              "required when --order GreedyMini. With --sketching-scheme "
              "Minimizer the minimizer length l must be gm_k + 2i "
              "(w5_k15_canonical.gm: 15, 17, ..., 31)",
-    )
-    parser.add_argument(
-        "--gm-alphabet",
-        type=str,
-        metavar="ALPHABET",
-        default="binary",
-        choices=["binary", "dna"],
-        help="GreedyMini table alphabet (default: binary). "
-             "Use 'dna' for DNA-native UHS tables (4^k entries; "
-             "key = first gm_k bases, tiebreaker = remaining bases).",
     )
     parser.add_argument(
         "--log",

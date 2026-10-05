@@ -13,19 +13,14 @@
 
 namespace kraken2 {
 
-// db_version 0 — original Kraken 2 opts.k2d (Minimizer + Random only).
-// db_version 1 — sketching_scheme, order, GreedyMini metadata in trailing fields.
-// db_version 2 — same layout; binary GreedyMini with l > gm_k ranks by the
-//                centre extension (minimizer_rankers.h). A version-1
-//                Minimizer+GreedyMini database with l > gm_k was built with the
-//                old prefix extension and selects different minimizers.
-static const int KRAKEN2_DB_VERSION_ORIGINAL = 0;
-static const int KRAKEN2_DB_VERSION_SCHEMES = 1;
-static const int KRAKEN2_DB_VERSION_GM_CENTRE = 2;
-static const int KRAKEN2_DB_VERSION = KRAKEN2_DB_VERSION_GM_CENTRE;
+// db_version 2: opts.k2d holds the sketching scheme / order / GreedyMini
+// metadata below, and Minimizer+GreedyMini with l > gm_k ranks by the centre
+// extension (minimizer_rankers.h). Databases with any other db_version (the
+// original Kraken 2 layout, or earlier fork versions) are not supported.
+static const int KRAKEN2_DB_VERSION = 2;
 
 struct IndexOptions {
-  // ---- db_version 0 fields (do not reorder) ----
+  // ---- original Kraken 2 fields (do not reorder) ----
   size_t k;
   size_t l;
   uint64_t spaced_seed_mask;
@@ -36,9 +31,9 @@ struct IndexOptions {
   int db_version;  // To allow for future database structural changes
   int db_type;  // To allow for future use of other data structures
 
-  // ---- db_version >= 1 ----
+  // ---- fork fields ----
   uint8_t  sketching_scheme;
-  uint8_t  gm_alphabet;
+  uint8_t  gm_alphabet;       // reserved byte, always written as 0
   uint16_t gm_k;
   uint32_t reserved;          // low 8 bits = Order
   uint64_t gm_num_entries;
@@ -46,13 +41,8 @@ struct IndexOptions {
 
 inline void DecodeIndexSchemes(const IndexOptions &opts,
                                SketchingScheme &sketching, Order &order) {
-  if (opts.db_version >= KRAKEN2_DB_VERSION_SCHEMES) {
-    sketching = (SketchingScheme)opts.sketching_scheme;
-    order = (Order)(opts.reserved & 0xffu);
-  } else {
-    sketching = SketchingScheme::MINIMIZER;
-    order = Order::RANDOM_XOR;
-  }
+  sketching = (SketchingScheme)opts.sketching_scheme;
+  order = (Order)(opts.reserved & 0xffu);
 }
 
 inline void EncodeIndexSchemes(IndexOptions &opts, SketchingScheme sketching,
@@ -62,19 +52,9 @@ inline void EncodeIndexSchemes(IndexOptions &opts, SketchingScheme sketching,
   opts.reserved = (uint32_t)(uint8_t)order;
 }
 
-// True for a database whose minimizers were chosen with the retired prefix
-// Extend-k order (Minimizer + binary GreedyMini, nucleotide, l > gm_k, built
-// before db_version 2). Such a database must be rebuilt.
-inline bool IndexUsesLegacyGmPrefix(const IndexOptions &opts) {
-  if (opts.db_version >= KRAKEN2_DB_VERSION_GM_CENTRE ||
-      opts.db_version < KRAKEN2_DB_VERSION_SCHEMES)
-    return false;
-  SketchingScheme sketching;
-  Order order;
-  DecodeIndexSchemes(opts, sketching, order);
-  return order == Order::GM && sketching == SketchingScheme::MINIMIZER &&
-         opts.dna_db && opts.gm_alphabet == 0 && opts.gm_k > 0 &&
-         opts.l > opts.gm_k;
+// Message for a database whose opts.k2d is not the current format.
+inline const char *IndexRebuildMessage() {
+  return "database was built by an older/different Kraken 2 build; rebuild it";
 }
 
 typedef uint64_t taxid_t;

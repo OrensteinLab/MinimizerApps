@@ -341,7 +341,7 @@ used if the new path is missing.
 | `ModGreedyMini` | `--sketching-scheme Mod --order GreedyMini` + `w5_k6_*.gm` |
 
 GreedyMini tables (`../../orders/GreedyMini/`): `-g` / `GM_FILE` (`w5_k15_canonical.gm`),
-`-G` / `GM_DNA_FILE`, `-M` / `MOD_GM_FILE` (`w5_k6_canonical.gm`).
+`-M` / `MOD_GM_FILE` (`w5_k6_canonical.gm`).
 
 ## Script map
 

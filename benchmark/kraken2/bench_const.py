@@ -16,7 +16,6 @@ SCHEME_ORDER = {
     "RandomXor": 0,
     "RandomPcg": 1,
     "GreedyMini": 2,
-    "GreedyMiniDNA": 3,
     "ModRandom": 4,
     "ModRandomXor": 4,
     "ModGreedyMini": 5,

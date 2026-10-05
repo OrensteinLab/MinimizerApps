@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
         string_ref sr;
         {
             auto raw = load_gm_file_raw(path);
-            GreedyMiniTable t(raw, GmAlphabet::BINARY);
+            GreedyMiniTable t(raw);
             sr.ranks.assign(t.data(), t.data() + t.size());
             sr.gk = t.gm_k();
         }
@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
                 string_ref sr;
                 {
                     auto raw = load_gm_file_raw(tmp);
-                    GreedyMiniTable t(raw, GmAlphabet::BINARY);
+                    GreedyMiniTable t(raw);
                     sr.ranks.assign(t.data(), t.data() + t.size());
                 }
                 sr.l = (int)c.l; sr.gk = c.gk; sr.flip = proj == gm_projection::AT1_CG0; sr.seed = 99;

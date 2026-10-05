@@ -29,8 +29,8 @@
  * is the smaller of the two strands' packed values. As with the old prefix
  * order, the mask never changes which table entry is looked up.
  *
- * DNA alphabet (4^gm_k table, kmc-style) and BINARY + protein keep their
- * original Extend-k (prefix) rank; kraken2 builds do not use them in practice.
+ * Protein keys (and DNA with l == gm_k handled above) keep the original
+ * Extend-k (prefix) rank; kraken2 builds do not use them in practice.
  */
 
 #ifndef KRAKEN2_MINIMIZER_RANKERS_H_
@@ -98,33 +98,23 @@ class GMRanker final : public MinimizerRanker {
            int revcom_version = DNA_REVCOM_VERSION)
       : l_(l), bpc_(bpc), gm_k_(0), ext_bits_(0), gamma_bits_(0),
         tb_bits_mask_(0), tb_mask_(0), spaced_mask_(0), key_pext_mask_(0),
-        suffix_pext_mask_(0), tb_pext_mask_(0), alphabet_(GmAlphabet::BINARY),
+        suffix_pext_mask_(0), tb_pext_mask_(0),
         dna_(dna), centre_(false), sym_(false), skip_tb_xor_(true),
         skip_space_(true),
         revcom_version_(revcom_version), table_(std::move(table)),
         ranks_ptr_(nullptr) {
     if (!table_ || table_->empty())
       throw std::invalid_argument("GreedyMini ranker requires a non-empty table");
-    alphabet_ = table_->alphabet();
     gm_k_ = table_->gm_k();
     if (gm_k_ > l_)
       throw std::invalid_argument("GreedyMini gm_k exceeds minimizer length l");
-    if (alphabet_ == GmAlphabet::DNA && bpc_ != 2)
-      throw std::invalid_argument(
-          "DNA GreedyMini alphabet requires DNA (2-bit) sequence");
     ranks_ptr_ = table_->data();
 
     // Low-field width below the UHS primary:
-    //   DNA alphabet: 2*(ℓ−gm_k) suffix DNA bits
-    //   Binary:       Extend-k suffix Σ (ℓ−gm_k) + Γ (ℓ·(bpc−1))
-    if (alphabet_ == GmAlphabet::DNA) {
-      ext_bits_ = 0;
-      gamma_bits_ = 2 * (l_ - gm_k_);
-    } else {
-      ext_bits_ = l_ - gm_k_;
-      gamma_bits_ = l_ * (bpc_ - 1);
-    }
-    centre_ = (alphabet_ == GmAlphabet::BINARY && dna_ && l_ > gm_k_);
+    //   Extend-k suffix Σ (ℓ−gm_k) + Γ (ℓ·(bpc−1))
+    ext_bits_ = l_ - gm_k_;
+    gamma_bits_ = l_ * (bpc_ - 1);
+    centre_ = (dna_ && l_ > gm_k_);
     // uint16 primary << (ext+gamma) must fit in uint64 (Extend-k paths).
     if (!centre_ && ext_bits_ + gamma_bits_ > 48)
       throw std::invalid_argument(
@@ -154,8 +144,6 @@ class GMRanker final : public MinimizerRanker {
   bool has_uhs_stats() const override { return true; }
 
   uint64_t Rank(uint64_t lmer) override {
-    if (alphabet_ == GmAlphabet::DNA)
-      return rank_dna_alphabet(lmer);
     if (!dna_)
       return rank_binary_protein(lmer);
     return rank_binary_dna(lmer);
@@ -189,7 +177,6 @@ class GMRanker final : public MinimizerRanker {
 
   int gm_k() const { return gm_k_; }
   bool centre_extension() const { return centre_; }
-  GmAlphabet alphabet() const { return alphabet_; }
   uint32_t uhs_size() const { return table_->uhs_size(); }
 
  private:
@@ -282,32 +269,6 @@ class GMRanker final : public MinimizerRanker {
     return skip_space_ ? word : (word & spaced_mask_);
   }
 
-  uint64_t pack_dna_alphabet(uint16_t primary, uint64_t word) const {
-    if (primary == GreedyMiniTable::kInfRank)
-      return UINT64_MAX;
-#if defined(__BMI2__)
-    const uint64_t tb = _bzhi_u64(word, (unsigned)gamma_bits_);
-#else
-    const uint64_t tb = word & tb_bits_mask_;
-#endif
-    return ((uint64_t)primary << gamma_bits_) |
-           (skip_tb_xor_ ? tb : (tb ^ tb_mask_));
-  }
-
-  uint64_t rank_dna_alphabet(uint64_t lmer) {
-    const uint64_t a = space(lmer);
-    const uint16_t pa = ranks_ptr_[(uint32_t)(a >> gamma_bits_)];
-    const uint64_t rc =
-        dna_reverse_complement(lmer, (uint8_t)l_, revcom_version_);
-    if (rc == lmer)
-      return record_oriented(pack_dna_alphabet(pa, a));
-    const uint64_t b = space(rc);
-    const uint16_t pb = ranks_ptr_[(uint32_t)(b >> gamma_bits_)];
-    return record_oriented(pick_better_primary(
-        pa, pb, [&] { return pack_dna_alphabet(pa, a); },
-        [&] { return pack_dna_alphabet(pb, b); }));
-  }
-
   uint64_t rank_binary_dna(uint64_t lmer) {
     if (centre_)
       return record_oriented(rank_centre(lmer));
@@ -371,15 +332,14 @@ class GMRanker final : public MinimizerRanker {
   int l_;
   int bpc_;
   int gm_k_;
-  int ext_bits_;    // Extend-k Σ suffix width (0 for DNA-alphabet mode)
-  int gamma_bits_;  // Γ / DNA-alphabet suffix width
+  int ext_bits_;    // Extend-k Σ suffix width
+  int gamma_bits_;  // Γ width
   uint64_t tb_bits_mask_;
   uint64_t tb_mask_;
   uint64_t spaced_mask_;
   uint64_t key_pext_mask_;
   uint64_t suffix_pext_mask_;
   uint64_t tb_pext_mask_;
-  GmAlphabet alphabet_;
   bool dna_;
   bool centre_;
   bool sym_;
@@ -408,7 +368,6 @@ struct RankerConfig {
   uint64_t spaced_seed_mask = 0;
   std::string greedy_mini_filename;
   std::shared_ptr<const GreedyMiniTable> gm_table;
-  GmAlphabet gm_alphabet = GmAlphabet::BINARY;
 };
 
 inline std::unique_ptr<MinimizerRanker>

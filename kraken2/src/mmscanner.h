@@ -73,12 +73,10 @@ class MinimizerScanner {
                             const std::vector<uint64_t> &ranks);
   static std::string gm_k2d_path(const std::string &hashtable_filename);
   static std::shared_ptr<const GreedyMiniTable>
-      shared_gm_table(const std::string &filename,
-                      GmAlphabet alphabet = GmAlphabet::BINARY);
+      shared_gm_table(const std::string &filename);
   static void register_shared_gm_table(
       const std::string &filename,
-      std::shared_ptr<const GreedyMiniTable> table,
-      GmAlphabet alphabet = GmAlphabet::BINARY);
+      std::shared_ptr<const GreedyMiniTable> table);
   static void embed_gm_table(const std::string &source_path,
                              const std::string &hashtable_filename,
                              std::shared_ptr<const GreedyMiniTable> table);

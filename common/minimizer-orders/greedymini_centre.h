@@ -186,16 +186,13 @@ inline void check_length(int l, int gm_k) {
         "); valid l: gm_k, gm_k+2, ..., 31");
 }
 
-// Checks that `table` (BINARY alphabet) may be extended to length l: l - gm_k
+// Checks that `table` may be extended to length l: l - gm_k
 // even, mirror symmetry rank[key] == rank[mirror(key)], every finite rank
 // shared by one key and its mirror only (skipped when !require_rank_pairs: the
 // injective packing does not need it). Returns the largest finite rank
 // (0 if none). Throws std::invalid_argument with a descriptive message.
 inline uint32_t validate_table(const GreedyMiniTable &table, int l,
                                bool require_rank_pairs = true) {
-  if (table.alphabet() != GmAlphabet::BINARY)
-    throw std::invalid_argument(
-        "GreedyMini centre extension needs a BINARY-alphabet table");
   const int gm_k = table.gm_k();
   check_length(l, gm_k);
   const size_t n = table.size();

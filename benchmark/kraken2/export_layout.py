@@ -190,7 +190,7 @@ def family(order):
     return order.split("_")[0]
 
 
-GM_FAMILIES = ("GreedyMiniDNA", "GreedyMini", "ModGreedyMini")
+GM_FAMILIES = ("GreedyMini", "ModGreedyMini")
 
 
 def short_order(order):
@@ -198,7 +198,7 @@ def short_order(order):
     table ('GreedyMini_w5_k15_canonical' -> 'GreedyMini'). Short names pass through."""
     for fam in GM_FAMILIES:
         if order.startswith(fam + "_"):
-            return "GreedyMini" if fam == "GreedyMiniDNA" else fam
+            return fam
     return order
 
 
@@ -849,13 +849,11 @@ ORDER_INFO = {
                "random order: the l-mer XORed with the seed (toggle mask), ranked by the hash of that value"),
     "RandomPcg": ("Minimizer", "RandomPcg", "--sketching-scheme Minimizer --order RandomPcg",
                   "random order with a PCG scramble of the seed-XORed l-mer"),
-    "GreedyMini": ("Minimizer", "GreedyMini", "--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file <table>.gm --gm-alphabet binary",
-                   "GreedyMini table (binary alphabet, centre extension), ties broken by the seed"),
-    "GreedyMiniDNA": ("Minimizer", "GreedyMini", "--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file <table>.gm --gm-alphabet dna",
-                      "GreedyMini table over the DNA alphabet"),
+    "GreedyMini": ("Minimizer", "GreedyMini", "--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file <table>.gm",
+                   "GreedyMini table (centre extension), ties broken by the seed"),
     "ModRandom": ("Mod", "RandomXor", "--sketching-scheme Mod --order RandomXor",
                   "mod-minimizer (Groot Koerkamp & Pibiri) on a random order"),
-    "ModGreedyMini": ("Mod", "GreedyMini", "--sketching-scheme Mod --order GreedyMini --greedy-mini-file <table>.gm --gm-alphabet binary",
+    "ModGreedyMini": ("Mod", "GreedyMini", "--sketching-scheme Mod --order GreedyMini --greedy-mini-file <table>.gm",
                       "mod-minimizer on a GreedyMini table"),
 }
 

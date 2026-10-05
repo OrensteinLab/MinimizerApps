@@ -361,32 +361,16 @@ int main() {
     }
   }
 
-  // DB guard: version-1 Minimizer+binary GM databases with l > gm_k are legacy.
+  // opts.k2d scheme encode/decode round trip.
   {
     IndexOptions o = {0};
-    o.l = 31;
-    o.k = 35;
-    o.dna_db = true;
-    o.gm_k = 15;
-    o.gm_alphabet = 0;
-    EncodeIndexSchemes(o, SketchingScheme::MINIMIZER, Order::GM);
-    check(o.db_version == KRAKEN2_DB_VERSION &&
-              KRAKEN2_DB_VERSION >= KRAKEN2_DB_VERSION_GM_CENTRE,
-          "new databases are written with the centre-extension version");
-    check(!IndexUsesLegacyGmPrefix(o), "current GM database is not legacy");
-    o.db_version = KRAKEN2_DB_VERSION_SCHEMES;
-    check(IndexUsesLegacyGmPrefix(o), "v1 GM minimizer db, l > gm_k: legacy");
-    o.l = 15;
-    check(!IndexUsesLegacyGmPrefix(o), "v1 GM db with l == gm_k: fine");
-    o.l = 31;
-    o.sketching_scheme = (uint8_t)SketchingScheme::MOD;
-    o.gm_k = 6;
-    check(!IndexUsesLegacyGmPrefix(o), "v1 Mod+GM db is unaffected");
-    o.sketching_scheme = (uint8_t)SketchingScheme::MINIMIZER;
-    o.reserved = (uint32_t)Order::RANDOM_XOR;
-    check(!IndexUsesLegacyGmPrefix(o), "v1 random-order db is unaffected");
-    o.db_version = KRAKEN2_DB_VERSION_ORIGINAL;
-    check(!IndexUsesLegacyGmPrefix(o), "v0 db is unaffected");
+    EncodeIndexSchemes(o, SketchingScheme::MOD, Order::GM);
+    SketchingScheme sk;
+    Order od;
+    DecodeIndexSchemes(o, sk, od);
+    check(o.db_version == KRAKEN2_DB_VERSION && sk == SketchingScheme::MOD &&
+              od == Order::GM,
+          "IndexOptions scheme encode/decode");
   }
 
   // ACGT->ATCG: A=00,C=01,G=10,T=11 -> A=00,T=01,C=10,G=11
@@ -412,100 +396,6 @@ int main() {
     check(rk == rev, "AT/CG key(RC) == reverse(key(fwd))");
   }
 
-  // ---- DNA alphabet (4^k table, contiguous key + suffix tiebreaker) ----
-  {
-    // gm_k=2 → 16 entries; UHS keys 0,1,5 with ranks 0,1,2; sentinel=16
-    std::vector<uint64_t> dna_raw(16, 16);
-    dna_raw[0] = 0;
-    dna_raw[1] = 1;
-    dna_raw[5] = 2;
-    GreedyMiniTable dna_table(dna_raw, GmAlphabet::DNA);
-    check(dna_table.alphabet() == GmAlphabet::DNA, "dna alphabet");
-    check(dna_table.gm_k() == 2, "dna gm_k bases");
-    check(dna_table.key_bits() == 4, "dna key_bits");
-    check(dna_table.uhs_size() == 3, "dna uhs");
-
-    // Loading DNA-sized table as binary would treat gm_k=log2(16)=4 — allowed
-    // size-wise, but sentinel would be 16 either way. Require DNA flag for
-    // 4^k semantics: loading with BINARY yields gm_k=4.
-    GreedyMiniTable as_bin(dna_raw, GmAlphabet::BINARY);
-    check(as_bin.gm_k() == 4, "same bytes as binary → gm_k=4");
-
-    // Odd log2 size must reject DNA.
-    bool threw = false;
-    try {
-      std::vector<uint64_t> odd(8, 8);
-      odd[0] = 0;
-      GreedyMiniTable bad(odd, GmAlphabet::DNA);
-      (void)bad;
-    } catch (const std::invalid_argument &) {
-      threw = true;
-    }
-    check(threw, "DNA rejects non-4^k size");
-
-    const int dl = 6, dbpc = 2;
-    const uint64_t dmask = (1ULL << (2 * dl)) - 1ULL;
-    auto dna_shared = std::make_shared<const GreedyMiniTable>(dna_table);
-    GMRanker dna_ranker(dl, dbpc, 0, dmask, true, dna_shared);
-
-    // lmer ACGTAC: key=AC=1 → primary 1; tb=GTAC=0xb1; pack=(1<<8)|0xb1
-    uint64_t dlmer = 0;
-    const int dbases[6] = {0, 1, 2, 3, 0, 1};  // A C G T A C
-    for (int i = 0; i < dl; i++)
-      dlmer = (dlmer << 2) | (uint64_t)dbases[i];
-    const uint32_t dkey = gm_extract_dna_alphabet_key(dlmer, dl, 2);
-    const uint64_t dtb = gm_extract_dna_alphabet_tb(dlmer, dl, 2);
-    check(dkey == 1, "dna alphabet key==1");
-    check(dtb == 0xb1, "dna alphabet tb==GTAC");
-    const uint64_t dr = dna_ranker.Rank(dlmer);
-    check(dr == ((1ULL << 8) | 0xb1), "dna alphabet packs primary|tb");
-
-    // Same primary, different suffix → different packed rank (tiebreak works).
-    uint64_t dlmer_tb = 0;
-    const int dbases_tb[6] = {0, 1, 0, 0, 0, 0};  // A C A A A A
-    for (int i = 0; i < dl; i++)
-      dlmer_tb = (dlmer_tb << 2) | (uint64_t)dbases_tb[i];
-    const uint64_t dr_tb = dna_ranker.Rank(dlmer_tb);
-    check(gm_extract_dna_alphabet_key(dlmer_tb, dl, 2) == 1, "same key");
-    check(dr_tb == (1ULL << 8), "dna tb all-zero suffix");
-    check(dr != dr_tb, "dna tiebreaker distinguishes same key");
-
-    // first 2 bases GG (2,2) → key = 0b1010 = 10 → non-UHS
-    uint64_t dlmer2 = 0;
-    const int dbases2[6] = {2, 2, 0, 0, 0, 0};
-    for (int i = 0; i < dl; i++)
-      dlmer2 = (dlmer2 << 2) | (uint64_t)dbases2[i];
-    check(gm_extract_dna_alphabet_key(dlmer2, dl, 2) == 10, "dna key==10");
-    check(dna_ranker.Rank(dlmer2) == UINT64_MAX, "dna non-UHS → INF");
-
-    check(dna_ranker.Rank(dlmer) == dna_ranker.Rank(
-              dna_reverse_complement(dlmer, (uint8_t)dl, DNA_REVCOM_VERSION)),
-          "dna alphabet Rank is strand-independent");
-
-    // AA is DNA-lex smaller than TT, but give TT the better UHS primary.
-    {
-      std::vector<uint64_t> orient_raw(16, 16);
-      orient_raw[0] = 2;   // AA
-      orient_raw[15] = 0;  // TT best
-      GreedyMiniTable ot(orient_raw, GmAlphabet::DNA);
-      auto osh = std::make_shared<const GreedyMiniTable>(ot);
-      GMRanker ork(dl, dbpc, 0, dmask, true, osh);
-      uint64_t all_a = 0, all_t = 0;
-      for (int i = 0; i < dl; i++) {
-        all_a = (all_a << 2) | 0ULL;
-        all_t = (all_t << 2) | 3ULL;
-      }
-      check(all_a < all_t, "AAAAAA DNA-lex-smaller than TTTTTT");
-      check(ot.primary(0) > ot.primary(15), "AA worse primary than TT");
-      const uint64_t want =
-          ((uint64_t)ot.primary(15) << 8) |
-          gm_extract_dna_alphabet_tb(all_t, dl, 2);
-      check(ork.Rank(all_a) == want, "dna gm_k primary wins over DNA-lex strand");
-      check(ork.Rank(all_a) == ork.Rank(all_t),
-            "dna alphabet Rank(AAAAAA)==Rank(TTTTTT)");
-    }
-  }
-
   // Prefer env overrides; else ship-in-repo tables relative to cwd (src/ via make test).
   auto resolve_gm = [](const char *env_key, const char *rel_name) -> std::string {
     const char *env = std::getenv(env_key);
@@ -527,10 +417,9 @@ int main() {
   const std::string gm_path =
       resolve_gm("GM_FILE", "w5_k15_canonical.gm");
   if (!gm_path.empty()) {
-    auto loaded = load_gm_table(gm_path, GmAlphabet::BINARY);
+    auto loaded = load_gm_table(gm_path);
     if (loaded) {
       check(loaded->gm_k() == 15, "real gm_k");
-      check(loaded->alphabet() == GmAlphabet::BINARY, "real binary alphabet");
       check(loaded->uhs_size() == 9076, "canonical UHS size");
       check(loaded->size() == 32768, "real table size");
       std::cout << "Validated w5_k15_canonical: UHS=" << loaded->uhs_size()
@@ -694,7 +583,7 @@ int main() {
     const std::string tpath = resolve_gm("GM_FILE_INJ", tname);
     if (tpath.empty())
       continue;
-    auto tbl = load_gm_table(tpath, GmAlphabet::BINARY);
+    auto tbl = load_gm_table(tpath);
     check(tbl != nullptr, "injective test table loads");
     if (!tbl)
       continue;
@@ -840,7 +729,7 @@ int main() {
     for (int t = 0; t < 2; t++) {
       const std::string tp = resolve_gm("GM_FILE_INJ", tn[t]);
       if (!tp.empty())
-        tb[t] = load_gm_table(tp, GmAlphabet::BINARY);
+        tb[t] = load_gm_table(tp);
     }
     if (tb[0] && tb[1]) {
       gm_centre::Order ords[4] = {
@@ -862,20 +751,6 @@ int main() {
       }
       std::cout << n << " sshash Python-reference vectors checked\n";
       check(n == 384 && bad == 0, "injective Order == sshash Python vectors");
-    }
-  }
-
-  const std::string dna_gm_path =
-      resolve_gm("GM_DNA_FILE", "w5_k7_improved_w5_dna.gm");
-  if (!dna_gm_path.empty()) {
-    auto dna_loaded = load_gm_table(dna_gm_path, GmAlphabet::DNA);
-    if (dna_loaded) {
-      check(dna_loaded->alphabet() == GmAlphabet::DNA, "real dna alphabet");
-      check(dna_loaded->gm_k() == 7, "real dna gm_k");
-      check(dna_loaded->size() == 16384, "real dna table size 4^7");
-      check(dna_loaded->uhs_size() == 5248, "real dna UHS size");
-      std::cout << "Validated w5_k7_dna: UHS=" << dna_loaded->uhs_size()
-                << "/" << dna_loaded->size() << "\n";
     }
   }
 

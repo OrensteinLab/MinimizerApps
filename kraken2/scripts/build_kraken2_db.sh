@@ -114,11 +114,6 @@ if [ "${_order}" = "GreedyMini" ] && [ -n "${KRAKEN2_GREEDY_MINI_FILE:-}" ]
 then
   KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -G $KRAKEN2_GREEDY_MINI_FILE"
 fi
-if [ "${_order}" = "GreedyMini" ] && \
-   [ -n "${KRAKEN2_GM_ALPHABET:-}" ] && [ "${KRAKEN2_GM_ALPHABET}" != "binary" ]
-then
-  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -a $KRAKEN2_GM_ALPHABET"
-fi
 
 estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG $KRAKEN2_SCHEME_FLAGS)
 # Slight upward adjustment of distinct minimizer estimate to protect

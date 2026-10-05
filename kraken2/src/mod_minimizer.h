@@ -3,8 +3,8 @@
  *
  * For Kraken (k,l) with w=k-l+1 and t = r+((l-r)%w), r=4:
  *   ranks successive canonical t-mers with Order (RandomXor, RandomPcg, or GM),
- *   maintains w residue deques, returns the ℓ-mer at position
- *   p = argmin_j front_rank(j) (ties → smallest j).
+ *   maintains one monotone deque over all residue classes and returns the
+ *   ℓ-mer at position p = argmin_j front_rank(j) (ties → smallest j).
  *
  * Spaced-seed mask is applied to stored/returned canonical ℓ-mers only.
  * t-mer ranking is unmasked by design (selection order vs index key).
@@ -18,7 +18,6 @@
 #include "minimizer_rankers.h"
 #include "sketching_schemes.h"
 #include "dna_kmer.h"
-#include "../../common/minimizer-orders/mod_residue_deque.h"
 
 #include <cstdint>
 #include <memory>
@@ -92,12 +91,8 @@ class ModSampler {
     if (order == Order::GM) {
       if (!gm_table || gm_table->empty())
         throw std::invalid_argument("MOD+GM requires a GM table");
-      if (gm_table->alphabet() != GmAlphabet::BINARY)
-        throw std::invalid_argument(
-            "MOD+GM requires BINARY alphabet (w5_k6_canonical)");
       if (gm_table->gm_k() != t_)
         throw std::invalid_argument("MOD+GM table gm_k must equal t");
-      cfg.gm_alphabet = GmAlphabet::BINARY;
     }
     t_ranker_ = make_order_ranker(cfg);
 
