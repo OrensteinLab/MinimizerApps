@@ -57,7 +57,7 @@ test: $(TESTS)
 	./test_mod_minimizer
 
 clean:
-	rm -f *.o $(PROGS) $(TESTS) $(PROF_STAMP)
+	rm -f *.o $(PROGS) $(TESTS) scan_dump $(PROF_STAMP)
 
 taxonomy.o: taxonomy.cc taxonomy.h mmap_file.h
 hyperloglogplus.o: hyperloglogplus.cc hyperloglogplus.h
@@ -135,3 +135,11 @@ test_mod_minimizer.o: test_mod_minimizer.cc $(MM_HEADERS)
 
 test_mod_minimizer: test_mod_minimizer.o mmscanner.o
 	$(CXX) $(CXXFLAGS) -o $@ test_mod_minimizer.o mmscanner.o $(LDFLAGS)
+
+# Test/benchmark tool (not part of `all`): key-stream dump and scan timing via
+# the public MinimizerScanner API only. Build: make -C kraken2/src scan_dump
+scan_dump.o: scan_dump.cc $(MM_HEADERS) utilities.h
+	$(CXX) $(CXXFLAGS) -c -o $@ scan_dump.cc
+
+scan_dump: scan_dump.o mmscanner.o utilities.o
+	$(CXX) $(CXXFLAGS) -o $@ scan_dump.o mmscanner.o utilities.o $(LDFLAGS)
