@@ -260,31 +260,31 @@ bench_configure_scheme() {
         Random|RandomXor)
             SCHEME="Random"
             SCHEME_BASE="Random"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order RandomXor"
+            SCHEME_ARGS="--sketching minimizer --order xor"
             SCHEME_NEEDS_GM=0
             ;;
         RandomPcg|RandomPCG)
             SCHEME="RandomPcg"
             SCHEME_BASE="RandomPcg"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order RandomPcg"
+            SCHEME_ARGS="--sketching minimizer --order xor-pcg"
             SCHEME_NEEDS_GM=0
             ;;
         GreedyMini)
             SCHEME="GreedyMini"
             SCHEME_BASE="GreedyMini_$(basename "${GM_FILE}" .gm)"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file ${GM_FILE}"
+            SCHEME_ARGS="--sketching minimizer --order greedymini --greedymini-file ${GM_FILE}"
             SCHEME_NEEDS_GM=1
             ;;
         ModRandom|ModRandomXor)
             SCHEME="ModRandom"
             SCHEME_BASE="ModRandom"
-            SCHEME_ARGS="--sketching-scheme Mod --order RandomXor"
+            SCHEME_ARGS="--sketching mod-minimizer --order xor"
             SCHEME_NEEDS_GM=0
             ;;
         ModGreedyMini)
             SCHEME="ModGreedyMini"
             SCHEME_BASE="ModGreedyMini_$(basename "${MOD_GM_FILE}" .gm)"
-            SCHEME_ARGS="--sketching-scheme Mod --order GreedyMini --greedy-mini-file ${MOD_GM_FILE}"
+            SCHEME_ARGS="--sketching mod-minimizer --order greedymini --greedymini-file ${MOD_GM_FILE}"
             SCHEME_NEEDS_GM=1
             ;;
         *)

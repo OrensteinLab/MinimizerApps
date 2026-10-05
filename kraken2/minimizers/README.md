@@ -1,7 +1,7 @@
 # Minimizer rank tables
 
 GreedyMini (and related) UHS rank tables used by Kraken 2 when
-`--order GreedyMini` is selected. Binary tables are σ-extended to DNA at
+`--order greedymini` is selected. Binary tables are σ-extended to DNA at
 rank time: Kraken packs bases as ACGT=`00,01,10,11`, remaps to ATCG bitplanes
 so the key bit is **AT vs CG** (Σ), and the residual bit is Γ.
 
@@ -17,7 +17,7 @@ strands' prefixes are different windows of the ℓ-mer. The algorithm is the
 shared `common/minimizer-orders/greedymini_centre.h` (the same extension
 sshash uses, including the Σ/Γ plane extraction: `TwoBitPlanes`);
 `src/minimizer_rankers.h` only picks Kraken's ACGT encoding. For ℓ = gm_k
-(and Mod+GM, t = gm_k) nothing changed.
+(and mod-minimizer + greedymini, t = gm_k) nothing changed.
 
 **Scanning (rank first).** The scanner compares each ℓ-mer's table rank (one
 Σ pext + one table load, the unmasked Σ, also with a spaced seed) and computes
@@ -38,11 +38,13 @@ both, plus a rolled Σ plane, `MinimizerScanner::SetRankFirst`;
   cost the table's density (measured 1.77 instead of 1.47 at ℓ = 31, s = 7).
   Note `s ≤ ℓ/4`, so s = 7 needs ℓ ≥ 28.
 - **Databases:** the new order selects different minimizers, so
-  `db_version` is 2. `classify` and `dump_table` accept only `db_version` 2
+  `db_version` is 2. `classify` and `dump_table` accept only an 80-byte `opts.k2d` with
+  `db_version` 2 and the `K2SK` magic (`uint8 sketching_scheme; uint8 order;
+  uint16 gm_k; uint32 magic; uint64 gm_num_entries` after the original head)
   and refuse any other database (built by an older/different Kraken 2,
   including upstream) with a "rebuild" error; `k2 build` does not reuse it as
   "already built". Rebuild such databases (`k2 build ...`/`kraken2-build ...
-  --order GreedyMini`).
+  --order greedymini`).
 
 Tables now live under [`../../orders/GreedyMini/`](../../orders/GreedyMini/),
 shared with kmc's own GreedyMini order (see `orders/README.md`). Only the
@@ -53,7 +55,7 @@ from them on demand (`../benchmark/kraken2/benchmark_interface.sh`'s
 | File | Role |
 |------|------|
 | `w5_k15_canonical.gm` | Minimizer + binary GreedyMini (`-g` / `GM_FILE`; default). Centre extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
-| `w5_k6_canonical.gm` | Mod + binary GreedyMini (`-M` / `MOD_GM_FILE`; default). gm_k=t=6 with Kraken ℓ=31,k=35 (w=5). |
+| `w5_k6_canonical.gm` | mod-minimizer + binary greedymini (`-M` / `MOD_GM_FILE`; default). gm_k=t=6 with Kraken ℓ=31,k=35 (w=5). |
 
 Kraken 2 supports only binary-alphabet GreedyMini tables; a few other tables
 that used to live here (including a DNA-alphabet one that turned out to be
@@ -116,7 +118,7 @@ changes. Numbers are mean ± std (sample) over 6 independent i.i.d. random DNA
 streams of 3 Mb (stream i: `--seed i` and a different tie-break/hash toggle),
 spaced seed off (s = 0) unless stated; "old" = the prefix extension of
 `575b123`, "new" = centre. At ℓ = 15 = gm_k both are the table itself, i.e. the
-design density (1.4662 ± 0.0003 measured). RandomXor is Kraken's default order (xor with the toggle mask; its
+design density (1.4662 ± 0.0003 measured). `xor` (RandomXor) is Kraken's default order (xor with the toggle mask; its
 density varies with the toggle), RandomPcg a proper random hash.
 
 **Expected density, `w5_k15_canonical`** ([`../../benchmark/kraken2/tables/gm_centre_density_expected.csv`](../../benchmark/kraken2/tables/gm_centre_density_expected.csv))

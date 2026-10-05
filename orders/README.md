@@ -57,12 +57,18 @@ sshash's `-O greedymini` (binary-alphabet tables only) extends an explicit canon
 **kraken2** (`k2 build` / `kraken2-build`, or the `build_db`/`estimate_capacity` binaries directly):
 
 ```bash
-k2 build --sketching-scheme Minimizer --order RandomXor ...                         # default
-k2 build --sketching-scheme Minimizer --order RandomPcg ...
-k2 build --sketching-scheme Minimizer --order GreedyMini \
-         --greedy-mini-file orders/GreedyMini/w5_k15_canonical.gm
-k2 build --sketching-scheme Mod --order GreedyMini --greedy-mini-file ... ...        # Mod sketching + any order above
+k2 build --sketching minimizer --order xor ...                                      # default
+k2 build --sketching minimizer --order xor-pcg ...
+k2 build --sketching minimizer --order greedymini \
+         --greedymini-file orders/GreedyMini/w5_k15_canonical.gm
+k2 build --sketching mod-minimizer --order greedymini --greedymini-file ... ...     # mod-minimizer + any order above
 ```
+
+Only exact lowercase names are accepted (no aliases). The scheme label used by
+the benchmark harness is `xor`, `xor-pcg`, `greedymini`, `mod-minimizer-xor`
+or `mod-minimizer-greedymini` (`--sketching` + `--order`). The kraken2 flag is
+`--greedymini-file`; the sshash flag is still `--greedy-mini-file` and kmc has
+its own `-co` / `-or*` options: the three apps' flag names differ.
 
 **kmc**:
 
@@ -88,10 +94,10 @@ kmc ...                                                        # no -or/-co: kmc
 | Order | kraken2 | kmc | sshash |
 |---|---|---|---|
 | default/lex/native | (n/a — kraken2 has no lex order) | no `-or`/`-co` (kmc's own order) | no `-O` (sshash's own order) |
-| RandomXor | `--order RandomXor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
-| RandomPcg | `--order RandomPcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
-| GreedyMini | `--order GreedyMini --greedy-mini-file FILE.gm` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) |
-| Mod sketching scheme | `--sketching-scheme Mod` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a) |
+| xor (RandomXor) | `--order xor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` |
+| xor-pcg (RandomPcg) | `--order xor-pcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` |
+| greedymini | `--order greedymini --greedymini-file FILE.gm` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) |
+| mod-minimizer sketching | `--sketching mod-minimizer` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a) |
 
 ## Regenerating a `.gm` table
 

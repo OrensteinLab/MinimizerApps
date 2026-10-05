@@ -5,6 +5,7 @@
  */
 
 #include "build_db.h"
+#include <getopt.h>
 #include "kraken2_headers.h"
 #include "taxonomy.h"
 #include "mmscanner.h"
@@ -59,15 +60,15 @@ int main(int argc, char **argv) {
   int gm_k = 0;
   if (opts.order == Order::GM) {
     if (opts.greedy_mini_filename.empty())
-      errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
+      errx(EX_USAGE, "--greedymini-file is required when --order greedymini");
     try {
       opts.gm_table = MinimizerScanner::shared_gm_table(
           opts.greedy_mini_filename);
     } catch (const std::exception &ex) {
-      errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
+      errx(EX_DATAERR, "greedymini table load failed: %s", ex.what());
     }
     if (!opts.gm_table || opts.gm_table->empty())
-      errx(EX_NOINPUT, "failed to load GreedyMini file: %s",
+      errx(EX_NOINPUT, "failed to load greedymini file: %s",
            opts.greedy_mini_filename.c_str());
     gm_k = opts.gm_table->gm_k();
     if (opts.sketching_scheme == SketchingScheme::MOD) {
@@ -75,18 +76,20 @@ int main(int argc, char **argv) {
                     (((int)opts.l - ModSampler::kDefaultR) %
                      ((int)opts.k - (int)opts.l + 1));
       if (gm_k != t)
-        errx(EX_DATAERR, "MOD+GM table gm_k=%d must equal t=%d", gm_k, t);
+        errx(EX_DATAERR,
+             "mod-minimizer + greedymini: table gm_k=%d must equal t=%d",
+             gm_k, t);
     } else if (gm_k > (int)opts.l) {
-      errx(EX_DATAERR, "GreedyMini k_gm=%d exceeds minimizer l=%d", gm_k,
+      errx(EX_DATAERR, "greedymini k_gm=%d exceeds minimizer l=%d", gm_k,
            (int)opts.l);
     } else if (!opts.input_is_protein && gm_k < (int)opts.l &&
                (((int)opts.l - gm_k) & 1) != 0) {
       errx(EX_DATAERR,
-           "GreedyMini centre extension needs l - k_gm even (l=%d, k_gm=%d); "
+           "greedymini centre extension needs l - k_gm even (l=%d, k_gm=%d); "
            "valid l: %d, %d, ... (max 31)",
            (int)opts.l, gm_k, gm_k, gm_k + 2);
     }
-    std::cerr << "Loaded GreedyMini rank table: k_gm=" << gm_k
+    std::cerr << "Loaded greedymini rank table: k_gm=" << gm_k
               << ", UHS=" << opts.gm_table->uhs_size()
               << "/" << opts.gm_table->size()
               << "  sketching=" << sketching_scheme_name(opts.sketching_scheme)
@@ -228,7 +231,13 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:s:O:")) != -1) {
+  static const struct option long_options[] = {
+    {"sketching", required_argument, nullptr, 's'},
+    {"order", required_argument, nullptr, 'O'},
+    {"greedymini-file", required_argument, nullptr, 'G'},
+    {nullptr, 0, nullptr, 0}};
+  while ((opt = getopt_long(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:s:O:",
+                            long_options, nullptr)) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -394,8 +403,9 @@ void usage(int exit_code) {
        << "  -b INT        Read subblock size\n"
        << "  -r INT        Bit storage requested for taxid\n"
        << "  -C INT        CHT cell size (default: 32)\n"
-       << "  -s STRING     Sketching: Minimizer (default), Mod\n"
-       << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg\n"
-       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order\n";
+       << "  -s STRING     Sketching (--sketching): minimizer (default), mod-minimizer\n"
+       << "  -O STRING     Order (--order): xor (default), xor-pcg, greedymini\n"
+       << "  -G FILENAME   GreedyMini rank file (--greedymini-file, .gm);\n"
+       << "                required for --order greedymini\n";
   exit(exit_code);
 }

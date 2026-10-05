@@ -302,11 +302,14 @@ IndexData *load_index(Options &opts) {
   auto opts_filesize = sb.st_size;
   size_t read_size = std::min((size_t)opts_filesize, sizeof(IndexOptions));
   idx_opt_fs.read((char *) &idx_opts, read_size);
-  if (idx_opts.db_version != KRAKEN2_DB_VERSION ||
+  if (!IndexOptionsValid(idx_opts, (size_t)opts_filesize) ||
       read_size < sizeof(IndexOptions))
-    errx(EX_DATAERR, "%s: %s (db_version %d, expected %d)",
+    errx(EX_DATAERR, "%s: %s (size %lld, expected %zu; db_version %d, "
+         "expected %d; magic 0x%08x, expected 0x%08x)",
          opts.options_filename.c_str(), IndexRebuildMessage(),
-         idx_opts.db_version, KRAKEN2_DB_VERSION);
+         (long long)opts_filesize, sizeof(IndexOptions),
+         idx_opts.db_version, KRAKEN2_DB_VERSION,
+         (unsigned)idx_opts.magic, (unsigned)KRAKEN2_OPTS_MAGIC);
   opts.use_translated_search = ! idx_opts.dna_db;
 
   IndexData *index_data = new IndexData();

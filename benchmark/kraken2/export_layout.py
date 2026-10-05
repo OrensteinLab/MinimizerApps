@@ -845,15 +845,15 @@ def detail_fields(rows):
 # ---------------------------------------------------------------------------
 
 ORDER_INFO = {
-    "Random": ("Minimizer", "RandomXor", "--sketching-scheme Minimizer --order RandomXor",
+    "Random": ("Minimizer", "RandomXor", "--sketching minimizer --order xor",
                "random order: the l-mer XORed with the seed (toggle mask), ranked by the hash of that value"),
-    "RandomPcg": ("Minimizer", "RandomPcg", "--sketching-scheme Minimizer --order RandomPcg",
+    "RandomPcg": ("Minimizer", "RandomPcg", "--sketching minimizer --order xor-pcg",
                   "random order with a PCG scramble of the seed-XORed l-mer"),
-    "GreedyMini": ("Minimizer", "GreedyMini", "--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file <table>.gm",
+    "GreedyMini": ("Minimizer", "GreedyMini", "--sketching minimizer --order greedymini --greedymini-file <table>.gm",
                    "GreedyMini table (centre extension), ties broken by the seed"),
-    "ModRandom": ("Mod", "RandomXor", "--sketching-scheme Mod --order RandomXor",
+    "ModRandom": ("Mod", "RandomXor", "--sketching mod-minimizer --order xor",
                   "mod-minimizer (Groot Koerkamp & Pibiri) on a random order"),
-    "ModGreedyMini": ("Mod", "GreedyMini", "--sketching-scheme Mod --order GreedyMini --greedy-mini-file <table>.gm",
+    "ModGreedyMini": ("Mod", "GreedyMini", "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",
                       "mod-minimizer on a GreedyMini table"),
 }
 
@@ -1209,7 +1209,7 @@ COMMON_DOC = [
     ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / repeats_per_mbp and the path split uhs_pct / non_uhs_pct"),
     ("classify_runs", "classify", "<metric>_repeat_std / n_classify_repeats", "std of the metric over the timed repeats of this seed (the seed's value is their mean) and the number of repeats (cold round excluded)"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
-    ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching-scheme (Minimizer | Mod), the --order it ranks by, the GreedyMini table (gm_table, e.g. w5_k15_canonical for GreedyMini and w5_k6_canonical for ModGreedyMini; blank for random orders) and a one-line description"),
+    ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching (minimizer | mod-minimizer), the --order it ranks by, the GreedyMini table (gm_table, e.g. w5_k15_canonical for GreedyMini and w5_k6_canonical for ModGreedyMini; blank for random orders) and a one-line description"),
     ("orders", "density", "expected_density_factor_mean / _std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density microbenchmark rows of the order (tables/minimizer_density.csv; independent of the library; blank for orders without density rows)"),
     ("orders", "density", "<library>_particular_density_factor_mean / _std", "the same factor measured on that library's FASTAs, one column pair per library (never averaged across libraries)"),
     ("orders", "minimizer params", "l / k / w / minimizer_spaces / spaced_seed_mask", "minimizer length l, k-mer length k, window w = k - l + 1, spaced-seed spaces s (pattern 1*(l-2s) + (01)*s, so l - s kept positions) and its mask, read from the order's db/opts.k2d"),

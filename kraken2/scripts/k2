@@ -94,32 +94,22 @@ WRAPPER_ARGS_TO_BIN_ARGS = {
 # SketchingScheme / Order (must match src/sketching_schemes.h + kraken2_data.h)
 SKETCHING_MINIMIZER = 0
 SKETCHING_MOD = 1
-ORDER_RANDOM_XOR = 0  # was ORDER_RANDOM; value 0 kept for DB compatibility
+ORDER_RANDOM_XOR = 0
 ORDER_GM = 1
 ORDER_RANDOM_PCG = 2
 KRAKEN2_DB_VERSION = 2  # must match kraken2_data.h; other versions are rejected
+KRAKEN2_OPTS_MAGIC = 0x4B32534B  # "K2SK"; must match kraken2_data.h
 INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
+# sketching_scheme, order, gm_k, magic, (4 bytes padding), gm_num_entries
 INDEX_OPTIONS_EXT_FMT = "<BBHI4xQ"
-SKETCHING_SCHEME_NAMES = {
-    SKETCHING_MINIMIZER: "Minimizer",
-    SKETCHING_MOD: "Mod",
+SKETCHING_NAMES = {
+    SKETCHING_MINIMIZER: "minimizer",
+    SKETCHING_MOD: "mod-minimizer",
 }
 ORDER_NAMES = {
-    ORDER_RANDOM_XOR: "RandomXor",
-    ORDER_GM: "GreedyMini",
-    ORDER_RANDOM_PCG: "RandomPcg",
-}
-# CLI aliases → canonical display name (matches parse_order in sketching_schemes.h)
-ORDER_ALIASES = {
-    "random": "RandomXor",
-    "randomxor": "RandomXor",
-    "random_xor": "RandomXor",
-    "xor": "RandomXor",
-    "greedymini": "GreedyMini",
-    "gm": "GreedyMini",
-    "randompcg": "RandomPcg",
-    "random_pcg": "RandomPcg",
-    "pcg": "RandomPcg",
+    ORDER_RANDOM_XOR: "xor",
+    ORDER_GM: "greedymini",
+    ORDER_RANDOM_PCG: "xor-pcg",
 }
 
 
@@ -606,13 +596,14 @@ def wrapper_args_to_binary_args(opts, argv, binary_args):
 
 
 def read_index_options(opts_pathname):
-    """Parse opts.k2d. Returns None if it is not a database of the current
-    format (db_version == KRAKEN2_DB_VERSION); such databases must be rebuilt."""
+    """Parse opts.k2d. Returns None unless it is a database of the current
+    format (exact size, db_version == KRAKEN2_DB_VERSION, magic matches);
+    such databases must be rebuilt."""
     with open(opts_pathname, "rb") as in_file:
         data = in_file.read()
     base_size = struct.calcsize(INDEX_OPTIONS_BASE_FMT)
     ext_size = struct.calcsize(INDEX_OPTIONS_EXT_FMT)
-    if len(data) < base_size + ext_size:
+    if len(data) != base_size + ext_size:
         return None
     (
         k,
@@ -627,16 +618,21 @@ def read_index_options(opts_pathname):
     ) = struct.unpack(INDEX_OPTIONS_BASE_FMT, data[:base_size])
     if db_version != KRAKEN2_DB_VERSION:
         return None
-    # the gm_alphabet byte (second field) is reserved and always 0
-    sketching_scheme, _reserved_byte, gm_k, reserved, gm_num_entries = struct.unpack(
+    sketching, order, gm_k, magic, gm_num_entries = struct.unpack(
         INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
     )
+    if (
+        magic != KRAKEN2_OPTS_MAGIC
+        or sketching not in SKETCHING_NAMES
+        or order not in ORDER_NAMES
+    ):
+        return None
     return {
         "k": k,
         "l": l,
         "db_version": db_version,
-        "sketching_scheme": sketching_scheme,
-        "order": reserved & 0xFF,
+        "sketching": sketching,
+        "order": order,
         "gm_k": gm_k,
         "gm_num_entries": gm_num_entries,
         "dna_db": bool(dna_db),
@@ -650,25 +646,18 @@ def database_requires_gm_k2d(opts_pathname):
     return opts["order"] == ORDER_GM and opts["gm_num_entries"] > 0
 
 
-def normalize_order_name(order):
-    """Map CLI aliases (e.g. Random) to canonical names (RandomXor)."""
-    if not order:
-        return "RandomXor"
-    key = order.lower().replace("-", "_")
-    return ORDER_ALIASES.get(key, order)
-
-
 def sketching_order_from_args(args):
-    sketching = getattr(args, "sketching_scheme", None) or "Minimizer"
-    order = normalize_order_name(getattr(args, "order", None) or "RandomXor")
-    return sketching, order
+    return (
+        getattr(args, "sketching", None) or "minimizer",
+        getattr(args, "order", None) or "xor",
+    )
 
 
 def sketching_order_build_key(args):
     sketching, order = sketching_order_from_args(args)
     parts = [sketching, order]
-    if order == "GreedyMini":
-        gm_file = getattr(args, "greedy_mini_file", None)
+    if order == "greedymini":
+        gm_file = getattr(args, "greedymini_file", None)
         if gm_file:
             parts.append(os.path.basename(gm_file))
             if os.path.isfile(gm_file):
@@ -681,38 +670,36 @@ def index_sketching_order_key(opts_pathname):
     opts = read_index_options(opts_pathname)
     if opts is None:
         return None
-    sk = SKETCHING_SCHEME_NAMES.get(opts["sketching_scheme"], "Minimizer")
-    od = ORDER_NAMES.get(opts["order"], "RandomXor")
-    parts = [sk, od]
-    if od == "GreedyMini":
+    parts = [SKETCHING_NAMES[opts["sketching"]], ORDER_NAMES[opts["order"]]]
+    if opts["order"] == ORDER_GM:
         parts.append("gm{}".format(opts["gm_num_entries"]))
     return ":".join(parts)
 
 
 def validate_minimizer_build_args(args):
-    sketching, order = sketching_order_from_args(args)
-    if order != "GreedyMini":
+    _, order = sketching_order_from_args(args)
+    if order != "greedymini":
         return
-    gm_file = getattr(args, "greedy_mini_file", None)
+    gm_file = getattr(args, "greedymini_file", None)
     if not gm_file:
-        LOG.error(
-            "--greedy-mini-file is required when --order GreedyMini\n"
-        )
+        LOG.error("--greedymini-file is required when --order greedymini\n")
         sys.exit(1)
     if not os.path.isfile(gm_file):
-        LOG.error("GreedyMini rank file not found: {:s}\n".format(gm_file))
+        LOG.error("greedymini rank file not found: {:s}\n".format(gm_file))
         sys.exit(1)
+    # With --sketching mod-minimizer the table must be a t-mer table (gm_k ==
+    # t = 4 + (l - 4) mod (k - l + 1)); build_db checks this against the file.
 
 
 def add_sketching_args(args, argv, binary_args):
-    """Pass -s/-O/-G/-T for sketching + order."""
+    """Pass -s/-O/-G/-T (sketching, order, greedymini file, toggle)."""
     sketching, order = sketching_order_from_args(args)
-    if "-s" in binary_args and sketching != "Minimizer":
+    if "-s" in binary_args and sketching != "minimizer":
         argv.extend(["-s", sketching])
-    if "-O" in binary_args and order != "RandomXor":
+    if "-O" in binary_args and order != "xor":
         argv.extend(["-O", order])
-    if "-G" in binary_args and order == "GreedyMini":
-        gm_file = getattr(args, "greedy_mini_file", None)
+    if "-G" in binary_args and order == "greedymini":
+        gm_file = getattr(args, "greedymini_file", None)
         if gm_file:
             argv.extend(["-G", gm_file])
     toggle = getattr(args, "toggle_mask", None)
@@ -734,15 +721,11 @@ def database_build_complete(args):
     stored = index_sketching_order_key("opts.k2d")
     _, order = sketching_order_from_args(args)
 
-    if order == "GreedyMini":
+    if order == "greedymini":
         if not os.path.isfile("gm.k2d"):
             return False
-        if stored is None or ":GreedyMini:" not in (":" + stored + ":"):
-            # stored like Minimizer:GreedyMini:gmN
-            if stored is None or "GreedyMini" not in stored:
-                return False
         opts = read_index_options("opts.k2d")
-        gm_file = getattr(args, "greedy_mini_file", None)
+        gm_file = getattr(args, "greedymini_file", None)
         if opts and gm_file and os.path.isfile(gm_file):
             with open(gm_file, "rb") as gm_in:
                 (table_size,) = struct.unpack("<Q", gm_in.read(8))
@@ -750,7 +733,8 @@ def database_build_complete(args):
                 return False
         else:
             return False
-        # Also require sketching prefix match
+        # stored key is sketching:order:gmN; the requested key's first two
+        # parts (sketching:order) must match.
         req_prefix = ":".join(requested.split(":")[:2])
         sto_prefix = ":".join(stored.split(":")[:2]) if stored else ""
         if req_prefix != sto_prefix:
@@ -3480,12 +3464,7 @@ def build_kraken2_db(args):
             with open("estimated_capacity", "r") as in_file:
                 lines = in_file.readlines()
             cached_scheme = lines[2].strip() if len(lines) >= 3 else None
-            if cached_scheme == scheme_key or (
-                cached_scheme is None and scheme_key in (
-                    "RandomXor", "Minimizer:RandomXor",
-                    "Random", "Minimizer:Random",
-                )
-            ):
+            if cached_scheme == scheme_key:
                 LOG.info(
                     "An estimated_capacity file exists and is newer "
                     "than any of the prelim_map.txt files, reading the estimated "
@@ -5188,31 +5167,33 @@ def make_build_parser(subparsers):
         help="Bit storage requested for taxid",
     )
     parser.add_argument(
-        "--sketching-scheme",
+        "--sketching",
         type=str,
-        metavar="SCHEME",
-        default="Minimizer",
-        choices=["Minimizer", "Mod"],
-        help="Sketching rule (default: Minimizer). Choices: Minimizer, Mod",
+        metavar="SKETCHING",
+        default="minimizer",
+        choices=["minimizer", "mod-minimizer"],
+        help="Sketching rule (default: minimizer). Choices: minimizer, "
+             "mod-minimizer",
     )
     parser.add_argument(
         "--order",
         type=str,
         metavar="ORDER",
-        default="RandomXor",
-        choices=["RandomXor", "Random", "GreedyMini", "RandomPcg"],
-        help="Substring order O_ℓ / O_t (default: RandomXor). Choices: "
-             "RandomXor (alias: Random), GreedyMini, RandomPcg",
+        default="xor",
+        choices=["xor", "xor-pcg", "greedymini"],
+        help="Substring order O_l / O_t (default: xor). Choices: xor, "
+             "xor-pcg, greedymini",
     )
     parser.add_argument(
-        "--greedy-mini-file",
+        "--greedymini-file",
         type=str,
         metavar="FILENAME",
         default=None,
-        help="Path to GreedyMini rank file (.gm); "
-             "required when --order GreedyMini. With --sketching-scheme "
-             "Minimizer the minimizer length l must be gm_k + 2i "
-             "(w5_k15_canonical.gm: 15, 17, ..., 31)",
+        help="Path to greedymini rank file (.gm); required when --order "
+             "greedymini. With --sketching minimizer the minimizer length l "
+             "must be gm_k + 2i (w5_k15_canonical.gm: 15, 17, ..., 31); with "
+             "--sketching mod-minimizer the table's gm_k must equal t "
+             "(w5_k6_canonical.gm)",
     )
     parser.add_argument(
         "--log",

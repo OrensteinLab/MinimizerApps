@@ -334,11 +334,15 @@ used if the new path is missing.
 
 | Label | CLI |
 |-------|-----|
-| `Random` | `--sketching-scheme Minimizer --order RandomXor` |
-| `RandomPcg` | `--sketching-scheme Minimizer --order RandomPcg` |
-| `GreedyMini` | `--sketching-scheme Minimizer --order GreedyMini` + `w5_k15_*.gm` |
-| `ModRandom` | `--sketching-scheme Mod --order RandomXor` |
-| `ModGreedyMini` | `--sketching-scheme Mod --order GreedyMini` + `w5_k6_*.gm` |
+| `Random` | `--sketching minimizer --order xor` |
+| `RandomPcg` | `--sketching minimizer --order xor-pcg` |
+| `GreedyMini` | `--sketching minimizer --order greedymini --greedymini-file w5_k15_*.gm` |
+| `ModRandom` | `--sketching mod-minimizer --order xor` |
+| `ModGreedyMini` | `--sketching mod-minimizer --order greedymini --greedymini-file w5_k6_*.gm` |
+
+(The harness labels are renamed to `xor`, `xor-pcg`, `greedymini`,
+`mod-minimizer-xor`, `mod-minimizer-greedymini` in a later step; the k2 flags
+above are final. sshash uses `--greedy-mini-file`, kmc its own options.)
 
 GreedyMini tables (`../../orders/GreedyMini/`): `-g` / `GM_FILE` (`w5_k15_canonical.gm`),
 `-M` / `MOD_GM_FILE` (`w5_k6_canonical.gm`).

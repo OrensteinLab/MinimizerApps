@@ -10,6 +10,7 @@
 #include "utilities.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -361,16 +362,122 @@ int main() {
     }
   }
 
-  // opts.k2d scheme encode/decode round trip.
+  // opts.k2d scheme encode/decode round trip, magic, layout.
   {
+    check(sizeof(IndexOptions) == 80, "sizeof(IndexOptions) == 80");
+    check(offsetof(IndexOptions, sketching_scheme) == 60 &&
+              offsetof(IndexOptions, order) == 61 &&
+              offsetof(IndexOptions, gm_k) == 62 &&
+              offsetof(IndexOptions, magic) == 64 &&
+              offsetof(IndexOptions, gm_num_entries) == 72,
+          "IndexOptions fork tail offsets");
+    const SketchingScheme sks[] = {SketchingScheme::MINIMIZER,
+                                   SketchingScheme::MOD};
+    const Order ods[] = {Order::RANDOM_XOR, Order::GM, Order::RANDOM_PCG};
+    bool all_ok = true;
+    for (SketchingScheme s0 : sks)
+      for (Order o0 : ods) {
+        IndexOptions o = {0};
+        EncodeIndexSchemes(o, s0, o0);
+        SketchingScheme sk;
+        Order od;
+        DecodeIndexSchemes(o, sk, od);
+        all_ok = all_ok && o.db_version == KRAKEN2_DB_VERSION && sk == s0 &&
+                 od == o0 && o.magic == KRAKEN2_OPTS_MAGIC &&
+                 IndexOptionsValid(o, sizeof(IndexOptions));
+      }
+    check(all_ok, "IndexOptions scheme encode/decode + magic");
+    check((int)SketchingScheme::MINIMIZER == 0 && (int)SketchingScheme::MOD == 1 &&
+              (int)Order::RANDOM_XOR == 0 && (int)Order::GM == 1 &&
+              (int)Order::RANDOM_PCG == 2,
+          "persisted enum ids");
+
+    // Old layout (pre magic): order in the low byte of the reserved field.
     IndexOptions o = {0};
-    EncodeIndexSchemes(o, SketchingScheme::MOD, Order::GM);
-    SketchingScheme sk;
-    Order od;
-    DecodeIndexSchemes(o, sk, od);
-    check(o.db_version == KRAKEN2_DB_VERSION && sk == SketchingScheme::MOD &&
-              od == Order::GM,
-          "IndexOptions scheme encode/decode");
+    EncodeIndexSchemes(o, SketchingScheme::MINIMIZER, Order::GM);
+    check(IndexOptionsValid(o, sizeof(IndexOptions)), "valid opts accepted");
+    check(!IndexOptionsValid(o, sizeof(IndexOptions) - 16), "short opts rejected");
+    check(!IndexOptionsValid(o, sizeof(IndexOptions) + 1), "long opts rejected");
+    IndexOptions old = o;
+    old.magic = 1;  // old reserved = Order::GM
+    check(!IndexOptionsValid(old, sizeof(IndexOptions)), "old layout rejected");
+    for (uint32_t r = 0; r < 3; r++) {
+      old.magic = r;
+      check(!IndexOptionsValid(old, sizeof(IndexOptions)),
+            "old layout reserved in {0,1,2} rejected");
+    }
+    IndexOptions v = o;
+    v.db_version = 1;
+    check(!IndexOptionsValid(v, sizeof(IndexOptions)), "db_version != 2 rejected");
+    v = o;
+    v.order = 3;
+    check(!IndexOptionsValid(v, sizeof(IndexOptions)), "bad order id rejected");
+  }
+
+  // Scheme / order vocabulary.
+  {
+    auto rejects_sk = [](const char *s0) {
+      try { parse_sketching_scheme(s0); } catch (const std::invalid_argument &) { return true; }
+      return false;
+    };
+    auto rejects_od = [](const char *s0) {
+      try { parse_order(s0); } catch (const std::invalid_argument &) { return true; }
+      return false;
+    };
+    check(parse_sketching_scheme("minimizer") == SketchingScheme::MINIMIZER &&
+              parse_sketching_scheme("mod-minimizer") == SketchingScheme::MOD,
+          "parse sketching: new names");
+    check(parse_order("xor") == Order::RANDOM_XOR &&
+              parse_order("xor-pcg") == Order::RANDOM_PCG &&
+              parse_order("greedymini") == Order::GM,
+          "parse order: new names");
+    const char *bad_sk[] = {"Minimizer", "Mod", "MINIMIZER", "MOD", "mod",
+                            "modminimizer", "ModMinimizer", "Mod-Minimizer",
+                            "MOD-MINIMIZER", "mod_minimizer", "", "xor"};
+    const char *bad_od[] = {"RandomXor", "Random", "random", "randomxor",
+                            "random_xor", "RandomPcg", "randompcg",
+                            "random_pcg", "pcg", "PCG", "GreedyMini", "gm",
+                            "GM", "GREEDYMINI", "XOR", "Xor", "xor_pcg",
+                            "XOR-PCG", "xor-Pcg", "", "minimizer"};
+    bool ok_sk = true, ok_od = true;
+    for (const char *b : bad_sk) ok_sk = ok_sk && rejects_sk(b);
+    for (const char *b : bad_od) ok_od = ok_od && rejects_od(b);
+    check(ok_sk, "old/uppercase sketching spellings rejected");
+    check(ok_od, "old/uppercase order spellings rejected");
+    try {
+      parse_order("Random");
+      check(false, "error text");
+    } catch (const std::invalid_argument &e) {
+      const std::string m = e.what();
+      check(m.find("xor, xor-pcg, greedymini") != std::string::npos,
+            "order error lists new choices");
+    }
+    try {
+      parse_sketching_scheme("Mod");
+      check(false, "error text");
+    } catch (const std::invalid_argument &e) {
+      const std::string m = e.what();
+      check(m.find("minimizer, mod-minimizer") != std::string::npos,
+            "sketching error lists new choices");
+    }
+
+    // Labels: round trip over all combinations.
+    struct { SketchingScheme s; Order o; const char *label; } want[] = {
+        {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "xor"},
+        {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "xor-pcg"},
+        {SketchingScheme::MINIMIZER, Order::GM, "greedymini"},
+        {SketchingScheme::MOD, Order::RANDOM_XOR, "mod-minimizer-xor"},
+        {SketchingScheme::MOD, Order::RANDOM_PCG, "mod-minimizer-xor-pcg"},
+        {SketchingScheme::MOD, Order::GM, "mod-minimizer-greedymini"}};
+    bool lab_ok = true;
+    for (auto &w : want) {
+      lab_ok = lab_ok && scheme_label(w.s, w.o) == w.label;
+      // label == [mod-minimizer-]order name; parse back through the names.
+      lab_ok = lab_ok &&
+               parse_sketching_scheme(sketching_scheme_name(w.s)) == w.s &&
+               parse_order(order_name(w.o)) == w.o;
+    }
+    check(lab_ok, "scheme_label / name round trip (6 combinations)");
   }
 
   // ACGT->ATCG: A=00,C=01,G=10,T=11 -> A=00,T=01,C=10,G=11

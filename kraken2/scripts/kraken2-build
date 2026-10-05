@@ -65,9 +65,9 @@ my (
   $standard,
   $clean,
   $special,
-  $sketching_scheme,
+  $sketching,
   $order,
-  $greedy_mini_file,
+  $greedymini_file,
 );
 
 # Initialization of defaults and env. var checks
@@ -124,9 +124,9 @@ GetOptions(
   "standard" => \$standard,
   "clean" => \$clean,
   "special=s" => \$special,
-  "sketching-scheme=s" => \$sketching_scheme,
+  "sketching=s" => \$sketching,
   "order=s" => \$order,
-  "greedy-mini-file=s" => \$greedy_mini_file,
+  "greedymini-file=s" => \$greedymini_file,
 ) or usage();
 
 if ($is_protein) {
@@ -195,12 +195,12 @@ $ENV{"KRAKEN2_FAST_BUILD"} = $fast_build ? 1 : "";
 $ENV{"KRAKEN2_BLOCK_SIZE"} = $block_size;
 $ENV{"KRAKEN2_SUBBLOCK_SIZE"} = $subblock_size;
 $ENV{"KRAKEN2_MIN_TAXID_BITS"} = $minimum_bits_for_taxid;
-$sketching_scheme = "Minimizer" if ! defined $sketching_scheme;
-$order = "RandomXor" if ! defined $order;
-$greedy_mini_file = "" if ! defined $greedy_mini_file;
-$ENV{"KRAKEN2_SKETCHING_SCHEME"} = $sketching_scheme;
+$sketching = "minimizer" if ! defined $sketching;
+$order = "xor" if ! defined $order;
+$greedymini_file = "" if ! defined $greedymini_file;
+$ENV{"KRAKEN2_SKETCHING"} = $sketching;
 $ENV{"KRAKEN2_ORDER"} = $order;
-$ENV{"KRAKEN2_GREEDY_MINI_FILE"} = $greedy_mini_file;
+$ENV{"KRAKEN2_GREEDYMINI_FILE"} = $greedymini_file;
 
 if ($dl_taxonomy) {
   download_taxonomy();
@@ -284,13 +284,12 @@ Options:
                              built when using multiple threads.  This is faster,
                              but does introduce variability in minimizer/LCA
                              pairs.  Used with --build and --standard options.
-  --sketching-scheme SCHEME  Sketching rule: Minimizer (default) or Mod
-                             (build task only).
-  --order ORDER              Substring order: RandomXor (default; alias Random),
-                             GreedyMini, or RandomPcg
-                             (build task only).
-  --greedy-mini-file FILE    Path to GreedyMini binary rank file (.gm);
-                             required when --order GreedyMini.
+  --sketching SKETCHING      Sketching rule: minimizer (default) or
+                             mod-minimizer (build task only).
+  --order ORDER              Substring order: xor (default), xor-pcg, or
+                             greedymini (build task only).
+  --greedymini-file FILE     Path to greedymini rank file (.gm); required when
+                             --order greedymini.
 EOF
   exit $exit_code;
 }
