@@ -93,6 +93,9 @@ def parse_args(argv):
     p.add_argument("--kraken", required=True, help="Kraken 2 --output file")
     p.add_argument("--out-tsv", required=True)
     p.add_argument("--scheme", default="")
+    p.add_argument("--minimum-hit-groups", type=int, default=None,
+                   help="classify --minimum-hit-groups used for this output; "
+                        "recorded in the minimum_hit_groups column")
     p.add_argument("--dataset", default="strain-exclusion")
     p.add_argument("--calls-dir", default="", help="Write per-domain call TSVs here")
     p.add_argument("--expected-s1", default="", help="table_s1.csv for Kraken 2 genus check")
@@ -140,6 +143,7 @@ def main(argv=None):
 
     fields = [
         "scheme",
+        "minimum_hit_groups",
         "dataset",
         "domain",
         "rank",
@@ -155,10 +159,12 @@ def main(argv=None):
         "ppv",
         "f1",
     ]
+    mhg = "" if args.minimum_hit_groups is None else args.minimum_hit_groups
     with open(args.out_tsv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for rec in rows:
+            rec["minimum_hit_groups"] = mhg
             w.writerow(rec)
     print("  wrote", args.out_tsv)
 

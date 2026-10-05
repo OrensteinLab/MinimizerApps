@@ -9,16 +9,14 @@ from __future__ import print_function
 
 import sys
 
-REF_SCHEME = "Random"
+REF_SCHEME = "xor"
 
 SCHEME_ORDER = {
-    "Random": 0,
-    "RandomXor": 0,
-    "RandomPcg": 1,
-    "GreedyMini": 2,
-    "ModRandom": 4,
-    "ModRandomXor": 4,
-    "ModGreedyMini": 5,
+    "xor": 0,
+    "xor-pcg": 1,
+    "greedymini": 2,
+    "mod-minimizer-xor": 3,
+    "mod-minimizer-greedymini": 4,
 }
 
 # Same 64-bit binary strings as historical run_benchmark.sh DEFAULT_SEEDS.

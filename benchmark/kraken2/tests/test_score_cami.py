@@ -119,6 +119,14 @@ class ScoreCamiTest(unittest.TestCase):
         # r5 r6: species 581 not in library -> excluded; r8 has no species node
         self.assertEqual(s["excluded"], "2")
 
+    def test_minimum_hit_groups_column(self):
+        import csv
+        out = os.path.join(self.tmp, "mhg.csv")
+        score_cami.main(["--nodes", self.nodes, "--truth", self.truth, "--kraken", self.kraken,
+                         "--out-tsv", out, "--scheme", "T", "--minimum-hit-groups", "0"])
+        with open(out, newline="") as f:
+            self.assertEqual({r["minimum_hit_groups"] for r in csv.DictReader(f)}, {"0"})
+
     def test_without_library_nothing_is_excluded(self):
         g = self.run_score()[("all", "genus")]
         self.assertEqual(g["excluded"], "0")

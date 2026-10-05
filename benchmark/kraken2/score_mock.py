@@ -29,7 +29,7 @@ the genus_taxid column of the composition table.
 
 Usage:
   score_mock.py --report r.txt --composition mock_zymo_d6300_expected.csv \\
-      --out-tsv metrics.tsv [--nodes nodes.dmp] [--scheme Random] \\
+      --out-tsv metrics.tsv [--nodes nodes.dmp] [--scheme xor] \\
       [--abundance gdna_pct] [--min-fracs 0,1e-4,1e-3]
 """
 
@@ -47,6 +47,7 @@ RANK_CODE = {"genus": "G", "species": "S"}
 SCOPES = ("all", "bacteria")
 FIELDS = [
     "scheme",
+    "minimum_hit_groups",
     "dataset",
     "scope",
     "rank",
@@ -270,6 +271,9 @@ def parse_args(argv):
     p.add_argument("--nodes", default="", help="nodes.dmp (derive expected genera)")
     p.add_argument("--scheme", default="")
     p.add_argument("--dataset", default="mock")
+    p.add_argument("--minimum-hit-groups", type=int, default=None,
+                   help="classify --minimum-hit-groups used for this output; "
+                        "recorded in the minimum_hit_groups column")
     p.add_argument("--abundance", default="gdna_pct",
                    help="expected column: gdna_pct (reads, default), genome_copy_pct, cell_pct")
     p.add_argument("--min-fracs", default="0,1e-4,1e-3",
@@ -287,6 +291,8 @@ def main(argv=None):
         w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
         w.writeheader()
         for r in rows:
+            r["minimum_hit_groups"] = (
+                "" if args.minimum_hit_groups is None else args.minimum_hit_groups)
             w.writerow(r)
     for r in rows:
         if r["scope"] == "all" and r["min_frac"] == 1e-4:

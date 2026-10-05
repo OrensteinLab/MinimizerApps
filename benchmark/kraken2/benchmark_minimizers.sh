@@ -60,7 +60,7 @@ $(bench_common_options_help)
   -j N          Parallel density jobs (schemes × library files; default: OMP auto)
 
 Microbench-only:
-  -l INT        minimizer length ℓ (default: 31). GreedyMini needs ℓ = gm_k + 2i
+  -l INT        minimizer length ℓ (default: 31). greedymini needs ℓ = gm_k + 2i
                 (w5_k15_canonical: 15, 17, ..., 31); the centre extension then
                 keeps the table's density factor (~1.467) at every such ℓ.
                 See kraken2/minimizers/README.md for the sweep commands.
@@ -196,8 +196,8 @@ run_one() {
     local sch
     for sch in "${schemes[@]}"; do
         case "${sch}" in
-            GreedyMini) args+=(-g "${GM_FILE}") ;;
-            ModGreedyMini) args+=(-M "${MOD_GM_FILE}") ;;
+            greedymini) args+=(-g "${GM_FILE}") ;;
+            mod-minimizer-greedymini) args+=(-M "${MOD_GM_FILE}") ;;
         esac
     done
     [[ -n "${TIMING_FILE}" ]] && args+=(-F "${TIMING_FILE}")

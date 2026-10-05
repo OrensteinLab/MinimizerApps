@@ -11,7 +11,6 @@ bench_py_experiments() {
 reset_run_options() {
     SCHEME=""
     N_SEEDS=1
-    N_CLASSIFY=1
     SCHEME_THREADS=16
     PARALLEL_JOBS=1
     LIBRARY="standard"
@@ -37,9 +36,9 @@ run_experiment() {
         reset_run_options
         eval "${env_lines[$i]}"
         flag="$(library_flag)"
-        echo "=== [$((i + 1))/${n}] scheme=${SCHEME} n_seeds=${N_SEEDS} n_classify=${N_CLASSIFY} threads=${SCHEME_THREADS} jobs=${PARALLEL_JOBS} library=${LIBRARY} $(date) ==="
+        echo "=== [$((i + 1))/${n}] scheme=${SCHEME} n_seeds=${N_SEEDS} threads=${SCHEME_THREADS} jobs=${PARALLEL_JOBS} library=${LIBRARY} $(date) ==="
         "${SCRIPT_DIR}/run_benchmark.sh" ${flag:+"${flag}"} \
-            -S "${SCHEME}" -n "${N_SEEDS}" -r "${N_CLASSIFY}" \
+            -S "${SCHEME}" -n "${N_SEEDS}" \
             -j "${PARALLEL_JOBS}" -t "${SCHEME_THREADS}"
     done
 }

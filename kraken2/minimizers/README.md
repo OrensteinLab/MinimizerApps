@@ -54,7 +54,7 @@ from them on demand (`../benchmark/kraken2/benchmark_interface.sh`'s
 
 | File | Role |
 |------|------|
-| `w5_k15_canonical.gm` | Minimizer + binary GreedyMini (`-g` / `GM_FILE`; default). Centre extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
+| `w5_k15_canonical.gm` | `--sketching minimizer --order greedymini` (`-g` / `GM_FILE`; default). Centre extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
 | `w5_k6_canonical.gm` | mod-minimizer + binary greedymini (`-M` / `MOD_GM_FILE`; default). gm_k=t=6 with Kraken ℓ=31,k=35 (w=5). |
 
 Kraken 2 supports only binary-alphabet GreedyMini tables; a few other tables
@@ -118,12 +118,12 @@ changes. Numbers are mean ± std (sample) over 6 independent i.i.d. random DNA
 streams of 3 Mb (stream i: `--seed i` and a different tie-break/hash toggle),
 spaced seed off (s = 0) unless stated; "old" = the prefix extension of
 `575b123`, "new" = centre. At ℓ = 15 = gm_k both are the table itself, i.e. the
-design density (1.4662 ± 0.0003 measured). `xor` (RandomXor) is Kraken's default order (xor with the toggle mask; its
-density varies with the toggle), RandomPcg a proper random hash.
+design density (1.4662 ± 0.0003 measured). `xor` is Kraken's default order (xor with the toggle mask; its
+density varies with the toggle), `xor-pcg` a proper random hash.
 
 **Expected density, `w5_k15_canonical`** ([`../../benchmark/kraken2/tables/gm_centre_density_expected.csv`](../../benchmark/kraken2/tables/gm_centre_density_expected.csv))
 
-| ℓ | old (prefix) | new (centre) | RandomXor | RandomPcg |
+| ℓ | old (prefix) | new (centre) | xor | xor-pcg |
 |---|---|---|---|---|
 | 15 (= gm_k, design) | 1.4662 ± 0.0003 | 1.4662 ± 0.0003 | 2.019 ± 0.064 | 1.9993 ± 0.0011 |
 | 17 | 1.9853 ± 0.0006 | 1.4659 ± 0.0003 | 2.034 ± 0.058 | 1.9997 ± 0.0005 |
@@ -150,14 +150,14 @@ run where `ext + ℓ > 48`): `w11_k13` (w = 11): ℓ = 13 1.5913 ± 0.0004, cent
 unsupported). `w11_k15`: ℓ = 15 1.5236 ± 0.0002; ℓ = 21 centre 1.5248
 (old 1.8863), ℓ = 31 centre 1.5231 (old 1.6023). `w20_k9` (w = 20): ℓ = 9
 1.7180 ± 0.0007; ℓ = 21 centre 1.7200 (old 1.8016), ℓ = 31 centre 1.7179 (old
-unsupported). `w5_k6` is the Mod table (ℓ = gm_k = t, no extension).
+unsupported). `w5_k6` is the mod-minimizer table (ℓ = gm_k = t, no extension).
 
 **Particular density** (real sequence): the library FASTAs of the benchmark's
 `standard_p0.5` Kraken library (`benchmark_minimizers.sh -z`; archaea, bacteria,
 human, UniVec_Core, viral; ≈1.42 Gbp, scanned in full, one pass per
 scheme), `w5_k15_canonical`, one run per cell ([`../../benchmark/kraken2/tables/gm_centre_density_particular.csv`](../../benchmark/kraken2/tables/gm_centre_density_particular.csv)):
 
-| ℓ | old (prefix) | new (centre) | RandomXor | RandomPcg |
+| ℓ | old (prefix) | new (centre) | xor | xor-pcg |
 |---|---|---|---|---|
 | 15 (= gm_k) | 1.4730 | 1.4730 | 1.954 | 2.000 |
 | 17 | 1.9882 | 1.4727 | 2.099 | 1.9998 |
@@ -175,7 +175,7 @@ random model: at ℓ = 31 the centre order selects 4.1 % fewer minimizers
 at ℓ = 25 / 29. The benchmark does not measure database size from density, so
 no size change is claimed; fewer selected minimizers means fewer distinct
 minimizer lookups per Mbp. `ns/minimizer` of `NextMinimizer` is unchanged
-(≈ 93–95 ns centre vs ≈ 100 ns prefix, RandomXor ≈ 91 ns on a loaded machine).
+(≈ 93–95 ns centre vs ≈ 100 ns prefix, xor ≈ 91 ns on a loaded machine).
 
 **Reproduce** (run from the repo root; `nice -n 19`, ≤ 4 threads):
 
@@ -197,8 +197,8 @@ done
 python3.9 benchmark/kraken2/density_summary.py p.csv --col fac_particular
 ```
 
-`density_sweep.sh` calls, per (ℓ, stream i): `nice -n 19 BIN -S GreedyMini
-[Random RandomPcg] -g $G -l ℓ -k ℓ+4 -n 3000000 -j 1 -s SPACES -T TOGGLE_i
+`density_sweep.sh` calls, per (ℓ, stream i): `nice -n 19 BIN -S greedymini
+[xor xor-pcg] -g $G -l ℓ -k ℓ+4 -n 3000000 -j 1 -s SPACES -T TOGGLE_i
 --seed i --seed-idx i -d DB -o out.csv`. Unit tests: `make -C kraken2/src test`
 (per-base reference over ≥ 1e7 random ℓ-mers, strand invariance, injectivity,
 rejections, DB guard, equality with sshash's Python vectors).

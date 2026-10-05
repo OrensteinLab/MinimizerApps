@@ -174,6 +174,12 @@ class ScoreMockTest(unittest.TestCase):
             rows = list(csv.DictReader(f))
         self.assertEqual(len(rows), 2 * 2 * 3)
         self.assertEqual(set(rows[0]), set(score_mock.FIELDS))
+        self.assertEqual({r["minimum_hit_groups"] for r in rows}, {""})
+        self.assertEqual(score_mock.main(["--report", self.report, "--composition",
+                                          self.comp, "--out-tsv", out, "--scheme", "S",
+                                          "--minimum-hit-groups", "2"]), 0)
+        with open(out, newline="") as f:
+            self.assertEqual({r["minimum_hit_groups"] for r in csv.DictReader(f)}, {"2"})
 
 
 if __name__ == "__main__":

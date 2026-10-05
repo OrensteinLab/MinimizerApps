@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # density_sweep.sh - minimizer density factor (selected positions / windows x
-# (w+1)) of Random and GreedyMini over a range of minimizer lengths l, using
+# (w+1)) of xor and greedymini over a range of minimizer lengths l, using
 # kraken2/src/benchmark_minimizers (so it is exactly the density that tool
 # reports: expected = i.i.d. random DNA, particular = library FASTAs under -d).
 #
 #   density_sweep.sh -b BIN -g TABLE.gm -v LABEL -o OUT.csv [options]
 #     -b BIN     benchmark_minimizers binary (build: make -C kraken2/src benchmark_minimizers;
 #                to compare against an older revision build that revision's binary)
-#     -g FILE    binary GreedyMini table (.gm)
+#     -g FILE    binary greedymini table (.gm)
 #     -v LABEL   variant label written to the CSV (e.g. prefix, centre)
 #     -o FILE    CSV to append to (header written when the file is new)
 #     -L "l.."   minimizer lengths (default "15 17 19 21 23 25 27 29 31"); k = l + W - 1
@@ -19,7 +19,7 @@
 #     -d DIR     Kraken DB dir (library/ FASTAs) for the particular density
 #                (default: a tiny dummy FASTA, i.e. expected density only; use
 #                -S 1 -n 100000 for particular-only runs)
-#     -R         also run the Random baselines (RandomXor = kraken2 default, RandomPcg)
+#     -R         also run the xor baselines (xor = kraken2 default, xor-pcg)
 # Runs under nice -n 19 with one thread per invocation unless -j is given.
 # Aggregate with density_summary.py.
 set -euo pipefail
@@ -43,7 +43,7 @@ if [[ -z $DB ]]; then
                for (i = 0; i < 5000; i++) s = s substr("ACGT", int(rand() * 4) + 1, 1);
                print s }' >"$DB/dummy.fna"
 fi
-SCHEMES="GreedyMini"; [[ $WITH_RANDOM == 1 ]] && SCHEMES="Random RandomPcg GreedyMini"
+SCHEMES="greedymini"; [[ $WITH_RANDOM == 1 ]] && SCHEMES="xor xor-pcg greedymini"
 [[ -s $OUT ]] || echo "variant,spaces,scheme,seed_idx,toggle_hex,l,k,w,dens_expected,dens_particular,fac_expected,fac_particular,ns_per_minimizer,sm_mean_exp,sm_max_exp,sm_mean_part,sm_max_part" >"$OUT"
 for l in $LS; do
   for ((i = 1; i <= SEEDS; i++)); do

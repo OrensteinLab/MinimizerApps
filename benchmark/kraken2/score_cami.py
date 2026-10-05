@@ -27,7 +27,7 @@ Without --kraken only the library coverage of the truth is printed
 
 Usage:
   score_cami.py --nodes nodes.dmp --truth truth.tsv --library-dir db/standard_p10 \\
-      --kraken out.kraken --scheme Random --out-tsv metrics.tsv
+      --kraken out.kraken --scheme xor --out-tsv metrics.tsv
   score_cami.py --nodes nodes.dmp --truth truth.tsv --library-dir db/strain_exclusion
 """
 
@@ -56,6 +56,7 @@ DOMAIN_OF_SUPERKINGDOM = {
 NOVELTY_SKIP = ("", "NA", "unknown")
 FIELDS = [
     "scheme",
+    "minimum_hit_groups",
     "dataset",
     "group",
     "rank",
@@ -274,6 +275,9 @@ def parse_args(argv):
     p.add_argument("--out-tsv", default="")
     p.add_argument("--scheme", default="")
     p.add_argument("--dataset", default="cami")
+    p.add_argument("--minimum-hit-groups", type=int, default=None,
+                   help="classify --minimum-hit-groups used for this output; "
+                        "recorded in the minimum_hit_groups column")
     return p.parse_args(argv)
 
 
@@ -311,6 +315,8 @@ def main(argv=None):
         w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
         w.writeheader()
         for rec in rows:
+            rec["minimum_hit_groups"] = (
+                "" if args.minimum_hit_groups is None else args.minimum_hit_groups)
             w.writerow(rec)
     print("  wrote", args.out_tsv)
     return 0

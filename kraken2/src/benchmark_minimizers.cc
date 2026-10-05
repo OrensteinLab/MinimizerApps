@@ -1,7 +1,7 @@
 /*
- * Microbenchmark: RandomXor / RandomPcg / GreedyMini via
+ * Microbenchmark: xor / xor-pcg / greedymini via
  * MinimizerScanner::NextMinimizer.
- * Reports mean throughput, batch latency distribution, and (GreedyMini only)
+ * Reports mean throughput, batch latency distribution, and (greedymini only)
  * Rank() UHS stats and isolated Rank() replay by UHS vs non-UHS path.
  */
 
@@ -789,47 +789,38 @@ struct SchemeLabel {
   SketchingScheme sketching;
   Order order;
   const char *name;       // CLI / display (matches run_benchmark.sh)
-  bool needs_gm_bin;      // Minimizer + GreedyMini binary (-g)
-  bool needs_mod_gm;      // Mod + GreedyMini (-M)
+  bool needs_gm_bin;      // Minimizer + greedymini binary (-g)
+  bool needs_mod_gm;      // Mod + greedymini (-M)
 };
 
-// Same labels as ../benchmark/kraken2/run_benchmark.sh -S.
+// Same labels as ../benchmark/kraken2/run_benchmark.sh -S (exact names, no
+// aliases): sketching_schemes.h scheme_label(sketching, order).
 static const SchemeLabel kAllSchemes[] = {
-    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "Random", false, false},
-    {SketchingScheme::MINIMIZER, Order::GM, "GreedyMini", true, false},
-    {SketchingScheme::MOD, Order::RANDOM_XOR, "ModRandom", false, false},
-    {SketchingScheme::MOD, Order::GM, "ModGreedyMini", false, true},
-    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "RandomPcg", false,
+    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "xor", false, false},
+    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "xor-pcg", false, false},
+    {SketchingScheme::MINIMIZER, Order::GM, "greedymini", true, false},
+    {SketchingScheme::MOD, Order::RANDOM_XOR, "mod-minimizer-xor", false,
      false},
+    {SketchingScheme::MOD, Order::GM, "mod-minimizer-greedymini", false, true},
 };
 
 // Default list matches run_benchmark.sh.
 static const char *kDefaultSchemeNames[] = {
-    "Random", "GreedyMini", "ModRandom", "ModGreedyMini", "RandomPcg",
+    "xor", "xor-pcg", "greedymini", "mod-minimizer-xor",
+    "mod-minimizer-greedymini",
 };
 
-static std::string normalize_scheme_name(std::string name) {
-  if (name == "RandomXor")
-    return "Random";
-  if (name == "ModRandomXor")
-    return "ModRandom";
-  if (name == "RandomPCG" || name == "randompcg" || name == "random_pcg")
-    return "RandomPcg";
-  return name;
-}
-
 static const SchemeLabel *find_scheme(const std::string &name) {
-  const std::string n = normalize_scheme_name(name);
   for (const auto &s : kAllSchemes) {
-    if (n == s.name)
+    if (name == s.name)
       return &s;
   }
   return nullptr;
 }
 
 static void list_schemes_stderr() {
-  std::cerr << "  Random | GreedyMini | ModRandom | "
-               "ModGreedyMini | RandomPcg\n";
+  std::cerr << "  xor | xor-pcg | greedymini | mod-minimizer-xor | "
+               "mod-minimizer-greedymini\n";
 }
 
 struct RunRow {
@@ -1026,21 +1017,21 @@ static void print_kraken_payoff(const std::vector<RunRow> &rows,
     }
   };
 
-  print_pair("RandomXor", min_xor, mod_xor);
-  print_pair("RandomPcg", min_pcg, mod_pcg);
-  print_pair("GreedyMini", min_gm, mod_gm);
+  print_pair("xor", min_xor, mod_xor);
+  print_pair("xor-pcg", min_pcg, mod_pcg);
+  print_pair("greedymini", min_gm, mod_gm);
 }
 
 static void usage() {
   std::cerr
       << "Usage: benchmark_minimizers [options]\n"
       << "  -S NAME   Scheme(s) to run (repeatable / space-separated):\n"
-      << "            Random | GreedyMini | ModRandom |\n"
-      << "            ModGreedyMini | RandomPcg\n"
-      << "            (default: Random GreedyMini ModRandom ModGreedyMini "
-         "RandomPcg)\n"
-      << "  -g FILE   GreedyMini binary ℓ-mer table for GreedyMini\n"
-      << "  -M FILE   Mod+GreedyMini binary t-mer table (also --mod-gm)\n"
+      << "            xor | xor-pcg | greedymini | mod-minimizer-xor |\n"
+      << "            mod-minimizer-greedymini\n"
+      << "            (default: all five, in this order)\n"
+      << "  -g FILE   greedymini binary ℓ-mer table (w5_k15) for greedymini\n"
+      << "  -M FILE   mod-minimizer-greedymini binary t-mer table (w5_k6; also "
+         "--mod-gm)\n"
       << "  -l INT    minimizer length ℓ (default: 31)\n"
       << "  -k INT    k-mer length (default: l+4 ⇒ w=5)\n"
       << "  -n INT    DNA length ≈ n + k for expected density (default: 50000000)\n"
@@ -1051,7 +1042,7 @@ static void usage() {
          "(library/ FASTAs)\n"
       << "  -o FILE   write density table to FILE (.csv or text summary)\n"
       << "  --seed-idx INT  seed index column for CSV (default: 0)\n"
-      << "  --rank-path full|first|roll  GreedyMini centre scan: full Rank() per\n"
+      << "  --rank-path full|first|roll  greedymini centre scan: full Rank() per\n"
          "            l-mer, rank first (pext Sigma), rank first + rolled Sigma\n"
       << "  -L FLOAT  ns per TOK_LOOKUP (GetBatch); from lookup_s/lookups×1e9\n"
       << "  -F FILE   classify timing file (nextminimizer_timing_*.txt)\n"
@@ -1317,9 +1308,9 @@ int main(int argc, char **argv) {
     need_mod_gm = need_mod_gm || s->needs_mod_gm;
   }
   if (need_gm_bin && gm_file.empty())
-    errx(EX_USAGE, "GreedyMini requires -g FILE");
+    errx(EX_USAGE, "greedymini requires -g FILE");
   if (need_mod_gm && mod_gm_file.empty())
-    errx(EX_USAGE, "ModGreedyMini requires -M FILE");
+    errx(EX_USAGE, "mod-minimizer-greedymini requires -M FILE");
 
   if (!timing_file.empty())
     load_kraken_cost_params(timing_file, &kraken_cost);
@@ -1501,12 +1492,12 @@ int main(int argc, char **argv) {
             << " file(s), ~" << particular_bases_est << " bases from "
             << data_dir << "\n";
   if (table_bin)
-    std::cout << "  GreedyMini:    " << gm_file
+    std::cout << "  greedymini:    " << gm_file
               << "  gm_k=" << table_bin->gm_k()
               << "  UHS=" << table_bin->uhs_size() << "/" << table_bin->size()
               << "\n";
   if (mod_table)
-    std::cout << "  ModGreedyMini: " << mod_gm_file
+    std::cout << "  mod-minimizer-greedymini: " << mod_gm_file
               << "  gm_k=" << mod_table->gm_k()
               << "  UHS=" << mod_table->uhs_size() << "/" << mod_table->size()
               << "\n";
@@ -1575,7 +1566,7 @@ int main(int argc, char **argv) {
     print_uhs_hits(row.cfg.name, row.bench, t);
   }
 
-  // Isolated Rank() replay (GreedyMini only): ℓ-mers for MINIMIZER, t-mers for MOD.
+  // Isolated Rank() replay (greedymini only): ℓ-mers for MINIMIZER, t-mers for MOD.
   if (table_bin) {
     MinimizerScanner sc_log(k, l, spaced_seed_mask, true, toggle,
                             CURRENT_REVCOM_VERSION, SketchingScheme::MINIMIZER,
@@ -1593,7 +1584,7 @@ int main(int argc, char **argv) {
     PathDurationStats uhs, non;
     const size_t stride = ranked_lmers.size() > 2000000 ? 32 : 8;
     time_rank_paths(ranked_lmers, gm_ranker, stride, 200000, nspc, uhs, non);
-    print_rank_path("GreedyMini", ranked_lmers.size(), nspc, uhs, non);
+    print_rank_path("greedymini", ranked_lmers.size(), nspc, uhs, non);
     time_rank_batch(ranked_lmers, gm_ranker, 5);
   }
 
@@ -1619,7 +1610,7 @@ int main(int argc, char **argv) {
                   mod_table, 0, CURRENT_REVCOM_VERSION);
     PathDurationStats uhs, non;
     time_rank_paths(ranked_tmers, t_gm, stride, 200000, nspc, uhs, non);
-    print_rank_path("ModGreedyMini", ranked_tmers.size(), nspc, uhs, non);
+    print_rank_path("mod-minimizer-greedymini", ranked_tmers.size(), nspc, uhs, non);
   }
 
   std::cout << "\n";

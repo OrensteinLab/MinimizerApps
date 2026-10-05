@@ -6,7 +6,13 @@ benchmark/kmc/scripts/export.py): one workbook, `kraken2_results.xlsx`, and one
 CSV per sheet, `kraken2_<sheet>.csv`. Column names follow sshash: the raw
 value carries its unit (`build_wall_s`, `classify_max_rss_gb`,
 `classified_pct`), `classify`-type sheets add `<metric>_mean`, `<metric>_std`
-and (for metrics with a direction) `<metric>_ratio` = mean / the Random mean.
+(over seeds) and (for metrics with a direction) `<metric>_ratio` = mean / the
+`xor` mean of the same library, dataset and minimum_hit_groups.
+
+Every (seed, dataset, order) is classified once per `--minimum-hit-groups`
+value (0 = the Kraken 2 paper setting, 2 = the k2 default): `minimum_hit_groups`
+is an identity column / slice key of all classify-side sheets; rows are sorted
+dataset -> minimum_hit_groups -> order.
 
   overview        column reference / legend (the role `index` has elsewhere)
   libraries       one row per Kraken library
@@ -15,12 +21,15 @@ and (for metrics with a direction) `<metric>_ratio` = mean / the Random mean.
   build           library x order: build time / RSS / index size and the
                   density microbenchmark, mean / std / ratio over seeds
   build_runs      the per-seed rows behind `build`
-  classify        library x dataset x order: classify-phase measures + accuracy
+  classify        library x dataset x minimum_hit_groups x order: classify-phase
+                  measures (wall = DB load + processing) + accuracy
   classify_runs   the per-seed rows behind `classify`
-  profile         NextMinimizer / phase profile, library x dataset x order
-  vs_reference    paired agreement with Random, library x dataset x order
-  accuracy_<dataset> (strain_exclusion, fda_argos, cami, mock) every per-seed accuracy
-                  row of that dataset (domain / group / SRR / threshold slices)
+  profile         NextMinimizer / phase profile (only for ENABLE_MINIMIZER_PROF builds)
+  vs_reference    paired agreement with xor, library x dataset x mhg x order
+  accuracy_<dataset> (strain_exclusion, fda_argos, cami, mock) accuracy per
+                  slice (mhg / domain / group / SRR / threshold), mean / std over seeds
+  paper_check     xor at minimum_hit_groups 0 on the strain_exclusion library vs
+                  the published Kraken 2 values (Wood et al. 2019, Tables S1 / S5)
 
 Build values are a property of (library, order), not of the query set, so they
 live once on `build`; `classify`/`classify_runs` hold only classify-phase measures.
@@ -73,6 +82,7 @@ SHEETS = (
     "accuracy_fda_argos",
     "accuracy_cami",
     "accuracy_mock",
+    "paper_check",
 )
 # accuracy sheet of each dataset kind (compare_benchmark's acc_rows key)
 ACCURACY_SHEETS = OrderedDict([
@@ -85,6 +95,13 @@ ACCURACY_SHEETS = OrderedDict([
 # (build / classify are derived from build_runs / classify_runs).
 BASE_SHEETS = ("build_runs", "classify_runs", "profile", "vs_reference") + tuple(ACCURACY_SHEETS.values()) + (
     "orders", "datasets")
+
+# paper_check: tolerance (absolute, on 0-1 fractions) for `within_tolerance`
+PAPER_TOLERANCE = 0.01
+PAPER_PUBLISHED = os.path.join(HERE, "tables", "paper_kraken2_published.csv")
+PAPER_LIBRARY = "strain_exclusion"
+PAPER_ORDER = REF_SCHEME
+PAPER_MHG = 0
 
 LIBRARY_ORDER = ("standard", "standard_p10", "standard_p0.5", "strain_exclusion")
 DATASET_ORDER = {
@@ -102,7 +119,7 @@ TEXT_FIELDS = frozenset([
     "taxonomy", "db_path", "run_root", "query_sets_run", "orders_run", "libraries",
     "status", "truth", "scoring", "truth_detail", "provenance", "paired", "read_length_bp",
     "fragments_per_source", "metric", "sheet", "column", "meaning", "category",
-    "top_off_target", "fraction", "flag", "build_measured",
+    "top_off_target", "fraction", "flag", "table", "row", "source", "note", "within_tolerance",
 ])
 
 
@@ -183,19 +200,21 @@ def read_csv(path):
 
 
 def family(order):
-    """Scheme family of an order id (long or short): 'GreedyMini_w5_k15_canonical' -> 'GreedyMini'."""
+    """Scheme family of an order id (long or short): 'greedymini_w5_k15_canonical' -> 'greedymini'.
+    The separator between family and GreedyMini table is `_`, the hyphen belongs to
+    the family names (`xor` is a string prefix of `xor-pcg`, never a family match)."""
     for fam in sorted(SCHEME_ORDER, key=len, reverse=True):
         if order == fam or order.startswith(fam + "_"):
             return fam
     return order.split("_")[0]
 
 
-GM_FAMILIES = ("GreedyMini", "ModGreedyMini")
+GM_FAMILIES = ("greedymini", "mod-minimizer-greedymini")
 
 
 def short_order(order):
     """Display name of an order: the run directory name without the GreedyMini
-    table ('GreedyMini_w5_k15_canonical' -> 'GreedyMini'). Short names pass through."""
+    table ('greedymini_w5_k15_canonical' -> 'greedymini'). Short names pass through."""
     for fam in GM_FAMILIES:
         if order.startswith(fam + "_"):
             return fam
@@ -240,7 +259,7 @@ def _num(v):
 
 
 def split_context(context):
-    """'standard_p10/GreedyMini_w5_k15_canonical/3 [fda-argos]' ->
+    """'standard_p10/greedymini_w5_k15_canonical/3 [fda-argos, mhg0]' ->
     (library, order, seed_idx-as-str)."""
     base = (context or "").split(" [")[0]
     parts = [p for p in base.split("/") if p]
@@ -289,17 +308,14 @@ BUILD_METRICS = [
     ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d)", "lower", None),
 ]
 CLASSIFY_METRICS = [
-    ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s). classify_runs: mean over the timed repeats of this seed (the cold round is excluded); classify: mean over seeds", "lower", "class_s"),
-    ("classify_max_rss_gb", CAT_CLASSIFY, "classify peak RSS (GB), same averaging as classify_wall_s", "lower", "class_gb"),
-    ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads per minute", "higher", "mrd_min"),
+    ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s) of the single classify run of this seed (/usr/bin/time -v): database load + processing. classify: mean over seeds", "lower", "class_s"),
+    ("db_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_processing_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
+    ("classify_processing_s", CAT_CLASSIFY, "time classifying the reads (s) = the `processed in` seconds of the classify summary line, without the database load", "lower", "class_proc_s"),
+    ("classify_max_rss_gb", CAT_CLASSIFY, "classify peak RSS (GB) of the run", "lower", "class_gb"),
+    ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads (read pairs) per minute of classify_processing_s (database load excluded; wall time if the processing time is missing)", "higher", "mrd_min"),
     ("classified_pct", CAT_CLASSIFY, "percent of reads classified (any taxon). Neutral: more classified is not better or worse by itself (it can be false positives)", None, "cls_pct"),
 ]
 RUN_ONLY = [
-    ("classify_wall_s_repeat_std", CAT_CLASSIFY, "std of classify wall over the timed repeats of this seed (s)", "class_s_std"),
-    ("classify_max_rss_gb_repeat_std", CAT_CLASSIFY, "std of classify RSS over the timed repeats (GB)", "class_gb_std"),
-    ("classify_mreads_per_min_repeat_std", CAT_CLASSIFY, "std of speed over the timed repeats (Mread/min)", "mrd_min_std"),
-    ("classified_pct_repeat_std", CAT_CLASSIFY, "std of classified % over the timed repeats", "cls_pct_std"),
-    ("n_classify_repeats", CAT_CLASSIFY, "number of timed classify repeats (cold round excluded)", "n_classify"),
     ("n_reads", CAT_CLASSIFY, "reads (read pairs) in the query set", "n_reads"),
 ]
 # profile sheet: NextMinimizer / phase instrumentation (classify built with
@@ -314,20 +330,20 @@ PROFILE_METRICS = [
     ("lookup_s", CAT_PROFILE, "lookup phase (GetBatch), sum of per-thread seconds", "lower", "lookup_s"),
     ("resolve_s", CAT_PROFILE, "resolve phase (token replay + ResolveTree), sum of per-thread seconds", "lower", "resolve_s"),
     ("nextminimizer_calls_per_mbp", CAT_PROFILE, "NextMinimizer calls per Mbp of reads. Neutral: a workload count", None, "nextmin_cpm"),
-    ("repeats_per_mbp", CAT_PROFILE, "repeated-key hits per Mbp of reads. Neutral: a workload count", None, "repeats_pm"),
+    ("dup_key_hits_per_mbp", CAT_PROFILE, "consecutive identical minimizers per Mbp of reads, resolved without a hash lookup (TOK_REPEAT). Neutral: a workload count", None, "repeats_pm"),
     ("uhs_pct", CAT_PROFILE, "% of Rank() calls on the finite-rank (UHS) path; GreedyMini orders only. Neutral: a path split, not a quality", None, "uhs_frac"),
     ("non_uhs_pct", CAT_PROFILE, "% of Rank() calls on the infinity early-out path. Neutral", None, "non_uhs_frac"),
 ]
-# paired agreement with Random of the same seed (vs_reference sheet only; no ratio)
+# paired agreement with xor of the same seed (vs_reference sheet only; no ratio)
 VSREF_METRICS = [
-    ("genus_mape_pct", CAT_VSREF, "paired MAPE of genus abundance vs Random of the same seed_idx (%, abundance floor --min-abund)", None, "mape_g"),
+    ("genus_mape_pct", CAT_VSREF, "paired MAPE of genus abundance vs xor of the same seed_idx, dataset and minimum_hit_groups (%, abundance floor --min-abund)", None, "mape_g"),
     ("species_mape_pct", CAT_VSREF, "same at species rank", None, "mape_s"),
-    ("genus_l1_pct", CAT_VSREF, "L1 distance of genus abundance vs Random (%)", None, "l1_g"),
-    ("concordance_pct", CAT_VSREF, "ClassConc: reads with identical taxid vs Random, % of all reads", None, "concordance"),
+    ("genus_l1_pct", CAT_VSREF, "L1 distance of genus abundance vs xor (%)", None, "l1_g"),
+    ("concordance_pct", CAT_VSREF, "ClassConc: reads with identical taxid vs xor, % of all reads", None, "concordance"),
     ("classified_concordance_pct", CAT_VSREF, "identical taxid among reads classified by both (%)", None, "classified_concordance"),
-    ("jaccard_pct", CAT_VSREF, "Jaccard of the sets of classified read ids vs Random (%)", None, "jaccard"),
-    ("newly_classified_pct", CAT_VSREF, "reads unclassified by Random but classified by this order (% of all reads)", None, "newly_classified_pct"),
-    ("newly_unclassified_pct", CAT_VSREF, "reads classified by Random but unclassified by this order (% of all reads)", None, "newly_unclassified_pct"),
+    ("jaccard_pct", CAT_VSREF, "Jaccard of the sets of classified read ids vs xor (%)", None, "jaccard"),
+    ("newly_classified_pct", CAT_VSREF, "reads unclassified by xor but classified by this order (% of all reads)", None, "newly_classified_pct"),
+    ("newly_unclassified_pct", CAT_VSREF, "reads classified by xor but unclassified by this order (% of all reads)", None, "newly_unclassified_pct"),
 ]
 
 # Headline accuracy columns of classify_runs / classify. One dict per column:
@@ -369,9 +385,9 @@ for _rank in ("genus", "species"):
              "A taxa-detection / profile metric, not read-level (so not named like the read-level f1)" % (_m, _rank),
              _dir, {"mock": ("mock", {"scope": "all", "rank": _rank, "min_frac": MOCK_HEADLINE_MIN_FRAC}, _src)})
 
-RUN_ID_FIELDS = ["run_id", "library", "dataset", "order", "seed_idx", "seed"]
+RUN_ID_FIELDS = ["run_id", "library", "dataset", "minimum_hit_groups", "order", "seed_idx", "seed"]
 BUILD_ID_FIELDS = ["run_id", "library", "order", "seed_idx", "seed"]
-AGG_ID = {"classify": ["library", "dataset", "order", "n_seeds"],
+AGG_ID = {"classify": ["library", "dataset", "minimum_hit_groups", "order", "n_seeds"],
           "build": ["library", "order", "n_seeds"]}
 
 METRIC_DIR = {}
@@ -384,7 +400,6 @@ for _m in RUN_ONLY:
 for _c in ACC_COLS:
     METRIC_DIR[_c["name"]] = _c["dir"]
     METRIC_CAT[_c["name"]] = _c["band"]
-METRIC_CAT["build_measured"] = CAT_BUILD
 BUILD_NAMES = [m[0] for m in BUILD_METRICS]
 SUMMARY_NAMES = [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
 PROFILE_NAMES = [m[0] for m in PROFILE_METRICS]
@@ -398,7 +413,7 @@ def runs_field_order():
 
 
 def build_runs_field_order():
-    return BUILD_ID_FIELDS + BUILD_NAMES + ["build_measured"]
+    return BUILD_ID_FIELDS + BUILD_NAMES
 
 
 def agg_field_order(ids, metrics, cat_order):
@@ -419,7 +434,7 @@ def summary_field_order():
 
 
 def build_field_order():
-    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_BUILD, CAT_DENSITY)) + ["build_measured"]
+    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_BUILD, CAT_DENSITY))
 
 
 def profile_field_order():
@@ -471,59 +486,6 @@ def _detail_pick(rows, selector, ds_key):
 # per-run rows from the collected per-seed metrics
 # ---------------------------------------------------------------------------
 
-BUILD_MEASURED_DEFAULT = "this run"
-
-
-def short_measured(text):
-    """'previous session (db built 2026-08-18 with the earlier binaries ...)' ->
-    'previous session (2026-08-18)'; other texts pass through (long explanation
-    lives in the overview)."""
-    m = re.match(r"^(.*?) \(db built (\d{4}-\d{2}-\d{2})\b", text)
-    return "%s (%s)" % (m.group(1), m.group(2)) if m else text
-
-
-def join_measured(values):
-    """Distinct per-seed provenance values of one library x order, compactly:
-    ['previous session (2026-08-18)', 'previous session (2026-08-19)'] ->
-    'previous session (2026-08-18/19)'; mixed -> 'this run; previous session (...)'."""
-    labels = OrderedDict()
-    for v in values:
-        if not v:
-            continue
-        m = re.match(r"^(.*) \((\d{4}-\d{2}-\d{2})\)$", v)
-        label, date = (m.group(1), m.group(2)) if m else (v, None)
-        dates = labels.setdefault(label, [])
-        if date and date not in dates:
-            dates.append(date)
-    out = []
-    for label, dates in labels.items():
-        if not dates:
-            out.append(label)
-            continue
-        dates.sort()
-        txt = dates[0]
-        for d in dates[1:]:
-            txt += "/" + (d[8:] if d[:7] == txt.split("/")[-1][:7] else d)
-        out.append("%s (%s)" % (label, txt))
-    return "; ".join(out) or None
-
-
-def _build_measured(run_root, order, seed_idx):
-    """Provenance of the build numbers: the first line of
-    <run_root>/<order>/<seed>/results/build_measured.txt when present (a build
-    taken over from an earlier session), else `this run`."""
-    if run_root:
-        p = os.path.join(run_root, order, str(seed_idx), "results", "build_measured.txt")
-        try:
-            with open(p) as f:
-                line = f.readline().strip()
-            if line:
-                return short_measured(line)
-        except (IOError, OSError):
-            pass
-    return BUILD_MEASURED_DEFAULT
-
-
 def _index_size_gb(run_root, order, seed_idx):
     if not run_root:
         return None
@@ -547,7 +509,7 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
     context, seed + collect_run_metrics keys). acc_rows: {'labeled'|'argos'|
     'cami'|'mock': raw metric rows with context/dataset/seed_idx}. dens_rows:
     density microbenchmark rows ({scheme, seed_idx, fac_*}); the scheme is the
-    family (Random, GreedyMini, ...) or an order name, long or short.
+    family (xor, greedymini, ...) or an order name, long or short.
 
     Returns an OrderedDict of raw (per-seed) tables: runs, build_runs,
     profile_raw, vs_reference_raw."""
@@ -560,7 +522,8 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
         for r in rows:
             _lib, order, _ = split_context(r.get("context"))
             order = omap.get(order, short_order(order))
-            key = (order, r.get("dataset") or _kind_dataset(kind), _int(r.get("seed_idx")))
+            key = (order, r.get("dataset") or _kind_dataset(kind), _int(r.get("minimum_hit_groups")),
+                   _int(r.get("seed_idx")))
             idx[key][kind].append(r)
     rfields = runs_field_order()
     runs, builds, prof, vsr = [], [], [], []
@@ -569,20 +532,18 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
         _lib, long_order, _ = split_context(row.get("context"))
         order = omap.get(long_order, short_order(long_order))   # display name; paths use long_order
         ds = row.get("dataset") or "speed"
+        mhg = _int(row.get("minimum_hit_groups"))
         seed_idx = _int(row.get("seed_idx"))
         ident = OrderedDict([
             ("run_id", "%s/%s/%s" % (library, order, seed_idx)), ("library", library),
-            ("dataset", ds), ("order", order), ("seed_idx", seed_idx),
+            ("dataset", ds), ("minimum_hit_groups", mhg), ("order", order), ("seed_idx", seed_idx),
             ("seed", _seed_hex(row.get("seed")))])
         out = OrderedDict((f, ident.get(f)) for f in rfields)
         for m in CLASSIFY_METRICS:
             out[m[0]] = clean_value(row.get(m[4]))
         for m in RUN_ONLY:
-            v = clean_value(row.get(m[3]))
-            if m[0].endswith("_repeat_std") and _num(v) and abs(v) < 1e-9:
-                v = 0.0          # std of identical repeats: float noise
-            out[m[0]] = v
-        picked = idx.get((order, ds, seed_idx), {})
+            out[m[0]] = clean_value(row.get(m[3]))
+        picked = idx.get((order, ds, mhg, seed_idx), {})
         for c in ACC_COLS:
             sel = c["sel"].get(ds)
             if sel:
@@ -596,7 +557,6 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
                 if m[4]:
                     b[m[0]] = clean_value(row.get(m[4]))
             b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
-            b["build_measured"] = _build_measured(run_root, long_order, seed_idx)
             # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
             d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
                  or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
@@ -636,16 +596,17 @@ def _seed_hex(seed):
 
 def _run_sort_key(r):
     return (library_key(r.get("library") or ""), dataset_key(r.get("dataset") or ""),
-            order_key(r.get("order") or ""), r.get("seed_idx") or 0)
+            r.get("minimum_hit_groups") or 0, order_key(r.get("order") or ""), r.get("seed_idx") or 0)
 
 
 # ---------------------------------------------------------------------------
 # aggregation: classify / build / profile / vs_reference
 # ---------------------------------------------------------------------------
 
-def aggregate(rows, metrics, keys=("library", "dataset", "order")):
+def aggregate(rows, metrics, keys=("library", "dataset", "minimum_hit_groups", "order")):
     """One row per `keys` group: mean / std over seeds of every metric, then the
-    ratio to the reference order of the same library (and dataset)."""
+    ratio to the reference order (xor) of the same library, dataset and
+    minimum_hit_groups."""
     groups = OrderedDict()
     for r in rows:
         groups.setdefault(tuple(r.get(k) for k in keys), []).append(r)
@@ -653,22 +614,20 @@ def aggregate(rows, metrics, keys=("library", "dataset", "order")):
     for key, parts in groups.items():
         row = OrderedDict(zip(keys, key))
         row["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
-        if "build_measured" in parts[0]:
-            row["build_measured"] = join_measured([p.get("build_measured") for p in parts])
         for m in metrics:
             mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
             row[m + "_mean"] = round_sig(mu)
             row[m + "_std"] = round_std(sd)
         out.append(row)
     out.sort(key=lambda r: (library_key(r["library"]), dataset_key(r.get("dataset") or ""),
-                            order_key(r["order"])))
+                            r.get("minimum_hit_groups") or 0, order_key(r["order"])))
     attach_ratios(out, metrics, keys)
     return out
 
 
-def attach_ratios(rows, metrics, keys=("library", "dataset", "order")):
-    """{metric}_ratio = this order's mean / the reference (Random) mean of the
-    same library (and dataset); the reference = 1. Only for metrics with a
+def attach_ratios(rows, metrics, keys=("library", "dataset", "minimum_hit_groups", "order")):
+    """{metric}_ratio = this order's mean / the reference (xor) mean of the
+    same library, dataset and minimum_hit_groups; the reference = 1. Only for metrics with a
     direction; blank when either mean is missing or the reference mean is 0."""
     group = [k for k in keys if k != "order"]
     base = {}
@@ -705,10 +664,10 @@ def vs_reference_aggregate(raw):
 
 MOCK_RENAME = {"precision": "taxa_precision", "recall": "taxa_recall", "f1": "taxa_f1",
                "l1": "l1_distance"}
-DETAIL_LEAD = ["library", "dataset", "order", "seed_idx", "seed", "scope", "domain", "group",
-               "sra_run", "species", "min_frac", "rank"]
 DETAIL_ID = ("library", "dataset", "order", "seed_idx", "seed")
-DETAIL_SLICE = ("scope", "domain", "group", "sra_run", "species", "min_frac", "rank")
+# slice keys of the accuracy sheets; minimum_hit_groups is the outermost one
+# (dataset -> minimum_hit_groups -> slice -> order)
+DETAIL_SLICE = ("minimum_hit_groups", "scope", "domain", "group", "sra_run", "species", "min_frac", "rank")
 
 
 def detail_name(kind, key):
@@ -738,7 +697,7 @@ def detail_rows(library, acc_rows, omap=None):
                     continue
                 row[detail_name(kind, k)] = _seed_hex(v) if k == "seed" else clean_value(v)
             out.append(row)
-        out.sort(key=lambda r: (order_key(r["order"]), _int(r.get("seed_idx")) or 0,
+        out.sort(key=lambda r: (_int(r.get("minimum_hit_groups")) or 0, order_key(r["order"]), _int(r.get("seed_idx")) or 0,
                                 DOMAIN_ORDER.get(r.get("domain"), 9), RANK_ORDER.get(r.get("rank"), 9),
                                 str(r.get("scope") or ""), str(r.get("sra_run") or ""),
                                 str(r.get("group") or ""),
@@ -765,7 +724,8 @@ DETAIL_TEXT_DROP = frozenset(["top_off_target"])
 
 def _slice_sort(r):
     mf = r.get("min_frac")
-    return (SCOPE_ORDER.get(r.get("scope"), 9), DOMAIN_ORDER.get(r.get("domain"), 9),
+    return (r.get("minimum_hit_groups") if _num(r.get("minimum_hit_groups")) else -1,
+            SCOPE_ORDER.get(r.get("scope"), 9), DOMAIN_ORDER.get(r.get("domain"), 9),
             str(r.get("group") or ""), str(r.get("sra_run") or ""), str(r.get("species") or ""),
             mf if _num(mf) else -1.0, RANK_ORDER.get(r.get("rank"), 9))
 
@@ -773,8 +733,9 @@ def _slice_sort(r):
 def detail_aggregate(rows):
     """Per-seed accuracy rows (detail_rows) -> one row per library x dataset x
     slice x order: <metric>_mean / _std over seeds (counts: _mean only) and
-    <metric>_ratio to Random of the same slice for metrics with a direction.
-    Sorted by slice first, order last, so a slice's orders are consecutive."""
+    <metric>_ratio to xor of the same slice (incl. minimum_hit_groups) for metrics
+    with a direction. Sorted dataset -> minimum_hit_groups -> slice -> order, so
+    a slice's orders are consecutive."""
     skip = set(DETAIL_ID) | set(DETAIL_SLICE) | DETAIL_TEXT_DROP
     metrics = []
     for r in rows:
@@ -845,16 +806,17 @@ def detail_fields(rows):
 # ---------------------------------------------------------------------------
 
 ORDER_INFO = {
-    "Random": ("Minimizer", "RandomXor", "--sketching minimizer --order xor",
-               "random order: the l-mer XORed with the seed (toggle mask), ranked by the hash of that value"),
-    "RandomPcg": ("Minimizer", "RandomPcg", "--sketching minimizer --order xor-pcg",
-                  "random order with a PCG scramble of the seed-XORed l-mer"),
-    "GreedyMini": ("Minimizer", "GreedyMini", "--sketching minimizer --order greedymini --greedymini-file <table>.gm",
+    "xor": ("minimizer", "xor", "--sketching minimizer --order xor",
+            "random order: the l-mer XORed with the seed (toggle mask), ranked by the hash of that value"),
+    "xor-pcg": ("minimizer", "xor-pcg", "--sketching minimizer --order xor-pcg",
+                "random order with a PCG scramble of the seed-XORed l-mer"),
+    "greedymini": ("minimizer", "greedymini", "--sketching minimizer --order greedymini --greedymini-file <table>.gm",
                    "GreedyMini table (centre extension), ties broken by the seed"),
-    "ModRandom": ("Mod", "RandomXor", "--sketching mod-minimizer --order xor",
-                  "mod-minimizer (Groot Koerkamp & Pibiri) on a random order"),
-    "ModGreedyMini": ("Mod", "GreedyMini", "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",
-                      "mod-minimizer on a GreedyMini table"),
+    "mod-minimizer-xor": ("mod-minimizer", "xor", "--sketching mod-minimizer --order xor",
+                          "mod-minimizer (Groot Koerkamp & Pibiri) on a random (xor) order"),
+    "mod-minimizer-greedymini": ("mod-minimizer", "greedymini",
+                                 "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",
+                                 "mod-minimizer on a GreedyMini table"),
 }
 
 
@@ -1183,33 +1145,35 @@ def build_libraries(base, runs, cache_path=None):
 SHEET_DOC = OrderedDict([
     ("overview", "this sheet: what every sheet and column means, grouped by category"),
     ("libraries", "one row per Kraken library: size, taxonomy, role in the benchmark, which query sets / orders ran on it"),
-    ("datasets", "one row per query set: reads, read length, truth type, how it is scored, provenance"),
+    ("datasets", "one row per query set: reads, read length, truth type, how it is scored, provenance. Every dataset is classified twice, with `--minimum-hit-groups` 0 (the Kraken 2 paper setting) and 2 (the k2 default); see `minimum_hit_groups`"),
     ("orders", "one row per minimizer scheme/order: CLI flags, l / k / w, spaced seed and the density factors (also on `build`: the duplication is deliberate, `orders` is the per-order reference card)"),
-    ("build", "library x order, mean / std over seeds and `_ratio` to Random: build time, build RSS, index size and the density microbenchmark. Build values do not depend on the query set, so they appear here once, not on every dataset row"),
-    ("build_runs", "the per-seed rows behind `build` (`build_measured` says where the build numbers come from; same split as summary / runs in the sshash / kmc apps)"),
-    ("classify", "library x dataset x order, classify phase only: mean / std over seeds and `_ratio` to Random of classify time / RSS / speed / classified % and the headline accuracy of the dataset"),
-    ("classify_runs", "one row per seed x library x dataset x order: the raw classify-phase numbers behind `classify` (mean and std over the timed repeats are on the row)"),
-    ("profile", "NextMinimizer / phase profile (needs a classify built with ENABLE_MINIMIZER_PROF=1): library x dataset x order, mean / std over seeds and `_ratio` to Random"),
-    ("vs_reference", "paired agreement with Random of the same seed (MAPE, concordance, Jaccard, newly classified / unclassified): library x dataset x order, mean / std over seeds"),
-    ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (domain x rank): one row per order, mean / std over seeds and `_ratio` to Random of the same slice (TP / VP / FP / FN counts as means)"),
-    ("accuracy_fda_argos", "FDA-ARGOS accuracy per slice (scope: unweighted mean / pooled / each SRR experiment): genus concordance, one row per order, mean / std over seeds and `_ratio` to Random"),
-    ("accuracy_cami", "CAMI accuracy per slice (group x rank): sens / PPV / F1 and the excluded fraction, one row per order, mean / std over seeds and `_ratio` to Random"),
-    ("accuracy_mock", "mock-community accuracy per slice (scope x detection threshold x rank): taxa precision / recall / F1, distances, off-target, one row per order, mean / std over seeds and `_ratio` to Random"),
+    ("build", "library x order, mean / std over seeds and `_ratio` to xor: build time, build RSS, index size and the density microbenchmark. Build values do not depend on the query set or on minimum_hit_groups, so they appear here once, not on every dataset row"),
+    ("build_runs", "the per-seed rows behind `build` (same split as summary / runs in the sshash / kmc apps)"),
+    ("classify", "library x dataset x minimum_hit_groups x order, classify phase only: mean / std over seeds and `_ratio` to xor (same dataset and minimum_hit_groups) of classify wall / DB-load / processing time, RSS, speed, classified % and the headline accuracy of the dataset"),
+    ("classify_runs", "one row per seed x library x dataset x minimum_hit_groups x order: the raw numbers of the single classify run behind `classify` (the replicates are the seeds: one run per seed, dataset and minimum_hit_groups)"),
+    ("profile", "NextMinimizer / phase profile, only present when the run used a classify built with ENABLE_MINIMIZER_PROF=1 (nextminimizer_timing_<dataset>_mhg<m>.txt exist): library x dataset x minimum_hit_groups x order, mean / std over seeds and `_ratio` to xor"),
+    ("vs_reference", "paired agreement with xor of the same seed, dataset and minimum_hit_groups (MAPE, concordance, Jaccard, newly classified / unclassified): library x dataset x minimum_hit_groups x order, mean / std over seeds"),
+    ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (minimum_hit_groups x domain x rank): one row per order, mean / std over seeds and `_ratio` to xor of the same slice (TP / VP / FP / FN counts as means)"),
+    ("accuracy_fda_argos", "FDA-ARGOS accuracy per slice (minimum_hit_groups x scope: unweighted mean / pooled / each SRR experiment): genus concordance, one row per order, mean / std over seeds and `_ratio` to xor"),
+    ("accuracy_cami", "CAMI accuracy per slice (minimum_hit_groups x group x rank): sens / PPV / F1 and the excluded fraction, one row per order, mean / std over seeds and `_ratio` to xor"),
+    ("accuracy_mock", "mock-community accuracy per slice (minimum_hit_groups x scope x detection threshold x rank): taxa precision / recall / F1, distances, off-target, one row per order, mean / std over seeds and `_ratio` to xor"),
+    ("paper_check", "paper equivalence: xor at minimum_hit_groups 0 on the strain_exclusion library vs the published Kraken 2 values (Wood et al. 2019, Table S1 genus sensitivity / PPV / F1 of the prokaryote and viral domains; Table S5 genus concordant / discordant / ancestor / unclassified, unweighted mean over experiments). Published values: benchmark/kraken2/tables/paper_kraken2_published.csv. `within_tolerance` = |ours - published| <= the stated absolute tolerance (0.01)"),
 ])
 
 COMMON_DOC = [
     ("all", CAT_ID, "library", "Kraken library id (only libraries with runs are exported, here strain_exclusion; see `libraries`)"),
     ("all", CAT_ID, "dataset", "query set: strain-exclusion | fda-argos | cami | mock | speed (see `datasets`)"),
-    ("all", CAT_ID, "order", "minimizer scheme/order: Random, RandomPcg, GreedyMini, ModRandom, ModGreedyMini (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
+    ("classify/classify_runs/profile/vs_reference/accuracy_*", CAT_ID, "minimum_hit_groups", "the `--minimum-hit-groups` value of the classify run: 0 = Kraken 2 paper setting (no hit-group threshold; this is the setting that must reproduce the published accuracy, see `paper_check`), 2 = the k2 default. Every (seed, dataset, order) is classified once per value. Rows are sorted dataset -> minimum_hit_groups -> order, so for one dataset and value the orders are consecutive and every `_ratio` is against xor at the same dataset and minimum_hit_groups. `build` / `build_runs` have no such column: building does not depend on it"),
+    ("all", CAT_ID, "order", "minimizer scheme/order: xor, xor-pcg, greedymini, mod-minimizer-xor, mod-minimizer-greedymini (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
     ("classify_runs/build_runs", CAT_ID, "run_id", "<library>/<order>/<seed_idx>"),
     ("classify_runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
-    ("build/classify/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row"),
+    ("build/classify/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row (the replicates: each seed contributes one classify run per dataset and minimum_hit_groups)"),
     ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb gigabytes, _pct percent, _ns_per_call, _per_mbp, _fraction 0-1); `classify`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
-    ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the Random mean of the same library (and dataset); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant, Bray-Curtis, off-target) or higher is better (speed, sensitivity, PPV, F1, concordant, taxa F1). Colour scale: green = better than Random, white = 1, red = worse (colours reversed for higher-is-better columns)"),
-    ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / repeats_per_mbp and the path split uhs_pct / non_uhs_pct"),
-    ("classify_runs", "classify", "<metric>_repeat_std / n_classify_repeats", "std of the metric over the timed repeats of this seed (the seed's value is their mean) and the number of repeats (cold round excluded)"),
+    ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant, Bray-Curtis, off-target) or higher is better (speed, sensitivity, PPV, F1, concordant, taxa F1). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
+    ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
+    ("classify/classify_runs", "classify", "classify_wall_s / db_load_s / classify_processing_s", "one classify run per cell: wall = database load + processing. db_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; db_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
-    ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching (minimizer | mod-minimizer), the --order it ranks by, the GreedyMini table (gm_table, e.g. w5_k15_canonical for GreedyMini and w5_k6_canonical for ModGreedyMini; blank for random orders) and a one-line description"),
+    ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching (minimizer | mod-minimizer), the --order it ranks by (xor | xor-pcg | greedymini), the GreedyMini table (gm_table, e.g. w5_k15_canonical for greedymini and w5_k6_canonical for mod-minimizer-greedymini; blank for the xor orders) and a one-line description"),
     ("orders", "density", "expected_density_factor_mean / _std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density microbenchmark rows of the order (tables/minimizer_density.csv; independent of the library; blank for orders without density rows)"),
     ("orders", "density", "<library>_particular_density_factor_mean / _std", "the same factor measured on that library's FASTAs, one column pair per library (never averaged across libraries)"),
     ("orders", "minimizer params", "l / k / w / minimizer_spaces / spaced_seed_mask", "minimizer length l, k-mer length k, window w = k - l + 1, spaced-seed spaces s (pattern 1*(l-2s) + (01)*s, so l - s kept positions) and its mask, read from the order's db/opts.k2d"),
@@ -1222,14 +1186,18 @@ COMMON_DOC = [
     ("datasets", "dataset", "truth / scoring", "truth: simulated | real. scoring: read-level truth (strain-exclusion) | concordance with SRA taxon (fda-argos) | library-aware read-level truth (cami) | profile vs expected composition (mock)"),
     ("datasets", "dataset", "truth_detail / provenance / libraries", "what the truth file holds, where the reads come from, libraries the set was classified against"),
     ("classify/classify_runs", "accuracy", "accuracy column groups", "one group per kind of accuracy, because the kinds differ per dataset and are NOT comparable across datasets (accuracy is never averaged across datasets). simulated reads with read-level truth (strain-exclusion; cami restricted to reads whose taxon is in the library): genus_/species_ sensitivity, ppv, f1. cami only: genus_/species_excluded_fraction. fda-argos (real reads, no per-read truth): genus_concordant / discordant / ancestor / unclassified _fraction. mock (real reads, known composition): genus_/species_ taxa_f1, bray_curtis, off_target_fraction (a taxa-detection F1, so named taxa_f1, not f1). A row fills only its own dataset's group; the other cells are blank, columns that no row of the sheet uses are dropped"),
-    ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_seeds", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics.tsv). Rows are sorted by slice first, order last: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / Random mean of the same slice (blank when Random's mean is 0 or missing), colour green = better, red = worse"),
+    ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_seeds", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics_mhg<m>.tsv). Rows are sorted dataset -> minimum_hit_groups -> slice -> order: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / xor mean of the same slice and minimum_hit_groups (blank when xor's mean is 0 or missing), colour green = better, red = worse"),
     ("accuracy_*", "ratio", "ratio direction and neutral columns", "higher is better (ratio coloured, reversed scale): sensitivity, ppv, f1, concordant_fraction, taxa_precision, taxa_recall, taxa_f1, on_target_fraction. Lower is better: discordant_fraction, bray_curtis, l1_distance, off_target_fraction. Neutral (mean / std only, no ratio, no colour): ancestor_fraction, unclassified_fraction, excluded_fraction (a property of library x query set), classified_fraction, above_rank_fraction and the read counts. top_off_target (text) is not aggregated"),
-    ("accuracy_*", "slice", "rank / domain / group / scope / sra_run / species / min_frac", "the slice of the row: rank (genus | species); strain-exclusion domain (all | prokaryote | virus); cami group (all | bacteria | archaea ...); fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species; mock scope (all | bacteria) and detection threshold min_frac"),
+    ("accuracy_*", "slice", "minimum_hit_groups / rank / domain / group / scope / sra_run / species / min_frac", "the slice of the row: minimum_hit_groups (0 | 2); rank (genus | species); strain-exclusion domain (all | prokaryote | virus); cami group (all | bacteria | archaea ...); fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species; mock scope (all | bacteria) and detection threshold min_frac"),
     ("accuracy_*", "accuracy detail", "n / n_truth / n_calls / n_scored / tp / vp / fp / fn / no", "read counts of the slice. TP = true rank taxon or descendant, VP = ancestor, FP = off-lineage, FN = unclassified (Wood et al. 2019); no = reads without a call in a truth-less slice"),
     ("accuracy_*", "accuracy detail", "sensitivity / ppv / f1", "read-level: sensitivity = TP/(TP+VP+FN+FP), PPV = TP/(TP+FP), F1 their harmonic mean (strain-exclusion, cami)"),
     ("accuracy_*", "accuracy detail", "excluded / excluded_fraction / ex_unclassified / ex_consistent / ex_off", "cami: reads whose true taxon has no sequence in the library, their fraction, and what was called for them"),
     ("accuracy_*", "accuracy detail", "concordant_fraction / discordant_fraction / ancestor_fraction / unclassified_fraction", "fda-argos genus concordance of the fragments with the SRA-assigned taxon"),
     ("accuracy_*", "accuracy detail", "taxa_precision / taxa_recall / taxa_f1 / l1_distance / bray_curtis / classified_fraction / on_target_fraction / off_target_fraction / above_rank_fraction / unclassified_fraction / n_reads / n_expected / n_detected / tp_taxa / fp_taxa / fn_taxa / top_off_target", "mock profile-level metrics against the expected composition at detection threshold min_frac (taxa-level, not read-level)"),
+    ("paper_check", "paper check", "table / row / domain / rank / metric", "which published number: Wood et al. 2019 supplementary table (S1 or S5), its row (classifier), the domain (S1: prokaryote | virus), the rank (genus) and the metric (sensitivity | ppv | f1 for S1; concordant | discordant | ancestor | unclassified for S5)"),
+    ("paper_check", "paper check", "ours / ours_std / n_seeds / n_experiments", "our value: xor, minimum_hit_groups 0, strain_exclusion library, mean and std over the seeds (strain-exclusion domain slice of accuracy_strain_exclusion; FDA-ARGOS unweighted mean over the n_experiments experiments, Table S5 definition). n_experiments is the number of SRA experiments actually classified (the paper has 25)"),
+    ("paper_check", "paper check", "published / difference / tolerance / within_tolerance", "published Kraken 2 value (tables/paper_kraken2_published.csv; `not in repo` rows have no value and no verdict), ours - published, the absolute tolerance (0.01) and `yes` / `no`. Values are reported as they are: a `no` is a real difference, not rounded away"),
+    ("paper_check", "paper check", "source / note", "where the published value comes from (table, row) and caveats (e.g. fewer experiments than the paper)"),
 ]
 
 
@@ -1247,12 +1215,6 @@ def overview_rows():
         add(sheet, cat, col, meaning)
     for name, cat, meaning, _dir, _src in BUILD_METRICS:
         add("build/build_runs", cat, name, meaning)
-    add("build/build_runs", CAT_BUILD, "build_measured",
-        "provenance of build_wall_s / build_max_rss_gb: `this run` = built in the benchmark pass that classified it; "
-        "`previous session ...` = the database was built earlier (different session, binaries and host load) and only "
-        "its recorded k2 build time / RSS were taken over, so build times of such rows are NOT strictly comparable "
-        "with `this run` rows (classify times are always from the same pass). Shown shortened, e.g. `previous session (2026-08-18/19)`: "
-        "the date(s) the db was built; taken from results/build_measured.txt of each seed, distinct values listed once on `build`")
     for name, cat, meaning, _dir, _src in CLASSIFY_METRICS:
         add("classify/classify_runs", cat, name, meaning)
     for name, cat, meaning, _src in RUN_ONLY:
@@ -1267,6 +1229,80 @@ def overview_rows():
 
 
 OVERVIEW_FIELDS = ["sheet", "category", "column", "meaning"]
+
+
+# ---------------------------------------------------------------------------
+# paper_check: xor at minimum_hit_groups 0 vs the published Kraken 2 numbers
+# ---------------------------------------------------------------------------
+
+PAPER_FIELDS = ["table", "row", "domain", "rank", "metric", "ours", "ours_std", "n_seeds",
+                "n_experiments", "published", "difference", "tolerance", "within_tolerance",
+                "source", "note"]
+S1_DOMAINS = {"prokaryote": ("prokaryote",), "virus": ("virus", "viral")}
+
+
+def read_published(path=None):
+    """Rows of tables/paper_kraken2_published.csv (table, row, domain, rank, metric,
+    value, source); value None = not in repo."""
+    _f, rows = read_csv(path or PAPER_PUBLISHED)
+    return rows
+
+
+def paper_check_rows(base, published=None, tolerance=PAPER_TOLERANCE):
+    """Rows of the `paper_check` sheet: for the reference order (xor) at
+    minimum_hit_groups 0 on the strain_exclusion library, our strain-exclusion genus
+    sensitivity / PPV / F1 (domain slices) and FDA-ARGOS genus concordance (unweighted
+    mean over the experiments) next to the published Kraken 2 values. [] when that
+    cell was not run."""
+    published = published if published is not None else read_published()
+
+    def mine(sheet):
+        return [r for r in base.get(sheet) or []
+                if r.get("library") == PAPER_LIBRARY and r.get("order") == PAPER_ORDER
+                and r.get("minimum_hit_groups") == PAPER_MHG]
+
+    se = [r for r in mine("accuracy_strain_exclusion") if r.get("rank") == "genus"]
+    ar = [r for r in mine("accuracy_fda_argos") if r.get("rank") == "genus"]
+    if not se and not ar:
+        return []
+    out = []
+    for p in published:
+        tab, domain, metric = p.get("table"), p.get("domain") or None, p.get("metric")
+        ours = std = n_seeds = n_exp = None
+        note = []
+        if tab == "S1":
+            for r in se:
+                if r.get("domain") in S1_DOMAINS.get(domain, (domain,)):
+                    ours, std, n_seeds = r.get(metric + "_mean"), r.get(metric + "_std"), r.get("n_seeds")
+        elif tab == "S5":
+            for r in ar:
+                if r.get("scope") == "unweighted_mean":
+                    ours = r.get(metric + "_fraction_mean")
+                    std = r.get(metric + "_fraction_std")
+                    n_seeds = r.get("n_seeds")
+            n_exp = len(set(r.get("sra_run") for r in ar
+                            if r.get("scope") == "experiment" and r.get("sra_run")))
+            pub_n = p.get("n_experiments")
+            if n_exp and pub_n and n_exp != pub_n:
+                note.append("ours over %d experiments, published over %d" % (n_exp, pub_n))
+        pub = p.get("value")
+        pub = pub if _num(pub) else None
+        row = OrderedDict([
+            ("table", tab), ("row", p.get("row")), ("domain", domain), ("rank", p.get("rank")),
+            ("metric", metric), ("ours", ours), ("ours_std", std), ("n_seeds", n_seeds),
+            ("n_experiments", n_exp), ("published", pub), ("difference", None),
+            ("tolerance", tolerance), ("within_tolerance", None), ("source", p.get("source")),
+            ("note", None)])
+        if pub is None:
+            row["within_tolerance"] = "not in repo"
+        elif ours is None:
+            note.append("no xor / minimum_hit_groups 0 result for this value")
+        else:
+            row["difference"] = round(ours - pub, 6)
+            row["within_tolerance"] = "yes" if abs(ours - pub) <= tolerance + 1e-12 else "no"
+        row["note"] = "; ".join(note) or None
+        out.append(row)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1300,6 +1336,9 @@ def derive_tables(base, base_dir=None, libraries=None):
         detail = base.get(sheet) or []
         if detail:
             t[sheet] = (detail_fields(detail), detail)
+    pc = paper_check_rows(base, base.get("paper_published"))
+    if pc:
+        t["paper_check"] = (PAPER_FIELDS, pc)
     return t
 
 
@@ -1314,6 +1353,9 @@ def _categories(sheet, fields):
         return [orders_category(f) for f in fields]
     if sheet == "overview":
         return ["reference"] * len(fields)
+    if sheet == "paper_check":
+        return ["paper check" if f not in ("table", "row", "domain", "rank", "metric") else CAT_ID
+                for f in fields]
     if sheet == "libraries":
         return ["library"] * len(fields)
     if sheet == "datasets":
@@ -1331,14 +1373,21 @@ def sheet_spec(name, fields, rows):
     block = ()
     merge = ()
     if name in ("classify", "classify_runs", "profile", "vs_reference"):
-        block = tuple(f for f in ("library", "dataset") if f in fields)
-        merge = tuple(f for f in ("library", "dataset", "order") if f in fields)
+        # border after each (library, dataset, minimum_hit_groups) block; the dataset
+        # cell spans both minimum_hit_groups blocks of the dataset
+        block = tuple(f for f in ("library", "dataset", "minimum_hit_groups") if f in fields)
+        merge = tuple(f for f in ("library", "dataset", "minimum_hit_groups", "order") if f in fields)
+        spec["merge_scope"] = {"library": ("library",), "dataset": ("library", "dataset")}
     if name.startswith("accuracy_"):
-        # border between slices; library / dataset cells span the whole sheet block
+        # border between slices; library / dataset / minimum_hit_groups cells span their whole block
         slices = tuple(f for f in DETAIL_SLICE if f in fields)
         block = ("library", "dataset") + slices
         merge = ("library", "dataset") + slices
-        spec["merge_scope"] = {"library": ("library",), "dataset": ("library", "dataset")}
+        spec["merge_scope"] = {"library": ("library",), "dataset": ("library", "dataset"),
+                               "minimum_hit_groups": ("library", "dataset", "minimum_hit_groups")}
+    if name == "paper_check":
+        spec["wrap_fields"] = [f for f in ("source", "note") if f in fields]
+        spec["widths"] = {"source": 60, "note": 40, "row": 12}
     if name in ("build", "build_runs"):
         block = ("library",)
         merge = ("library", "order") if name == "build_runs" else ("library",)
@@ -1365,7 +1414,7 @@ def sheet_spec(name, fields, rows):
         spec["ratio_fields"] = dict(
             (f, DETAIL_DIR[f[:-6]]) for f in fields if f.endswith("_ratio") and DETAIL_DIR.get(f[:-6]))
     if name in ("build", "build_runs", "classify", "classify_runs", "profile", "vs_reference"):
-        spec["freeze_cols"] = 3 if name not in ("build", "build_runs") else 2
+        spec["freeze_cols"] = {"build": 2, "build_runs": 2, "classify_runs": 5}.get(name, 4)
     return spec
 
 
@@ -1375,7 +1424,7 @@ def build_sheet_specs(tables):
 
 def write_outputs(tables, csv_dir, xlsx_path):
     """kraken2_<sheet>.csv for every sheet in csv_dir + the workbook; kraken2_*.csv
-    files of sheets that no longer exist (earlier layouts) are removed."""
+    files of sheets that no longer exist (e.g. profile when no timing files) are removed."""
     for name, (fields, rows) in tables.items():
         write_csv(os.path.join(csv_dir, PREFIX + name + ".csv"), fields, rows)
     keep = set(PREFIX + n + ".csv" for n in tables)
@@ -1393,18 +1442,6 @@ def write_outputs(tables, csv_dir, xlsx_path):
 # entry points
 # ---------------------------------------------------------------------------
 
-# Pre-export-layout per-library CSV names (and binning leftovers) that this
-# layer replaces; removed from <run_root>/tables/ when the new tables are written.
-LEGACY_TABLES = (
-    "contents.csv", "query_sets.csv", "scheme_summary.csv", "per_seed.csv",
-    "vs_ref.csv", "vs_random.csv", "classify_repeats.csv",
-    "accuracy_strain_exclusion.csv", "accuracy_strain_exclusion_summary.csv",
-    "accuracy_fda_argos.csv", "accuracy_fda_argos_summary.csv",
-    "accuracy_cami.csv", "accuracy_cami_summary.csv",
-    "accuracy_mock.csv", "accuracy_mock_summary.csv",
-)
-
-
 def resolve_base_dir(run_root):
     """<base> of <base>/runs/<library> (derived from the path; KRAKEN2_BENCHMARK_DIR
     only when the run root is not laid out as runs/<library>)."""
@@ -1415,19 +1452,6 @@ def resolve_base_dir(run_root):
     if env and os.path.isdir(os.path.join(env, "runs")):
         return env
     return None
-
-
-def _remove_legacy(tables_dir):
-    removed = []
-    for name in LEGACY_TABLES:
-        p = os.path.join(tables_dir, name)
-        if os.path.isfile(p):
-            try:
-                os.remove(p)
-                removed.append(name)
-            except OSError:
-                pass
-    return removed
 
 
 def export_library(run_root, out_xlsx, library, per_seed_rows, acc_rows, dens_rows, query_rows):
@@ -1449,8 +1473,6 @@ def export_library(run_root, out_xlsx, library, per_seed_rows, acc_rows, dens_ro
     libs = build_libraries(base_dir, runs, cache) if base_dir else build_libraries_standalone(library, runs)
     libs = [r for r in libs if r["library"] == library]
     tables = derive_tables(base, libraries=libs)
-    for old in _remove_legacy(tables_dir):
-        print("removed legacy table {}".format(old))
     write_outputs(tables, tables_dir, out_xlsx)
     return out_xlsx, tables_dir, tables
 
@@ -1467,8 +1489,8 @@ def export_results(base_dir, quiet=False):
     """Merge every <base>/runs/*/tables/kraken2_classify_runs.csv into
     <base>/results/kraken2_results.xlsx + kraken2_*.csv. Returns (xlsx, csv_dir,
     n_libraries) or None when no library has been exported yet. A library whose
-    tables come from an earlier layout (no classify_wall_s column) is skipped
-    until it is exported again."""
+    tables have no `minimum_hit_groups` column (not produced by the current
+    compare_benchmark.py) is skipped with a message until it is exported again."""
     runs_dir = os.path.join(base_dir, "runs")
     if not os.path.isdir(runs_dir):
         return None
@@ -1478,25 +1500,10 @@ def export_results(base_dir, quiet=False):
         tdir = os.path.join(runs_dir, lib, "tables")
         fields, _rows = read_csv(os.path.join(tdir, PREFIX + "classify_runs.csv"))
         if not fields:
-            # previous layout: sheets `summary` / `runs` (kraken2_runs.csv) -> old layout, skipped
-            if os.path.isfile(os.path.join(tdir, PREFIX + "runs.csv")):
-                print("skipping {}: tables from an earlier layout (summary / runs sheets), "
-                      "re-run compare_benchmark.py".format(lib), file=sys.stderr)
             continue
-        if os.path.isfile(os.path.join(tdir, PREFIX + "accuracy_detail.csv")):
-            # layout with one accuracy_detail sheet and long order names
-            print("skipping {}: tables from an earlier layout (accuracy_detail sheet), "
-                  "re-run compare_benchmark.py".format(lib), file=sys.stderr)
-            continue
-        stale = [n for n in ACCURACY_SHEETS.values()
-                 if "seed_idx" in read_csv(os.path.join(tdir, PREFIX + n + ".csv"))[0]]
-        if stale:
-            print("skipping {}: tables from an earlier layout (per-seed {} sheets), "
-                  "re-run compare_benchmark.py".format(lib, stale[0]), file=sys.stderr)
-            continue
-        if "classify_wall_s" not in fields:
-            print("skipping {}: tables from an earlier layout, re-run compare_benchmark.py".format(lib),
-                  file=sys.stderr)
+        if "minimum_hit_groups" not in fields or "classify_wall_s" not in fields:
+            print("skipping {}: tables without a minimum_hit_groups column, re-run "
+                  "compare_benchmark.py on this library".format(lib), file=sys.stderr)
             continue
         libs_found.append(lib)
         for sheet in BASE_SHEETS:
@@ -1528,7 +1535,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     res = export_results(args.base_dir)
     if not res:
-        print("no runs/*/tables/kraken2_classify_runs.csv under {}".format(args.base_dir), file=sys.stderr)
+        print("no runs/*/tables/kraken2_classify_runs.csv with a minimum_hit_groups column under {} "
+              "(run compare_benchmark.py on the libraries first)".format(args.base_dir), file=sys.stderr)
         return 1
     print("wrote {} ({} libraries) and kraken2_*.csv under {}".format(res[0], res[2], res[1]))
     return 0
