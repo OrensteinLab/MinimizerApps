@@ -133,10 +133,31 @@ def parse_bucket_stats(path: Path) -> dict:
         "skew_index_bits_per_kmer": None,
         "mid_load_bits_per_kmer": None,
         "control_codewords_bits_per_kmer": None,
+        "minimizer_positions_in_skew_index": None,
+        "minimizer_positions_in_skew_index_pct": None,
+        "num_bits_per_offset": None,
+        "mphf_bits_per_kmer": None,
+        "strings_offsets_bits_per_kmer": None,
+        "strings_bits_per_kmer": None,
+        "begin_buckets_bits_per_kmer": None,
     }
     if not path.is_file():
         return out
     text = path.read_text(errors="replace")
+
+    # Occurrences (super-k-mer start positions) of the heavy minimizers: the
+    # entries of H (heavy_load_buckets), each num_bits_per_offset bits wide.
+    m = re.search(
+        r"^num_minimizer_positions_of_buckets_in_skew_index (\d+)/\d+ \(([\d.eE+-]+)%\)",
+        text,
+        re.MULTILINE,
+    )
+    if m:
+        out["minimizer_positions_in_skew_index"] = int(m.group(1))
+        out["minimizer_positions_in_skew_index_pct"] = float(m.group(2))
+    m = re.search(r"^num_bits_per_offset = (\d+)", text, re.MULTILINE)
+    if m:
+        out["num_bits_per_offset"] = int(m.group(1))
 
     m = re.search(r"^num_buckets_larger_than_1_not_in_skew_index \d+/(\d+)", text, re.MULTILINE)
     if m:
@@ -163,11 +184,25 @@ def parse_bucket_stats(path: Path) -> dict:
     m = re.search(r"control_codewords: ([\d.eE+-]+) \[bits/kmer\]", text)
     if m:
         out["control_codewords_bits_per_kmer"] = float(m.group(1))
+    # rest of the SPACE BREAKDOWN (dictionary::print_info): the order-independent strings and
+    # offsets, the MPHF over the minimizers, and the (negligible) bucket-size start array
+    for key, label in (
+        ("mphf_bits_per_kmer", "mphf"),
+        ("strings_offsets_bits_per_kmer", "strings_offsets"),
+        ("strings_bits_per_kmer", "strings"),
+        ("begin_buckets_bits_per_kmer", "begin_buckets_of_size"),
+    ):
+        m = re.search(rf"^\s+{label}: ([\d.eE+-]+) \[bits/kmer\]", text, re.MULTILINE)
+        if m:
+            out[key] = float(m.group(1))
     return out
 
 
 HISTOGRAM_ID_FIELDS = ("dataset", "k", "m", "modality", "order", "seed_idx")
-BUCKET_HISTOGRAM_FIELDS = [*HISTOGRAM_ID_FIELDS, "bucket_size", "num_buckets", "num_kmers_in_buckets"]
+BUCKET_HISTOGRAM_FIELDS = [
+    *HISTOGRAM_ID_FIELDS, "bucket_type", "log2_bucket_size", "bucket_size_range",
+    "num_buckets", "num_kmers_in_buckets",
+]
 SUPER_KMER_HISTOGRAM_FIELDS = [*HISTOGRAM_ID_FIELDS, "kmers_in_super_kmer", "num_super_kmers"]
 HEAVY_KMER_FRACTION = 0.01  # top share of k-mers treated as "large bucket", all at one (capped) cost
 
@@ -178,10 +213,14 @@ def parse_bucket_histograms(path: Path) -> dict:
     sharing one sampled m-mer) the number of buckets and of k-mers, and per
     super-k-mer length the number of super-k-mers. Buckets larger than
     buckets_statistics::MAX_BUCKET_SIZE (4096) are not tallied by sshash."""
-    out: dict = {"bucket_sizes": [], "super_kmer_lengths": []}
+    out: dict = {"bucket_sizes": [], "super_kmer_lengths": [], "heavy_lower": 64}
     if not path.is_file():
         return out
     text = path.read_text(errors="replace")
+    # 2^l: buckets above it are heavy (skew-index partition 0 starts there)
+    m = re.search(r"^\s*partition = 0: num kmers in buckets of size > (\d+)", text, re.MULTILINE)
+    if m:
+        out["heavy_lower"] = int(m.group(1))
     for m in re.finditer(
         r"^buckets with (\d+) minimizer positions = (\d+) \([^)]*\) \| num_kmers = (\d+)",
         text, re.MULTILINE,
@@ -210,6 +249,45 @@ def histogram_overflow(
     if kmers < 0 or buckets < 0 or (kmers == 0) != (buckets == 0):
         return None
     return (buckets, kmers) if kmers else None
+
+
+def log2_bucket_bins(
+    bucket_sizes: list[tuple[int, int, int]],
+    overflow: tuple[int, int] | None = None,
+    heavy_lower: int = 64,
+) -> list[dict]:
+    """Bucket-size histogram in the paper's logarithmic partitioning: bin b holds
+    the sizes in (2^(b-1), 2^b] (b = ceil(log2 size); b = 0 is the singleton
+    size 1), the same intervals as the skew index partitions K_i = (2^i, 2^(i+1)].
+    `bucket_type` follows Section 6: singleton (size 1), light (2 .. 2^l) and
+    heavy (more than 2^l, `heavy_lower` = 2^l), so the heavy bins are exactly the
+    skew-index partitions. The buckets above BUCKET_HISTOGRAM_CAP (`overflow`,
+    see histogram_overflow) form one last row, since sshash does not tally them
+    per size (it covers the bins from log2 = 13 up)."""
+    bins: dict[int, list[int]] = {}
+    for size, buckets, kmers in bucket_sizes:
+        cur = bins.setdefault((size - 1).bit_length(), [0, 0])
+        cur[0] += buckets
+        cur[1] += kmers
+
+    def kind(upper: int) -> str:
+        return "singleton" if upper == 1 else "light" if upper <= heavy_lower else "heavy"
+
+    out = []
+    for b in sorted(bins):
+        lo, hi = (1, 1) if b == 0 else ((1 << (b - 1)) + 1, 1 << b)
+        out.append({
+            "bucket_type": kind(hi), "log2_bucket_size": b,
+            "bucket_size_range": str(lo) if lo == hi else f"{lo}-{hi}",
+            "num_buckets": bins[b][0], "num_kmers_in_buckets": bins[b][1],
+        })
+    if overflow:
+        out.append({
+            "bucket_type": "heavy", "log2_bucket_size": (BUCKET_HISTOGRAM_CAP - 1).bit_length() + 1,
+            "bucket_size_range": f">{BUCKET_HISTOGRAM_CAP}",
+            "num_buckets": overflow[0], "num_kmers_in_buckets": overflow[1],
+        })
+    return out
 
 
 def bucket_distribution_metrics(
@@ -312,18 +390,31 @@ RUN_FIELDS = (
     "index_size_in_bytes",
     "index_bytes_on_disk",
     "bits_per_kmer",
-    # density (raw minimizer_density/num_minimizers/num_minimizer_positions
-    # dropped -- density_factor derives from them and is enough on its own)
+    # density (the raw minimizer_density stays dropped -- density_factor derives
+    # from it; the occurrence count Z and the repetition factor Z/M are kept
+    # because density fixes Z but M = Z / (Z/M) also depends on the data)
     "density_factor",
+    "num_minimizer_positions",
+    "minimizer_positions_per_minimizer",
     # buckets
     "num_buckets",
     "avg_bucket_size",
     "max_bucket_size",
     "log2_max_bucket_size",
     "kmers_in_skew_index_pct",
+    "num_buckets_in_skew_index",
+    "minimizer_positions_in_skew_index",
+    "minimizer_positions_in_skew_index_pct",
+    "num_bits_per_offset",
     "skew_index_bits_per_kmer",
+    "skew_h_bits_per_kmer",
+    "skew_mphf_v_bits_per_kmer",
     "mid_load_bits_per_kmer",
     "control_codewords_bits_per_kmer",
+    "mphf_bits_per_kmer",
+    "strings_offsets_bits_per_kmer",
+    "strings_bits_per_kmer",
+    "begin_buckets_bits_per_kmer",
     "singleton_bucket_pct",
     "kmers_in_singleton_bucket_pct",
     "heavy_bucket_threshold",
@@ -439,6 +530,29 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
     if mini["num_minimizer_positions"] and num_kmers and w is not None:
         density_fac = _density_factor(mini["num_minimizer_positions"], num_kmers, w)
 
+    # Z / M: occurrences per distinct minimizer -- how much the data repeats a
+    # sampled m-mer (num_minimizers == num_buckets, M).
+    positions_per_minimizer = None
+    if mini["num_minimizer_positions"] and mini["num_minimizers"]:
+        positions_per_minimizer = round(
+            mini["num_minimizer_positions"] / mini["num_minimizers"], 4
+        )
+    # H = heavy_load_buckets: one num_bits_per_offset-wide entry per occurrence of a
+    # heavy minimizer (build_sparse_and_skew_index.cpp), so its size is exact; the
+    # rest of the skew index is the per-partition MPHFs f_i and the V_i arrays.
+    skew_h_bits = skew_mphf_v_bits = None
+    if (
+        buckets["minimizer_positions_in_skew_index"] is not None
+        and buckets["num_bits_per_offset"]
+        and num_kmers
+    ):
+        skew_h_bits = round(
+            buckets["minimizer_positions_in_skew_index"] * buckets["num_bits_per_offset"] / num_kmers,
+            4,
+        )
+        if buckets["skew_index_bits_per_kmer"] is not None:
+            skew_mphf_v_bits = round(buckets["skew_index_bits_per_kmer"] - skew_h_bits, 4)
+
     def step(key: str) -> float | None:
         v = _num(build_json.get(key), float)
         return round(v / 1_000_000, 6) if v is not None else None
@@ -463,12 +577,24 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "bits_per_kmer": bits_per_kmer,
         "w": w,
         "density_factor": density_fac,
+        "num_minimizer_positions": mini["num_minimizer_positions"],
+        "minimizer_positions_per_minimizer": positions_per_minimizer,
         "num_buckets": buckets["num_buckets"],
         "avg_bucket_size": avg_bucket_size,
         "max_bucket_size": buckets["max_bucket_size"],
         "log2_max_bucket_size": buckets["log2_max_bucket_size"],
         "kmers_in_skew_index_pct": buckets["kmers_in_skew_index_pct"],
+        "num_buckets_in_skew_index": buckets["buckets_in_skew_index"],
+        "minimizer_positions_in_skew_index": buckets["minimizer_positions_in_skew_index"],
+        "minimizer_positions_in_skew_index_pct": buckets["minimizer_positions_in_skew_index_pct"],
+        "num_bits_per_offset": buckets["num_bits_per_offset"],
         "skew_index_bits_per_kmer": buckets["skew_index_bits_per_kmer"],
+        "skew_h_bits_per_kmer": skew_h_bits,
+        "skew_mphf_v_bits_per_kmer": skew_mphf_v_bits,
+        "mphf_bits_per_kmer": buckets["mphf_bits_per_kmer"],
+        "strings_offsets_bits_per_kmer": buckets["strings_offsets_bits_per_kmer"],
+        "strings_bits_per_kmer": buckets["strings_bits_per_kmer"],
+        "begin_buckets_bits_per_kmer": buckets["begin_buckets_bits_per_kmer"],
         "mid_load_bits_per_kmer": buckets["mid_load_bits_per_kmer"],
         "control_codewords_bits_per_kmer": buckets["control_codewords_bits_per_kmer"],
         **bucket_dist,
@@ -568,18 +694,22 @@ SUMMARY_METRICS = (
     "bits_per_kmer",
     # density (raw minimizer_density dropped -- density_factor is enough)
     "density_factor",
-    # buckets
+    # buckets (num_buckets, M, is also shown in the summary: the correlation rows use it)
     "num_buckets",
+    "minimizer_positions_per_minimizer",
     "avg_bucket_size",
     "max_bucket_size",
     "kmers_in_skew_index_pct",
+    "num_buckets_in_skew_index",
+    "minimizer_positions_in_skew_index",
+    "minimizer_positions_in_skew_index_pct",
     "skew_index_bits_per_kmer",
+    "skew_h_bits_per_kmer",
+    "skew_mphf_v_bits_per_kmer",
     "mid_load_bits_per_kmer",
     "control_codewords_bits_per_kmer",
     "singleton_bucket_pct",
     "kmers_in_singleton_bucket_pct",
-    "heavy_bucket_threshold",
-    "expected_bucket_cost",
     # build
     "build_wall_s",
     "build_max_rss_kb",
@@ -731,10 +861,15 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
     print(f"wrote {path} ({len(rows)} rows)")
 
 
+# Bucket metrics that the summary sheet shows as well as the buckets sheet:
+# the number of distinct minimizers M is a driver of its correlation rows.
+SUMMARY_KEEP_BUCKET_METRICS = frozenset({"num_buckets"})
+
+
 def summary_field_order() -> list[str]:
     fields = ["dataset", "k", "m", "w", "modality", "order", "n_seeds", "n_kmers"]
     for metric in SUMMARY_METRICS:
-        if _METRIC_CATEGORY.get(metric) == "buckets":
+        if _METRIC_CATEGORY.get(metric) == "buckets" and metric not in SUMMARY_KEEP_BUCKET_METRICS:
             continue  # shown in the buckets sheet (bucket_field_order), not repeated here
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
@@ -767,7 +902,7 @@ XLSX_DATA_START_ROW = 3
 XLSX_MERGE_FIELDS = frozenset({"dataset", "k", "m", "w", "modality"})
 # Sheets with one row per (dataset, ...): get a divider (bottom border) after
 # each dataset's last row, and the vertical merge above.
-XLSX_DATASET_BORDER_SHEETS = frozenset({"runs", "summary", "buckets"})
+XLSX_DATASET_BORDER_SHEETS = frozenset({"runs", "summary", "buckets", "space_breakdown"})
 
 _ID_FIELDS = frozenset({
     "run_id", "dataset", "k", "m", "w", "modality", "order", "order_seed", "seed_idx",
@@ -777,8 +912,14 @@ _METRIC_CATEGORY = {
     # space
     "num_kmers": "space", "index_size_in_bytes": "space", "index_bytes_on_disk": "space", "bits_per_kmer": "space",
     # density
-    "density_factor": "density",
+    "density_factor": "density", "num_minimizer_positions": "density",
+    "minimizer_positions_per_minimizer": "buckets",
     # buckets
+    "num_buckets_in_skew_index": "buckets", "minimizer_positions_in_skew_index": "buckets",
+    "minimizer_positions_in_skew_index_pct": "buckets", "num_bits_per_offset": "buckets",
+    "skew_h_bits_per_kmer": "buckets", "skew_mphf_v_bits_per_kmer": "buckets",
+    "mphf_bits_per_kmer": "space", "strings_offsets_bits_per_kmer": "space",
+    "strings_bits_per_kmer": "space", "begin_buckets_bits_per_kmer": "space",
     "num_buckets": "buckets", "avg_bucket_size": "buckets", "max_bucket_size": "buckets",
     "log2_max_bucket_size": "buckets", "kmers_in_skew_index_pct": "buckets",
     "skew_index_bits_per_kmer": "buckets", "mid_load_bits_per_kmer": "buckets",
@@ -828,9 +969,56 @@ def _orders_field_category(field: str) -> str:
     return ""
 
 
+# Row-1 groups of the buckets sheet, in column order (see BUCKET_METRIC_GROUPS).
+BUCKET_METRIC_GROUPS = (
+    # every minimizer has one tag (control codeword); the three bucket kinds of the paper follow
+    ("all buckets (one tag each)", (
+        "num_buckets", "minimizer_positions_per_minimizer", "avg_bucket_size", "max_bucket_size",
+        "control_codewords_bits_per_kmer",
+    )),
+    ("singleton buckets (position in the tag)", (
+        "singleton_bucket_pct", "kmers_in_singleton_bucket_pct",
+    )),
+    ("light buckets (array L)", ("mid_load_bits_per_kmer",)),
+    ("heavy buckets (skew index: f_i, V_i, H)", (
+        "kmers_in_skew_index_pct", "num_buckets_in_skew_index",
+        "minimizer_positions_in_skew_index", "minimizer_positions_in_skew_index_pct",
+        "skew_index_bits_per_kmer", "skew_h_bits_per_kmer", "skew_mphf_v_bits_per_kmer",
+    )),
+)
+BUCKET_METRICS = tuple(m for _, group in BUCKET_METRIC_GROUPS for m in group)
+# Green/red scale only where lower is better (space, number of buckets); the other
+# bucket ratios (average size, singleton share, ...) are descriptive, not a gain or a loss.
+BUCKET_COLORED_RATIOS = frozenset({
+    "num_buckets", "control_codewords_bits_per_kmer", "mid_load_bits_per_kmer",
+    "skew_index_bits_per_kmer", "skew_h_bits_per_kmer", "skew_mphf_v_bits_per_kmer",
+})
+
+
+def _bucket_field_category(field: str) -> str:
+    if field in ("dataset", "modality", "order", "n_seeds", "n_kmers"):
+        return "id / params"
+    base = field
+    for suffix in ("_mean", "_std", "_ratio"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    for label, group in BUCKET_METRIC_GROUPS:
+        if base in group:
+            return label
+    return ""
+
+
 def sheet_categories(raw_name: str, fields: Sequence[str]) -> list[str] | None:
     """One category label per field, for the row-1 band; None to skip it."""
-    if raw_name in ("runs", "summary", "buckets"):
+    if raw_name == "buckets":
+        return [_bucket_field_category(f) for f in fields]
+    if raw_name == "space_breakdown":
+        return [_space_field_category(f) for f in fields]
+    if raw_name == "summary":
+        # num_buckets (M) next to the density column, as its own group
+        return ["minimizers" if f.startswith("num_buckets_") else _field_category(f) for f in fields]
+    if raw_name == "runs":
         return [_field_category(f) for f in fields]
     if raw_name == "orders":
         return [_orders_field_category(f) for f in fields]
@@ -929,7 +1117,7 @@ def _ratio_bounds(rows: Sequence[dict], field: str) -> tuple[float, float]:
     return lo, hi
 
 
-def _color_scale_xml(fields: Sequence[str], rows: Sequence[dict]) -> str:
+def _color_scale_xml(fields: Sequence[str], rows: Sequence[dict], only: frozenset | None = None) -> str:
     """Green (< 1, better than native) -> white (1) -> red (> 1, worse) scale
     on every `{metric}_ratio` column -- not a curated subset."""
     if not rows:
@@ -938,7 +1126,7 @@ def _color_scale_xml(fields: Sequence[str], rows: Sequence[dict]) -> str:
     last_row = data_start + len(rows) - 1
     parts: list[str] = []
     for priority, field in enumerate(fields, start=1):
-        if not field.endswith("_ratio"):
+        if not field.endswith("_ratio") or (only is not None and field[: -len("_ratio")] not in only):
             continue
         col_idx = fields.index(field)
         letter = col_letter(col_idx + 1)
@@ -973,7 +1161,76 @@ def _category_band_row(fields: Sequence[str], categories: Sequence[str]) -> tupl
     return f'<row r="1">{"".join(cells)}</row>', merges
 
 
-def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], drawing_rid: str | None = None) -> str:
+def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
+    """Pearson correlation; None when undefined (fewer than 3 points or a constant series)."""
+    n = len(xs)
+    if n < 3:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx <= 1e-18 or syy <= 1e-18:
+        return None
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    return round(max(-1.0, min(1.0, sxy / math.sqrt(sxx * syy))), 3)
+
+
+# Two rows right under the summary table: for every `{metric}_ratio` column, its
+# Pearson correlation (Excel's built-in CORREL, so it stays live and traceable)
+# with the density ratio and with the distinct-minimizer ratio, over the dataset
+# x order rows. The ratios (this order / native, same dataset) are
+# dimensionless, so rows of different datasets are comparable.
+CORRELATION_DRIVERS = (
+    ("correlation with density", "density_factor_ratio"),
+    ("correlation with distinct minimizers", "num_buckets_ratio"),
+)
+# The buckets sheet gets one such row, for its tag and light-array space ratios.
+BUCKET_CORRELATION_DRIVERS = (("correlation with distinct minimizers", "num_buckets_ratio"),)
+BUCKET_CORRELATION_COLUMNS = frozenset({
+    "control_codewords_bits_per_kmer_ratio", "mid_load_bits_per_kmer_ratio",
+})
+
+
+def correlation_rows(
+    fields: Sequence[str],
+    summary: Sequence[dict],
+    drivers: Sequence[tuple[str, str]] = CORRELATION_DRIVERS,
+    columns: frozenset | None = None,
+) -> list[dict]:
+    """One entry per driver: its label and, per `_ratio` column index, the
+    CORREL formula and its cached value (so a viewer that does not recalculate
+    still shows it)."""
+    n = len(summary)
+    if not n:
+        return []
+    first, last = XLSX_DATA_START_ROW, XLSX_DATA_START_ROW + n - 1
+    out = []
+    for label, driver in drivers:
+        dl = col_letter(list(fields).index(driver) + 1)
+        cells: dict[int, tuple[str, float | None]] = {}
+        for c, f in enumerate(fields):
+            if not f.endswith("_ratio") or (columns is not None and f not in columns):
+                continue
+            cl = col_letter(c + 1)
+            pairs = [(r[driver], r[f]) for r in summary if r.get(driver) is not None and r.get(f) is not None]
+            value = _pearson([a for a, _ in pairs], [b for _, b in pairs])
+            # a constant column has no correlation: Excel's CORREL gives #DIV/0!, shown blank
+            formula = f'IFERROR(CORREL(${dl}${first}:${dl}${last},{cl}${first}:{cl}${last}),"")'
+            cells[c] = (formula, value)
+        out.append({"label": label, "cells": cells})
+    return out
+
+
+def _xlsx_formula_cell(formula: str, value, col: int, row: int, *, style: int = 0) -> str:
+    ref = f"{col_letter(col + 1)}{row}"
+    s_attr = f' s="{style}"' if style else ""
+    if value is None:
+        return f'<c r="{ref}"{s_attr} t="str"><f>{xml_escape(formula)}</f><v></v></c>'
+    return f'<c r="{ref}"{s_attr}><f>{xml_escape(formula)}</f><v>{value}</v></c>'
+
+
+def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], drawing_rid: str | None = None,
+               footer: list[dict] | None = None) -> str:
     xml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -1019,11 +1276,20 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], drawing_rid: 
                 value = None if skipped else row.get(h)
                 cells.append(_xlsx_cell(value, c, r_i, style=style))
             xml.append(f'<row r="{r_i}">{"".join(cells)}</row>')
+    if fields and rows and footer:
+        # rows right under the table (see correlation_rows)
+        r_f = XLSX_DATA_START_ROW + len(rows)
+        for entry in footer:
+            cells = [_xlsx_cell(entry["label"], 0, r_f, style=2)]
+            for c, (formula, value) in sorted(entry["cells"].items()):
+                cells.append(_xlsx_formula_cell(formula, value, c, r_f))
+            xml.append(f'<row r="{r_f}">{"".join(cells)}</row>')
+            r_f += 1
     xml.append("</sheetData>")
     if merge_refs:
         xml.append(_xlsx_merges_xml(merge_refs))
     if fields and rows:
-        cs = _color_scale_xml(fields, rows)
+        cs = _color_scale_xml(fields, rows, BUCKET_COLORED_RATIOS if raw_name == "buckets" else None)
         if cs:
             xml.append(cs)
     if drawing_rid:
@@ -1065,7 +1331,7 @@ def _xlsx_styles_xml() -> str:
 # Charts (hand-written DrawingML, same package layout openpyxl emits)
 # ---------------------------------------------------------------------------
 
-CHART_GRID_COL0 = 10                 # first chart column (K): the raw table fills A..I
+CHART_GRID_COL0 = 12                 # first chart column (M): the raw table fills A..K
 CHART_PITCH = (9, 16)                # grid pitch in (columns, rows) -- room for one chart
 CHART_SIZE_EMU = (5_400_000, 2_880_000)
 CHART_ORDER_ORDER = (
@@ -1081,12 +1347,11 @@ CHART_COLORS = {
 
 
 def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
-    """One chart per (dataset, order): number of buckets per bucket size (log-log
-    scatter) for the first seed, in a grid -- datasets down, orders across --
-    to the right of the raw table (rows of `bucket_hist` start at
-    XLSX_DATA_START_ROW). The aggregated '>4096' row is left out (it has no
-    size to plot)."""
-    sizes_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("bucket_size") + 1)
+    """One chart per (dataset, order): number of buckets per log2 bucket-size bin
+    (columns on a log axis, the last bin is the aggregated '>4096') for the
+    first seed, in a grid -- datasets down, orders across -- to the right of the
+    raw table (rows of `bucket_hist` start at XLSX_DATA_START_ROW)."""
+    sizes_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("bucket_size_range") + 1)
     count_col = col_letter(BUCKET_HISTOGRAM_FIELDS.index("num_buckets") + 1)
     blocks: dict[tuple, list[int]] = {}
     first_seed: dict[tuple, int] = {}
@@ -1096,7 +1361,7 @@ def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
         if key not in first_seed or seed < first_seed[key]:
             first_seed[key] = seed
             blocks[key] = []
-        if seed == first_seed[key] and not str(r["bucket_size"]).startswith(">"):
+        if seed == first_seed[key]:
             blocks[key].append(idx)
     datasets = [d for d in CHART_DATASET_ORDER if any(k[0] == d for k in blocks)]
     datasets += sorted({k[0] for k in blocks} - set(datasets))
@@ -1131,22 +1396,11 @@ def _chart_text(text: str, size: int = 1000, bold: bool = False) -> str:
 
 
 def _chart_xml(sheet_name: str, chart: dict) -> str:
-    """Log-log scatter (one marker per bucket size): a bar histogram over the
-    hundreds of distinct sizes would squeeze the head of the distribution, where
-    the orders differ most, into a few pixels."""
+    """Column chart of buckets per log2 bucket-size bin (category = the bin's
+    size range, value axis log10 so the head of the distribution and the heavy
+    tail are both visible)."""
     sheet = "'" + sheet_name.replace("'", "''") + "'"
     color = chart["color"]
-
-    def axis(ax_id: int, cross_id: int, pos: str, title: str, grid: bool) -> str:
-        return (
-            f'<valAx><axId val="{ax_id}"/><scaling><logBase val="10"/><orientation val="minMax"/></scaling>'
-            f'<delete val="0"/><axPos val="{pos}"/>{"<majorGridlines/>" if grid else ""}'
-            f'<title>{_chart_text(title, 900)}<overlay val="0"/></title>'
-            '<numFmt formatCode="General" sourceLinked="0"/><majorTickMark val="out"/><minorTickMark val="none"/>'
-            f'<tickLblPos val="nextTo"/><crossAx val="{cross_id}"/><crosses val="min"/>'
-            '<crossBetween val="midCat"/></valAx>'
-        )
-
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" '
@@ -1154,16 +1408,25 @@ def _chart_xml(sheet_name: str, chart: dict) -> str:
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
         f'<chart><title>{_chart_text(chart["title"], 1000, True)}<overlay val="0"/></title>'
         '<autoTitleDeleted val="0"/><plotArea><layout/>'
-        '<scatterChart><scatterStyle val="lineMarker"/><varyColors val="0"/>'
-        '<ser><idx val="0"/><order val="0"/><spPr><a:ln w="19050"><a:noFill/></a:ln></spPr>'
-        f'<marker><symbol val="circle"/><size val="4"/><spPr><a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
-        f'<a:ln w="3175"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:ln></spPr></marker>'
-        f'<xVal><numRef><f>{sheet}!{chart["cat"]}</f></numRef></xVal>'
-        f'<yVal><numRef><f>{sheet}!{chart["val"]}</f></numRef></yVal><smooth val="0"/></ser>'
-        '<axId val="111"/><axId val="222"/></scatterChart>'
-        + axis(111, 222, "b", "bucket size (super-k-mers per sampled m-mer), log", False)
-        + axis(222, 111, "l", "buckets, log", True)
-        + '</plotArea><plotVisOnly val="1"/><dispBlanksAs val="gap"/></chart></chartSpace>'
+        '<barChart><barDir val="col"/><grouping val="clustered"/><varyColors val="0"/>'
+        f'<ser><idx val="0"/><order val="0"/><spPr><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></spPr>'
+        '<invertIfNegative val="0"/>'
+        f'<cat><strRef><f>{sheet}!{chart["cat"]}</f></strRef></cat>'
+        f'<val><numRef><f>{sheet}!{chart["val"]}</f></numRef></val></ser>'
+        '<gapWidth val="40"/><axId val="111"/><axId val="222"/></barChart>'
+        '<catAx><axId val="111"/><scaling><orientation val="minMax"/></scaling><delete val="0"/>'
+        '<axPos val="b"/>'
+        f'<title>{_chart_text("bucket size (log2 bins; heavy = skew-index partitions)", 900)}<overlay val="0"/></title>'
+        '<numFmt formatCode="General" sourceLinked="0"/><majorTickMark val="out"/><minorTickMark val="none"/>'
+        '<tickLblPos val="nextTo"/><crossAx val="222"/><crosses val="autoZero"/><auto val="1"/>'
+        '<lblAlgn val="ctr"/><lblOffset val="100"/><noMultiLvlLbl val="0"/></catAx>'
+        '<valAx><axId val="222"/><scaling><logBase val="10"/><orientation val="minMax"/></scaling>'
+        '<delete val="0"/><axPos val="l"/><majorGridlines/>'
+        f'<title>{_chart_text("buckets, log", 900)}<overlay val="0"/></title>'
+        '<numFmt formatCode="General" sourceLinked="0"/><majorTickMark val="out"/><minorTickMark val="none"/>'
+        '<tickLblPos val="nextTo"/><crossAx val="111"/><crosses val="autoZero"/>'
+        '<crossBetween val="between"/></valAx>'
+        '</plotArea><plotVisOnly val="1"/><dispBlanksAs val="gap"/></chart></chartSpace>'
     )
 
 
@@ -1204,6 +1467,7 @@ def write_xlsx(
     path: Path,
     sheets: Sequence[tuple[str, list[str], list[dict]]],
     charts: dict[str, list[dict]] | None = None,
+    footers: dict[str, list[dict]] | None = None,
 ) -> None:
     """Write a multi-sheet .xlsx without extra Python packages. `charts` maps a
     sheet's raw name to its charts (dicts with title/cat/val/col/row/color,
@@ -1214,7 +1478,8 @@ def write_xlsx(
     for raw_name, fields, rows in sheets:
         name = (raw_name or "Sheet")[:31]
         names.append(name)
-        payloads.append(_sheet_xml(raw_name, fields, rows, "rId1" if charts.get(raw_name) else None))
+        payloads.append(_sheet_xml(raw_name, fields, rows, "rId1" if charts.get(raw_name) else None,
+                                   (footers or {}).get(raw_name)))
 
     sheet_refs, rels, overrides = [], [], [
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
@@ -1268,7 +1533,10 @@ def write_xlsx(
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'<sheets>{"".join(sheet_refs)}</sheets></workbook>'
+        f'<sheets>{"".join(sheet_refs)}</sheets>'
+        # A1 references (column letters) regardless of the viewer's R1C1 setting; formulas
+        # (the summary's CORREL rows) are recalculated on load.
+        '<calcPr refMode="A1" fullCalcOnLoad="1"/></workbook>'
     )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -1313,11 +1581,21 @@ def index_rows() -> list[dict]:
         row("orders", "expected_density_factor_mean/std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
         row("buckets/summary/runs", "num_buckets / avg_bucket_size", "num_kmers / num_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
         row("buckets/summary/runs", "kmers_in_skew_index_pct", "share of k-mers whose bucket is large enough to go in sshash's skew index (the structure for heavy buckets); higher can mean slower lookups despite a smaller/denser index"),
-        row("bucket_histogram", "bucket_size / num_buckets / num_kmers_in_buckets", "one row per run x bucket size (number of super-k-mers sharing a sampled m-mer): how many buckets have that size and how many k-mers they hold; only runs built with `--bucket-stats` (the harness passes it) have rows. sshash does not tally buckets larger than 4096 per size, so one aggregated row `>4096` carries them (derived from the run's totals): the k-mer column then sums exactly to num_kmers and the bucket column to the number of sampled m-mers"),
+        row("bucket_histogram", "bucket_type / log2_bucket_size / bucket_size_range / num_buckets / num_kmers_in_buckets", "one row per run x log2 bucket-size bin, the paper's logarithmic partitioning: bin b holds the sizes (2^(b-1), 2^b] (b = ceil(log2 size); 0 = singleton), the same intervals as the skew-index partitions. bucket_type: singleton (size 1), light (2 .. 2^l) or heavy (> 2^l, i.e. in the skew index; 2^l = 64 here). Bucket size = number of sampled-m-mer occurrences (super-k-mers). Only runs built with `--bucket-stats` (the harness passes it) have rows. sshash does not tally buckets larger than 4096 per size, so one aggregated row `>4096` (log2 >= 13) carries them (derived from the run's totals): the k-mer column then sums exactly to num_kmers and the bucket column to the number of sampled m-mers"),
         row("super_kmer_histogram", "kmers_in_super_kmer / num_super_kmers", "one row per run x super-k-mer length (k-mers per super-k-mer): how many super-k-mers have that length"),
-        row("buckets/summary/runs", "num_buckets", "number of distinct sampled m-mers (num_minimizers, M): the MPHF and control-codeword array both have M entries"),
+        row("runs", "num_minimizer_positions", "Z: total occurrences of the sampled m-mers (super-k-mer start positions, build.log num_minimizer_positions); density_factor is Z / num_kmers * (w+1)"),
+        row("buckets/runs", "minimizer_positions_per_minimizer", "Z / M (num_minimizer_positions / num_buckets): occurrences per distinct minimizer, i.e. how many positions a lookup scans in a light bucket and how much the data repeats a sampled m-mer. Density fixes Z, but M follows density only while this stays about the same"),
+        row("buckets/runs", "num_buckets_in_skew_index / minimizer_positions_in_skew_index(_pct)", "heavy buckets (more than 2^l occurrences) and their occurrences, i.e. the entries of H (heavy_load_buckets); build.log num_buckets_in_skew_index / num_minimizer_positions_of_buckets_in_skew_index; the pct is the share of all Z"),
+        row("runs", "num_bits_per_offset", "width in bits of one position in S (build.log), which is also the width of an H entry"),
+        row("buckets/runs", "skew_h_bits_per_kmer / skew_mphf_v_bits_per_kmer", "split of skew_index_bits_per_kmer: H = minimizer_positions_in_skew_index * num_bits_per_offset / num_kmers (exact, H is a compact vector of that width); the rest is the per-partition MPHFs f_i and the V_i arrays"),
+        row("summary", "correlation with density / distinct minimizers", "two rows right under the table: for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / num_buckets_ratio over the dataset x order rows (ratios are order / native for the same dataset, so datasets are comparable); blank for a constant column. No colour scale"),
+        row("buckets", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset, for every bucket metric (the gain in space for the bits/k-mer breakdown and num_buckets); green (lower) -> red (higher) only on the space and num_buckets ratios, where lower is better"),
+        row("buckets", "correlation with distinct minimizers", "one row right under the table: Excel CORREL between num_buckets_ratio and control_codewords_bits_per_kmer_ratio / mid_load_bits_per_kmer_ratio (the tag array and the light array L) over the dataset x order rows"),
+        row("space_breakdown", "bits_* / saved_* / share_*_pct", "where the bits of the index go (mean bits/k-mer over the seeds, from the build log's SPACE BREAKDOWN: strings, strings_offsets, mphf, tags = control_codewords, light_L = mid_load_buckets array L, skew_fv = the skew index's MPHFs f_i and V_i arrays, skew_H = H, other = begin_buckets_of_size), the saving of each component over the same-modality native (native - order: positive = saved) and its share of the total saving (%). The weights (3e-6 bits/k-mer) are left out"),
+        row("space_breakdown", "saved_by_minimizers / saved_by_occurrences", "the saving split by what sizes the component: by_minimizers = mphf + tags (one entry per distinct minimizer M); by_occurrences = light_L + skew_fv + skew_H (sized by the minimizer occurrences / the heavy tail, so it can be negative); the strings and offsets do not depend on the order"),
+        row("buckets/summary/runs", "num_buckets", "(also in the summary sheet: the correlation rows use its ratio) number of distinct sampled m-mers (num_minimizers, M): the MPHF and control-codeword array both have M entries"),
         row("buckets/summary/runs", "singleton_bucket_pct / kmers_in_singleton_bucket_pct", "share of buckets, and of k-mers, whose sampled m-mer occurs in exactly one super-k-mer (the fast singleton path, no OFFSETS access)"),
-        row("buckets/summary/runs", "heavy_bucket_threshold / expected_bucket_cost", "cost model: the top 1% of k-mers (largest buckets) all cost one capped bucket size (= heavy_bucket_threshold); the rest cost their bucket size (number of super-k-mers to check). expected_bucket_cost = k-mer-weighted mean of that cost; lower is better"),
+        row("runs", "heavy_bucket_threshold / expected_bucket_cost", "cost model (runs sheet only): the top 1% of k-mers (largest buckets) all cost one capped bucket size (= heavy_bucket_threshold); the rest cost their bucket size (number of super-k-mers to check). expected_bucket_cost = k-mer-weighted mean of that cost; lower is better"),
         row("buckets/summary/runs", "skew_index_bits_per_kmer / mid_load_bits_per_kmer / control_codewords_bits_per_kmer", "space breakdown for the bucket-count/size tradeoff: fewer buckets means less control_codewords/mid_load overhead but a bigger skew_index share"),
     ]
 
@@ -1424,19 +1702,6 @@ def orders_field_order(summary: list[dict]) -> list[str]:
     return fields
 
 
-BUCKET_METRICS = (
-    "num_buckets",
-    "avg_bucket_size",
-    "max_bucket_size",
-    "kmers_in_skew_index_pct",
-    "skew_index_bits_per_kmer",
-    "mid_load_bits_per_kmer",
-    "control_codewords_bits_per_kmer",
-    "singleton_bucket_pct",
-    "kmers_in_singleton_bucket_pct",
-    "heavy_bucket_threshold",
-    "expected_bucket_cost",
-)
 
 
 def bucket_rows(summary: list[dict]) -> list[dict]:
@@ -1453,7 +1718,7 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
         for metric in BUCKET_METRICS:
             row[f"{metric}_mean"] = r.get(f"{metric}_mean")
             row[f"{metric}_std"] = r.get(f"{metric}_std")
-        row["expected_bucket_cost_ratio"] = r.get("expected_bucket_cost_ratio")
+            row[f"{metric}_ratio"] = r.get(f"{metric}_ratio")
         out.append(row)
     return out
 
@@ -1461,9 +1726,112 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
 def bucket_field_order() -> list[str]:
     fields = ["dataset", "modality", "order", "n_seeds", "n_kmers"]
     for metric in BUCKET_METRICS:
-        fields.extend((f"{metric}_mean", f"{metric}_std"))
-    fields.append("expected_bucket_cost_ratio")
+        fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
+
+
+# Space breakdown: where the bits of the index go, and which part of the saving of an order
+# over native comes from what. Components are the dictionary::print_info entries of the
+# build log (bits per k-mer); the weights (3e-6) are left out.
+SPACE_COMPONENTS = (
+    ("strings", "strings_bits_per_kmer"),
+    ("strings_offsets", "strings_offsets_bits_per_kmer"),
+    ("mphf", "mphf_bits_per_kmer"),
+    ("tags", "control_codewords_bits_per_kmer"),
+    ("light_L", "mid_load_bits_per_kmer"),
+    ("skew_fv", "skew_mphf_v_bits_per_kmer"),
+    ("skew_H", "skew_h_bits_per_kmer"),
+    ("other", "begin_buckets_bits_per_kmer"),
+)
+SPACE_BY_MINIMIZERS = ("mphf", "tags")            # one entry per distinct minimizer (M)
+SPACE_BY_OCCURRENCES = ("light_L", "skew_fv", "skew_H")  # sized by minimizer occurrences / heavy tail
+SPACE_ID_FIELDS = ("dataset", "modality", "order", "n_seeds", "n_kmers")
+
+
+def space_rows(rows: list[dict], summary: list[dict]) -> list[dict]:
+    """Per dataset x order: mean bits/k-mer of every component, the saving over the
+    same-modality native (native - order, so positive = saved), each component's share
+    of the total saving, and the saving split by what sizes the component (see
+    SPACE_BY_MINIMIZERS / SPACE_BY_OCCURRENCES). Values, not formulas: the means are
+    over the seeds' runs."""
+    runs_by_key: dict[tuple, list[dict]] = {}
+    for r in rows:
+        runs_by_key.setdefault(summary_group_key(r), []).append(r)
+    means: dict[tuple, dict] = {}
+    for srow in summary:
+        parts = runs_by_key.get(summary_group_key(srow), [])
+        comp = {}
+        for name, field in SPACE_COMPONENTS:
+            vals = [float(p[field]) for p in parts if p.get(field) is not None]
+            comp[name] = (sum(vals) / len(vals)) if vals else None
+        means[(srow["dataset"], srow.get("modality"), srow["order"])] = comp
+
+    def total(comp: dict) -> float | None:
+        vals = [v for v in comp.values() if v is not None]
+        return sum(vals) if len(vals) == len(comp) else None
+
+    out = []
+    for srow in summary:
+        key = (srow["dataset"], srow.get("modality"), srow["order"])
+        comp = means[key]
+        base = means.get((srow["dataset"], srow.get("modality"), "native")) or means.get(
+            (srow["dataset"], "canonical", "native")
+        )
+        row: dict = {k: srow.get(k) for k in SPACE_ID_FIELDS}
+        for name, _ in SPACE_COMPONENTS:
+            row[f"bits_{name}"] = round(comp[name], 4) if comp[name] is not None else None
+        tot, btot = total(comp), (total(base) if base else None)
+        row["bits_total"] = round(tot, 4) if tot is not None else None
+        saved = {}
+        for name, _ in SPACE_COMPONENTS:
+            if base and base[name] is not None and comp[name] is not None:
+                saved[name] = base[name] - comp[name]
+            else:
+                saved[name] = None
+        saved_total = (btot - tot) if (tot is not None and btot is not None) else None
+        for name, _ in SPACE_COMPONENTS:
+            row[f"saved_{name}"] = round(saved[name], 4) if saved[name] is not None else None
+        row["saved_total"] = round(saved_total, 4) if saved_total is not None else None
+        has_saving = saved_total is not None and abs(saved_total) > 1e-9
+        for name, _ in SPACE_COMPONENTS:
+            row[f"share_{name}_pct"] = (
+                round(100.0 * saved[name] / saved_total, 2)
+                if has_saving and saved[name] is not None else None
+            )
+        by_m = sum(saved[n] for n in SPACE_BY_MINIMIZERS) if all(saved[n] is not None for n in SPACE_BY_MINIMIZERS) else None
+        by_occ = sum(saved[n] for n in SPACE_BY_OCCURRENCES) if all(saved[n] is not None for n in SPACE_BY_OCCURRENCES) else None
+        row["saved_by_minimizers"] = round(by_m, 4) if by_m is not None else None
+        row["saved_by_occurrences"] = round(by_occ, 4) if by_occ is not None else None
+        row["share_by_minimizers_pct"] = round(100.0 * by_m / saved_total, 2) if has_saving and by_m is not None else None
+        row["share_by_occurrences_pct"] = round(100.0 * by_occ / saved_total, 2) if has_saving and by_occ is not None else None
+        out.append(row)
+    return out
+
+
+def space_field_order() -> list[str]:
+    names = [n for n, _ in SPACE_COMPONENTS]
+    return [
+        *SPACE_ID_FIELDS,
+        *(f"bits_{n}" for n in names), "bits_total",
+        *(f"saved_{n}" for n in names), "saved_total",
+        *(f"share_{n}_pct" for n in names),
+        "saved_by_minimizers", "saved_by_occurrences",
+        "share_by_minimizers_pct", "share_by_occurrences_pct",
+    ]
+
+
+def _space_field_category(field: str) -> str:
+    if field in SPACE_ID_FIELDS:
+        return "id / params"
+    if field.startswith(("saved_by_", "share_by_")):
+        return "what sizes the saving (M vs occurrences)"
+    if field.startswith("bits_"):
+        return "bits per k-mer"
+    if field.startswith("saved_"):
+        return "saved vs native (bits per k-mer)"
+    if field.startswith("share_"):
+        return "share of the total saving (%)"
+    return ""
 
 
 def datasets_rows(rows: list[dict]) -> list[dict]:
@@ -1495,16 +1863,11 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
             rows.append(row)
             hist = parse_bucket_histograms(run_dir / "build.log")
             ident = {f: row.get(f) for f in HISTOGRAM_ID_FIELDS}
-            bucket_hist.extend(
-                {**ident, "bucket_size": s, "num_buckets": b, "num_kmers_in_buckets": n}
-                for s, b, n in hist["bucket_sizes"]
-            )
             over = histogram_overflow(hist["bucket_sizes"], row.get("num_kmers"), row.get("num_buckets"))
-            if over:
-                bucket_hist.append(
-                    {**ident, "bucket_size": f">{BUCKET_HISTOGRAM_CAP}", "num_buckets": over[0],
-                     "num_kmers_in_buckets": over[1]}
-                )
+            bucket_hist.extend(
+                {**ident, **b}
+                for b in log2_bucket_bins(hist["bucket_sizes"], over, hist["heavy_lower"])
+            )
             super_kmer_hist.extend(
                 {**ident, "kmers_in_super_kmer": l, "num_super_kmers": c}
                 for l, c in hist["super_kmer_lengths"]
@@ -1540,11 +1903,13 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         )
     orders = orders_rows(summary, expected)
     buckets = bucket_rows(summary)
+    space = space_rows(rows, summary)
 
     write_csv(out_root / "sshash_runs.csv", rows, list(RUN_FIELDS))
     write_csv(out_root / "sshash_summary.csv", summary, summary_field_order())
     write_csv(out_root / "sshash_vs_reference.csv", vs_ref, vs_reference_field_order())
     write_csv(out_root / "sshash_buckets.csv", buckets, bucket_field_order())
+    write_csv(out_root / "sshash_space_breakdown.csv", space, space_field_order())
     write_csv(out_root / "sshash_bucket_histogram.csv", bucket_hist, BUCKET_HISTOGRAM_FIELDS)
     write_csv(out_root / "sshash_super_kmer_histogram.csv", super_kmer_hist,
               SUPER_KMER_HISTOGRAM_FIELDS)
@@ -1555,6 +1920,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         ("datasets", ["dataset", "k", "m", "num_kmers"], datasets_rows(rows)),
         ("summary", summary_field_order(), summary),
         ("buckets", bucket_field_order(), buckets),
+        ("space_breakdown", space_field_order(), space),
         ("runs", list(RUN_FIELDS), rows),
         ("vs_reference", vs_reference_field_order(), vs_ref),
         ("bucket_histogram", BUCKET_HISTOGRAM_FIELDS, bucket_hist),
@@ -1563,6 +1929,12 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     write_xlsx(
         out_root / "sshash_results.xlsx", sheets,
         charts={"bucket_histogram": bucket_histogram_charts(bucket_hist)},
+        footers={
+            "summary": correlation_rows(summary_field_order(), summary),
+            "buckets": correlation_rows(
+                bucket_field_order(), buckets, BUCKET_CORRELATION_DRIVERS, BUCKET_CORRELATION_COLUMNS
+            ),
+        },
     )
 
     print(f"equivalence OK: {n_cmp} run(s) checked across {len({r['dataset'] for r in rows})} dataset(s)")

@@ -256,6 +256,7 @@ runs/
 |---|---|---|---|
 | `sshash_runs.csv` | one per run | all metrics + telemetry | `runs` |
 | `sshash_summary.csv` | one per dataset x order | mean/std across seeds, ratio vs native | `summary` |
+| `sshash_space_breakdown.csv` | one per dataset x order | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
 | `sshash_vs_reference.csv` | one per dataset | informational: measured `num_kmers` vs the Zenodo record's own published distinct-31-mer count (not order-specific) | `vs_reference` |
 | `sshash_results.xlsx` | — | `index`, `orders`, `datasets`, `summary`, `runs`, `vs_reference` | — |
 
@@ -290,7 +291,8 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | `index` | column reference: what every non-obvious column means |
 | `orders` | one row per (order, t): what it is, its sshash CLI flags, particular + expected density |
 | `datasets` | one row per dataset: k, m, measured num_kmers |
-| `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this order's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. |
+| `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this order's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x order rows. |
+| `space_breakdown` | one row per dataset x order: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
 | `runs` | one row per run (every metric + telemetry, unfiltered) |
 | `vs_reference` | informational: measured vs the Zenodo record's own published k-mer counts |
 
