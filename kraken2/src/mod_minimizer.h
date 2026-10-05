@@ -48,7 +48,7 @@ class ModSampler {
         t_rc_shift_(0), l_rc_shift_(0),
         tmer_fwd_(0), tmer_rc_(0), loaded_t_(0),
         lmer_fwd_(0), lmer_rc_(0), loaded_l_(0),
-        abs_base_pos_(0), abs_tmer_pos_(0), win_start_(-1), win_mod_(0),
+        abs_tmer_pos_(0), win_start_(-1), win_mod_(0),
         residue_a_(0), lmer_ring_ix_(0), lmers_stored_(0),
         dq_head_(0), dq_tail_(0), n_ranked_(0), n_inf_(0),
         ranked_tmer_log_(nullptr), ranked_lmer_log_(nullptr) {
@@ -106,6 +106,7 @@ class ModSampler {
       t_ranker_->ClearRankStats();
       use_lut_ = true;
     }
+    select_kind();
   }
 
   void Reset() { ResetAt(0); }
@@ -123,7 +124,6 @@ class ModSampler {
     lmer_fwd_ = 0;
     lmer_rc_ = 0;
     loaded_l_ = 0;
-    abs_base_pos_ = origin;
     abs_tmer_pos_ = origin;
     win_start_ = -1;
     win_mod_ = 0;
@@ -152,8 +152,14 @@ class ModSampler {
     return order_ == Order::GM && t_ranker_ && t_ranker_->has_uhs_stats();
   }
 
-  void SetRankedTmerLog(std::vector<uint64_t> *log) { ranked_tmer_log_ = log; }
-  void SetRankedLmerLog(std::vector<uint64_t> *log) { ranked_lmer_log_ = log; }
+  void SetRankedTmerLog(std::vector<uint64_t> *log) {
+    ranked_tmer_log_ = log;
+    select_kind();
+  }
+  void SetRankedLmerLog(std::vector<uint64_t> *log) {
+    ranked_lmer_log_ = log;
+    select_kind();
+  }
 
   int t() const { return t_; }
   int w() const { return w_; }
@@ -161,20 +167,14 @@ class ModSampler {
 
   MOD_ALWAYS_INLINE bool PushAndFinish(uint8_t base_code, ssize_t win,
                                        uint64_t *out_lmer) {
-    if (dna_bpc2_)
-      push_base_dna2(base_code);
-    else
-      push_base_generic(base_code);
+    push_dispatch(base_code);
     if (win < 0)
       return false;
     return finish_window(win, out_lmer);
   }
 
   bool PushBase(uint8_t base_code, uint64_t * /*unused*/) {
-    if (dna_bpc2_)
-      push_base_dna2(base_code);
-    else
-      push_base_generic(base_code);
+    push_dispatch(base_code);
     return false;
   }
 
@@ -222,8 +222,98 @@ class ModSampler {
     return dna_canonical_representation(fwd, n, revcom_version_);
   }
 
-  MOD_ALWAYS_INLINE void push_base_dna2(uint8_t base_code) {
-    abs_base_pos_++;
+  // Per-base push specialised at compile time on how the t-mer rank is taken
+  // (the order and the LUT choice are fixed at construction). The debug-log
+  // and generic-alphabet cases keep the runtime-branching code below.
+  enum Kind {
+    K_XOR = 0,       // rank = canonical t-mer ^ toggle (no table)
+    K_LUT_RAW,       // LUT on the raw forward t-mer (GM)
+    K_LUT_CAN,       // LUT on the canonical t-mer (Pcg)
+    K_RANK_RAW,      // ranker on the raw forward t-mer (GM, 4^t too large)
+    K_RANK_CAN,      // ranker on the canonical t-mer
+    K_SLOW,          // logs enabled: generic runtime-branching path
+    K_GENERIC        // non-2-bit alphabet
+  };
+
+  void select_kind() {
+    if (!dna_bpc2_)
+      kind_ = K_GENERIC;
+    else if (ranked_tmer_log_ || ranked_lmer_log_)
+      kind_ = K_SLOW;
+    else if (order_ == Order::RANDOM_XOR)
+      kind_ = K_XOR;
+    else if (order_ == Order::GM)
+      kind_ = use_lut_ ? K_LUT_RAW : K_RANK_RAW;
+    else
+      kind_ = use_lut_ ? K_LUT_CAN : K_RANK_CAN;
+  }
+
+  MOD_ALWAYS_INLINE void push_dispatch(uint8_t base_code) {
+    switch (kind_) {
+      case K_XOR:      push_base_k<K_XOR>(base_code); break;
+      case K_LUT_RAW:  push_base_k<K_LUT_RAW>(base_code); break;
+      case K_LUT_CAN:  push_base_k<K_LUT_CAN>(base_code); break;
+      case K_RANK_RAW: push_base_k<K_RANK_RAW>(base_code); break;
+      case K_RANK_CAN: push_base_k<K_RANK_CAN>(base_code); break;
+      case K_SLOW:     push_base_dna2(base_code); break;
+      default:         push_base_generic(base_code); break;
+    }
+  }
+
+  template <int K>
+  MOD_ALWAYS_INLINE void push_base_k(uint8_t base_code) {
+    const bool kCanonical = (K == K_XOR || K == K_LUT_CAN || K == K_RANK_CAN);
+    const uint64_t base = (uint64_t)base_code;
+    const uint64_t rev_base = base ^ 0x3ULL;
+
+    tmer_fwd_ = ((tmer_fwd_ << 2) | base) & t_mask_;
+    if (kCanonical)
+      tmer_rc_ = ((tmer_rc_ >> 2) | (rev_base << t_rc_shift_)) & t_mask_;
+    if (loaded_t_ < t_)
+      loaded_t_++;
+    if (loaded_t_ >= t_) {
+      uint64_t rank;
+      if (K == K_XOR) {
+        rank = canonical_dna_word(tmer_fwd_, tmer_rc_, (uint8_t)t_) ^ toggle_t_;
+      } else if (K == K_LUT_RAW) {
+        rank = rank_lut_[tmer_fwd_];
+        n_ranked_++;
+        n_inf_ += (rank == UINT64_MAX);
+      } else if (K == K_LUT_CAN) {
+        rank = rank_lut_[canonical_dna_word(tmer_fwd_, tmer_rc_, (uint8_t)t_)];
+        n_ranked_++;
+        n_inf_ += (rank == UINT64_MAX);
+      } else if (K == K_RANK_RAW) {
+        rank = t_ranker_->Rank(tmer_fwd_);
+      } else {
+        rank = t_ranker_->Rank(
+            canonical_dna_word(tmer_fwd_, tmer_rc_, (uint8_t)t_));
+      }
+      push_tmer(rank);
+    }
+    store_lmer_dna2(base, rev_base);
+  }
+
+  MOD_ALWAYS_INLINE void store_lmer_dna2(uint64_t base, uint64_t rev_base) {
+    lmer_fwd_ = ((lmer_fwd_ << 2) | base) & lmer_mask_;
+    lmer_rc_ = ((lmer_rc_ >> 2) | (rev_base << l_rc_shift_)) & lmer_mask_;
+    if (loaded_l_ < l_)
+      loaded_l_++;
+    if (loaded_l_ >= l_) {
+      uint64_t canonical_l =
+          canonical_dna_word(lmer_fwd_, lmer_rc_, (uint8_t)l_);
+      if (spaced_seed_mask_)
+        canonical_l &= spaced_seed_mask_;
+      lmer_ring_[(size_t)lmer_ring_ix_] = canonical_l;
+      lmer_ring_ix_++;
+      if (lmer_ring_ix_ >= w_)
+        lmer_ring_ix_ = 0;
+      if (lmers_stored_ < w_)
+        lmers_stored_++;
+    }
+  }
+
+  void push_base_dna2(uint8_t base_code) {
     const uint64_t base = (uint64_t)base_code;
     const uint64_t rev_base = base ^ 0x3ULL;
 
@@ -264,7 +354,6 @@ class ModSampler {
   }
 
   void push_base_generic(uint8_t base_code) {
-    abs_base_pos_++;
     const uint64_t base = (uint64_t)base_code;
 
     tmer_fwd_ = ((tmer_fwd_ << bpc_) | base) & t_mask_;
@@ -356,7 +445,6 @@ class ModSampler {
   int loaded_t_;
   uint64_t lmer_fwd_, lmer_rc_;
   int loaded_l_;
-  ssize_t abs_base_pos_;
   ssize_t abs_tmer_pos_;
   ssize_t win_start_;
   int win_mod_;
@@ -376,6 +464,7 @@ class ModSampler {
   uint64_t lmer_ring_[kMaxResidues];
   std::vector<uint64_t> rank_lut_;
   bool use_lut_ = false;
+  int kind_ = K_GENERIC;
   uint64_t n_ranked_, n_inf_;
   std::unique_ptr<MinimizerRanker> t_ranker_;
   std::vector<uint64_t> *ranked_tmer_log_;

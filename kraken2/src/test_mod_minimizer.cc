@@ -1065,6 +1065,83 @@ static void test_mod_revcom_v0() {
   check(differ, "MOD revcom_version=0 differs from v1");
 }
 
+// The per-base push is specialised on the order / LUT choice; the debug-log
+// path uses the generic runtime-branching code. Both must give the same
+// stream, and the logs must hold the canonical (GM: raw) t-mers and the
+// canonical, spaced-seed-masked l-mers.
+static void test_mod_kinds_and_logs() {
+  std::mt19937_64 rng(77);
+  std::string dna(3000, 'A');
+  const char *bases = "ACGT";
+  for (size_t i = 0; i < dna.size(); i++)
+    dna[i] = bases[rng() & 3ULL];
+  dna[1000] = 'N';
+  struct Cfg { int k, l; Order order; bool gm; uint64_t spaced; int revcom; };
+  const uint64_t smask = 0x3ffffffff3333333ULL;
+  const Cfg cfgs[] = {
+      {35, 31, Order::RANDOM_XOR, false, 0, 1},
+      {35, 31, Order::RANDOM_XOR, false, smask, 1},
+      {35, 31, Order::RANDOM_XOR, false, smask, 0},
+      {35, 31, Order::RANDOM_PCG, false, smask, 1},   // t=6: canonical LUT
+      {40, 31, Order::RANDOM_PCG, false, smask, 1},   // t=11: ranker, no LUT
+      {40, 31, Order::RANDOM_XOR, false, 0, 0},       // t=11 xor, revcom v0
+      {6, 4, Order::GM, true, 0, 1},                  // t=4: raw LUT
+      {6, 4, Order::GM, true, 0x3fULL << 2, 1},
+  };
+  for (const Cfg &c : cfgs) {
+    std::shared_ptr<const GreedyMiniTable> table;
+    if (c.gm)
+      table = synthetic_gm_k4();
+    const uint64_t toggle = DEFAULT_TOGGLE_MASK;
+    ModSampler plain(c.k, c.l, 2, toggle, true, c.order, c.revcom, c.spaced,
+                     table);
+    ModSampler logged(c.k, c.l, 2, toggle, true, c.order, c.revcom, c.spaced,
+                      table);
+    std::vector<uint64_t> tlog, llog;
+    logged.SetRankedTmerLog(&tlog);
+    logged.SetRankedLmerLog(&llog);
+    const int t = plain.t();
+    const uint64_t lmask = (1ULL << (2 * c.l)) - 1ULL;
+    std::vector<uint64_t> a, b, exp_t, exp_l;
+    ssize_t seq_pos = 0;
+    uint64_t fwd_t = 0, fwd_l = 0;
+    int loaded = 0;
+    uint64_t la = UINT64_MAX, lb = UINT64_MAX;
+    for (char ch : dna) {
+      const uint8_t code = dna_lut(ch);
+      if (code > 3) {
+        plain.OnAmbiguous();
+        logged.OnAmbiguous();
+        seq_pos = 0;
+        loaded = 0;
+        fwd_t = fwd_l = 0;
+        continue;
+      }
+      seq_pos++;
+      loaded++;
+      fwd_t = ((fwd_t << 2) | code) & ((1ULL << (2 * t)) - 1ULL);
+      fwd_l = ((fwd_l << 2) | code) & lmask;
+      if (loaded >= t)
+        exp_t.push_back(c.gm ? fwd_t
+                             : dna_canonical_representation(fwd_t, (uint8_t)t,
+                                                            c.revcom));
+      if (loaded >= c.l) {
+        uint64_t cl =
+            dna_canonical_representation(fwd_l, (uint8_t)c.l, c.revcom);
+        exp_l.push_back(c.spaced ? (cl & c.spaced & lmask) : cl);
+      }
+      const ssize_t win = seq_pos >= c.k ? seq_pos - c.k : (ssize_t)-1;
+      if (plain.PushAndFinish(code, win, &la))
+        a.push_back(la);
+      if (logged.PushAndFinish(code, win, &lb))
+        b.push_back(lb);
+    }
+    check(!a.empty() && a == b, "kinds: specialised stream == logged stream");
+    check(tlog == exp_t, "kinds: t-mer log");
+    check(llog == exp_l, "kinds: l-mer log");
+  }
+}
+
 int main() {
   const uint64_t toggle = DEFAULT_TOGGLE_MASK;
   std::mt19937_64 rng(7);
@@ -1107,6 +1184,7 @@ int main() {
   test_gm_rank_first_matches_rank_path();
   test_mod_gm_matches_naive();
   test_mod_revcom_v0();
+  test_mod_kinds_and_logs();
 
   if (failures) {
     std::cerr << failures << " failure(s)\n";
