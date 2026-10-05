@@ -51,6 +51,7 @@ class ModSampler {
         lmer_fwd_(0), lmer_rc_(0), loaded_l_(0),
         abs_base_pos_(0), abs_tmer_pos_(0), win_start_(-1), win_mod_(0),
         residue_a_(0), lmer_ring_ix_(0), lmers_stored_(0),
+        dq_head_(0), dq_tail_(0), n_ranked_(0), n_inf_(0),
         ranked_tmer_log_(nullptr), ranked_lmer_log_(nullptr) {
     if (w_ < 2 || w_ > kMaxResidues)
       throw std::invalid_argument("ModSampler requires 2 <= w <= kMaxResidues");
@@ -72,26 +73,10 @@ class ModSampler {
       l_rc_shift_ = 2 * (l_ - 1);
     }
 
-    const int per_residue = tmer_span_ / w_ + 4;
-    if (per_residue > ModResidueDeque::kMaxCap)
-      throw std::invalid_argument("ModSampler residue deque capacity exceeded");
-    for (int i = 0; i < w_; i++) {
-      deques_[(size_t)i].cap = per_residue;
-      front_rank_[(size_t)i] = UINT64_MAX;
-    }
-
-    for (int wm = 0; wm < w_; wm++) {
-      for (int a = 0; a < w_; a++) {
-        int p = a - wm;
-        if (p < 0)
-          p += w_;
-        residue_pos_lut_[(size_t)wm][(size_t)a] = (uint8_t)p;
-#if !defined(MOD_DISABLE_W5_FASTPATH)
-        if (w_ == 5)
-          ring_ix_lut_[(size_t)wm][(size_t)p] = (uint8_t)((wm + p) % 5);
-#endif
-      }
-    }
+    // One monotone deque over all t-mers of the window (<= tmer_span_ + 1
+    // live entries); power-of-two ring, no division on the hot path.
+    if ((uint32_t)tmer_span_ + 2 > kDqCap)
+      throw std::invalid_argument("ModSampler window exceeds deque capacity");
 
     RankerConfig cfg;
     cfg.order = order;
@@ -115,6 +100,17 @@ class ModSampler {
       cfg.gm_alphabet = GmAlphabet::BINARY;
     }
     t_ranker_ = make_order_ranker(cfg);
+
+    // t-mer rank is a pure function of the (raw or canonical) t-mer word:
+    // tabulate it for the table-driven orders (GM / Pcg) when 4^t is small.
+    if (dna_bpc2_ && order_ != Order::RANDOM_XOR && t_ <= kMaxLutT) {
+      const size_t n = (size_t)1 << (2 * t_);
+      rank_lut_.resize(n);
+      for (size_t x = 0; x < n; x++)
+        rank_lut_[x] = t_ranker_->Rank((uint64_t)x);
+      t_ranker_->ClearRankStats();
+      use_lut_ = true;
+    }
   }
 
   void Reset() { ResetAt(0); }
@@ -125,7 +121,7 @@ class ModSampler {
   void ResetAt(ssize_t origin) {
     if (origin < 0)
       origin = 0;
-    clear_deques();
+
     tmer_fwd_ = 0;
     tmer_rc_ = 0;
     loaded_t_ = 0;
@@ -139,16 +135,23 @@ class ModSampler {
     residue_a_ = (int)(origin % w_);
     lmer_ring_ix_ = (int)(origin % w_);
     lmers_stored_ = 0;
+    dq_head_ = dq_tail_ = 0;
     if (t_ranker_)
       t_ranker_->Reset();
   }
 
   void ClearRankStats() {
+    n_ranked_ = n_inf_ = 0;
     if (t_ranker_)
       t_ranker_->ClearRankStats();
   }
   RankHitStats GetRankStats() const {
-    return t_ranker_ ? t_ranker_->GetRankStats() : RankHitStats{};
+    RankHitStats hs = t_ranker_ ? t_ranker_->GetRankStats() : RankHitStats{};
+    if (use_lut_) {  // LUT bypasses the ranker's own counters
+      hs.uhs += n_ranked_ - n_inf_;
+      hs.non_uhs += n_inf_;
+    }
+    return hs;
   }
   bool has_uhs_stats() const {
     return order_ == Order::GM && t_ranker_ && t_ranker_->has_uhs_stats();
@@ -190,9 +193,29 @@ class ModSampler {
   inline uint64_t rank_tmer(uint64_t canonical_t, uint64_t raw_fwd_t) {
     if (order_ == Order::RANDOM_XOR)
       return canonical_t ^ toggle_t_;
+    if (use_lut_) {
+      const uint64_t r = rank_lut_[order_ == Order::GM ? raw_fwd_t : canonical_t];
+      n_ranked_++;
+      n_inf_ += (r == UINT64_MAX);
+      return r;
+    }
     if (order_ == Order::GM)
       return t_ranker_->Rank(raw_fwd_t);
     return t_ranker_->Rank(canonical_t);
+  }
+
+  // Monotone push (equal ranks are kept: they are ties between residues).
+  MOD_ALWAYS_INLINE void push_tmer(uint64_t rank) {
+    while (dq_tail_ != dq_head_ && dq_[(dq_tail_ - 1) & kDqMask].rank > rank)
+      --dq_tail_;
+    Ent &e = dq_[dq_tail_ & kDqMask];
+    e.rank = rank;
+    e.pos = abs_tmer_pos_;
+    e.cls = residue_a_;
+    ++dq_tail_;
+    if (++residue_a_ >= w_)
+      residue_a_ = 0;
+    abs_tmer_pos_++;
   }
 
   // Version-1 incremental RC matches dna_canonical_representation; older
@@ -221,18 +244,7 @@ class ModSampler {
         ranked_tmer_log_->push_back(order_ == Order::GM ? tmer_fwd_
                                                         : canonical_t);
       const uint64_t rank = rank_tmer(canonical_t, tmer_fwd_);
-      const int a = residue_a_;
-      ModResidueDeque &dq = deques_[(size_t)a];
-      if (dq.empty()) {
-        dq.push_monotone(ModTmerData{rank, abs_tmer_pos_});
-        front_rank_[(size_t)a] = rank;
-      } else {
-        dq.push_monotone(ModTmerData{rank, abs_tmer_pos_});
-      }
-      residue_a_++;
-      if (residue_a_ >= w_)
-        residue_a_ = 0;
-      abs_tmer_pos_++;
+      push_tmer(rank);
     }
 
     lmer_fwd_ = ((lmer_fwd_ << 2) | base) & lmer_mask_;
@@ -267,18 +279,7 @@ class ModSampler {
       if (ranked_tmer_log_)
         ranked_tmer_log_->push_back(tmer_fwd_);
       const uint64_t rank = rank_tmer(tmer_fwd_, tmer_fwd_);
-      const int a = residue_a_;
-      ModResidueDeque &dq = deques_[(size_t)a];
-      if (dq.empty()) {
-        dq.push_monotone(ModTmerData{rank, abs_tmer_pos_});
-        front_rank_[(size_t)a] = rank;
-      } else {
-        dq.push_monotone(ModTmerData{rank, abs_tmer_pos_});
-      }
-      residue_a_++;
-      if (residue_a_ >= w_)
-        residue_a_ = 0;
-      abs_tmer_pos_++;
+      push_tmer(rank);
     }
 
     lmer_fwd_ = ((lmer_fwd_ << bpc_) | base) & lmer_mask_;
@@ -299,126 +300,54 @@ class ModSampler {
     }
   }
 
-  static inline void sync_front_rank(uint64_t *front_rank, int a,
-                                     ModResidueDeque &dq) {
-    front_rank[a] = dq.empty() ? UINT64_MAX : dq.front().rank;
-  }
-
-  // Update best (rank, p) with residue a; UINT64_MAX means empty residue.
-  MOD_ALWAYS_INLINE static void consider_residue(uint64_t r, uint8_t p,
-                                                 uint64_t *best_rank,
-                                                 int *best_p, bool *any) {
-    if (r == UINT64_MAX)
-      return;
-    if (!*any || r < *best_rank || (r == *best_rank && p < *best_p)) {
-      *best_rank = r;
-      *best_p = p;
-      *any = true;
-    }
-  }
-
-#if !defined(MOD_DISABLE_W5_FASTPATH)
-  // Fully unrolled finish for default Kraken (k,l)=(35,31) → w=5.
-  MOD_ALWAYS_INLINE bool finish_window_w5(ssize_t win, uint64_t *out_lmer) {
-    if (win < 0 || lmers_stored_ < 5)
-      return false;
-    if (abs_tmer_pos_ < win + tmer_span_)
-      return false;
-
-    uint64_t best_rank = UINT64_MAX;
-    int best_p = 0;
-    bool any = false;
-    const int wm = (int)(win % 5);
-    const uint8_t *pos = residue_pos_lut_[(size_t)wm];
-
-    if (win_start_ >= 0 && win == win_start_ + 1) {
-      const int expire_a = (int)((win - 1) % 5);
-      ModResidueDeque &dq = deques_[expire_a];
-      while (!dq.empty() && dq.front().pos < win)
-        dq.pop_front();
-      sync_front_rank(front_rank_, expire_a, dq);
-      consider_residue(front_rank_[0], pos[0], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[1], pos[1], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[2], pos[2], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[3], pos[3], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[4], pos[4], &best_rank, &best_p, &any);
-    } else {
-      for (int a = 0; a < 5; a++) {
-        ModResidueDeque &dq = deques_[(size_t)a];
-        while (!dq.empty() && dq.front().pos < win)
-          dq.pop_front();
-        front_rank_[(size_t)a] =
-            dq.empty() ? UINT64_MAX : dq.front().rank;
-      }
-      consider_residue(front_rank_[0], pos[0], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[1], pos[1], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[2], pos[2], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[3], pos[3], &best_rank, &best_p, &any);
-      consider_residue(front_rank_[4], pos[4], &best_rank, &best_p, &any);
-    }
-
-    if (!any)
-      return false;
-
-    *out_lmer = lmer_ring_[ring_ix_lut_[(size_t)wm][(size_t)best_p]];
-    win_start_ = win;
-    win_mod_ = wm;
-    return true;
-  }
-#endif
-
+  // Window minimum over the single monotone deque. The entries equal to the
+  // front rank are exactly the window t-mers of minimal rank; among them the
+  // mod-sampling choice is the smallest offset p = (pos - win) mod w (ties
+  // between residues -> smallest p), identical to combining w residue deques.
+  // Non-finite ranks (UINT64_MAX, non-UHS t-mers) are never candidates.
   MOD_ALWAYS_INLINE bool finish_window(ssize_t win, uint64_t *out_lmer) {
-#if !defined(MOD_DISABLE_W5_FASTPATH)
-    if (w_ == 5)
-      return finish_window_w5(win, out_lmer);
-#endif
     if (win < 0 || lmers_stored_ < w_)
       return false;
     if (abs_tmer_pos_ < win + tmer_span_)
       return false;
 
-    uint64_t best_rank = UINT64_MAX;
-    int best_p = 0;
-    const int wm = (int)(win % w_);
-    const uint8_t *pos = residue_pos_lut_[(size_t)wm];
-    bool any = false;
-
+    int wm;
     if (win_start_ >= 0 && win == win_start_ + 1) {
-      const int expire_a = (int)((win - 1) % w_);
-      ModResidueDeque &dq = deques_[expire_a];
-      while (!dq.empty() && dq.front().pos < win)
-        dq.pop_front();
-      sync_front_rank(front_rank_, expire_a, dq);
-      for (int a = 0; a < w_; a++) {
-        consider_residue(front_rank_[(size_t)a], pos[a], &best_rank, &best_p,
-                         &any);
-      }
+      wm = win_mod_ + 1;
+      if (wm >= w_)
+        wm = 0;
     } else {
-      for (int a = 0; a < w_; a++) {
-        ModResidueDeque &dq = deques_[(size_t)a];
-        while (!dq.empty() && dq.front().pos < win)
-          dq.pop_front();
-        const uint64_t r = dq.empty() ? UINT64_MAX : dq.front().rank;
-        front_rank_[(size_t)a] = r;
-        consider_residue(r, pos[a], &best_rank, &best_p, &any);
-      }
+      wm = (int)(win % w_);
     }
-
-    if (!any)
-      return false;
-
-    *out_lmer = lmer_ring_[(size_t)((wm + best_p) % w_)];
-
     win_start_ = win;
     win_mod_ = wm;
-    return true;
-  }
 
-  void clear_deques() {
-    for (int i = 0; i < w_; i++) {
-      deques_[(size_t)i].clear();
-      front_rank_[(size_t)i] = UINT64_MAX;
+    while (dq_head_ != dq_tail_ && dq_[dq_head_ & kDqMask].pos < win)
+      ++dq_head_;
+    if (dq_head_ == dq_tail_)
+      return false;
+    const uint64_t best_rank = dq_[dq_head_ & kDqMask].rank;
+    if (best_rank == UINT64_MAX)
+      return false;
+    int best_a = dq_[dq_head_ & kDqMask].cls;
+    int best_p = best_a - wm;
+    if (best_p < 0)
+      best_p += w_;
+    for (uint32_t i = dq_head_ + 1; i != dq_tail_; ++i) {
+      const Ent &e = dq_[i & kDqMask];
+      if (e.rank != best_rank)
+        break;
+      int p = e.cls - wm;
+      if (p < 0)
+        p += w_;
+      if (p < best_p) {
+        best_p = p;
+        best_a = e.cls;
+      }
     }
+    // The l-mer ring is indexed by residue class: slot (win + p) % w == cls.
+    *out_lmer = lmer_ring_[(size_t)best_a];
+    return true;
   }
 
   int k_, l_, bpc_;
@@ -439,11 +368,20 @@ class ModSampler {
   int residue_a_;
   int lmer_ring_ix_;
   int lmers_stored_;
-  uint8_t residue_pos_lut_[kMaxResidues][kMaxResidues];
-  uint8_t ring_ix_lut_[kMaxResidues][kMaxResidues];
-  uint64_t front_rank_[kMaxResidues];
+  static constexpr uint32_t kDqCap = 64;  // power of two
+  static constexpr uint32_t kDqMask = kDqCap - 1;
+  static constexpr int kMaxLutT = 8;      // 4^8 = 64K LUT entries (512 KB max)
+  struct Ent {
+    uint64_t rank;
+    ssize_t pos;  // absolute t-mer start index since last reset
+    int cls;      // pos mod w
+  };
+  Ent dq_[kDqCap];
+  uint32_t dq_head_, dq_tail_;  // free-running; slot = index & kDqMask
   uint64_t lmer_ring_[kMaxResidues];
-  ModResidueDeque deques_[kMaxResidues];
+  std::vector<uint64_t> rank_lut_;
+  bool use_lut_ = false;
+  uint64_t n_ranked_, n_inf_;
   std::unique_ptr<MinimizerRanker> t_ranker_;
   std::vector<uint64_t> *ranked_tmer_log_;
   std::vector<uint64_t> *ranked_lmer_log_;
