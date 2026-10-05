@@ -283,6 +283,13 @@ MinimizerScanner::MinimizerScanner(ssize_t k, ssize_t l,
   }
 
   init_ranker(greedy_mini_filename, gm_table);
+  if (sketching_ == SketchingScheme::MOD && mod_sampler_)
+    scan_kind_ = kScanMod;
+#if !defined(KRAKEN2_MINIMIZER_BENCHMARK)
+  else if (sketching_ == SketchingScheme::MINIMIZER &&
+           order_ == Order::RANDOM_XOR && dna_)
+    scan_kind_ = kScanXor;
+#endif
 }
 
 void MinimizerScanner::ComputeModStreamOrigins(
@@ -315,6 +322,7 @@ void MinimizerScanner::LoadSequence(const string &seq, size_t start,
   if ((ssize_t) (finish_ - start_) + 1 < l_)  // Invalidate scanner if interval < 1 l-mer
     str_pos_ = finish_;
   queue_.clear();
+  xq_.clear();
   queue_pos_ = 0;
   loaded_ch_ = 0;
   last_minimizer_ = ~0;
@@ -341,7 +349,7 @@ void MinimizerScanner::LoadSequence(const string &seq, size_t start,
   }
 }
 
-uint64_t *MinimizerScanner::NextMinimizerMod() {
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerMod() {
   if (str_pos_ >= finish_)
     return nullptr;
 
@@ -435,7 +443,66 @@ void MinimizerScanner::PopDominatedRankFirst(uint64_t rank) {
   }
 }
 
-uint64_t *MinimizerScanner::NextMinimizer() {
+// Default path (Minimizer sketching, RandomXor order, DNA): the original
+// Kraken 2 scan loop (16-byte queue elements, no virtual ranker call, no GM
+// or Mod bookkeeping). Returns exactly what the general loop below returns.
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerXor() {
+  if (str_pos_ >= finish_)
+    return nullptr;
+  bool changed_minimizer = false;
+  while (! changed_minimizer) {
+    if (loaded_ch_ == l_)
+      loaded_ch_--;
+    while (loaded_ch_ < l_ && str_pos_ < finish_) {
+      loaded_ch_++;
+      lmer_ <<= BITS_PER_CHAR_DNA;
+      last_ambig_ <<= BITS_PER_CHAR_DNA;
+      auto lookup_code = lookup_table_[ (int) (*str_)[str_pos_++] ];
+      if (lookup_code == UINT8_MAX) {
+        xq_.clear();
+        queue_pos_ = 0;
+        lmer_ = 0;
+        loaded_ch_ = 0;
+        last_ambig_ |= (1u << BITS_PER_CHAR_DNA) - 1;
+      }
+      else
+        lmer_ |= lookup_code;
+      lmer_ &= lmer_mask_;
+      last_ambig_ &= lmer_mask_;
+      if ((str_pos_ - start_) >= (size_t) k_ && loaded_ch_ < l_)
+        return &last_minimizer_;
+    }
+    if (loaded_ch_ < l_)
+      return nullptr;
+    uint64_t canonical_lmer = canonical_representation(lmer_, l_);
+    if (spaced_seed_mask_)
+      canonical_lmer &= spaced_seed_mask_;
+    uint64_t candidate_lmer = canonical_lmer ^ toggle_mask_;
+    if (k_ == l_) {
+      last_minimizer_ = canonical_lmer;
+      return &last_minimizer_;
+    }
+    while (! xq_.empty() && xq_.back().candidate > candidate_lmer)
+      xq_.pop_back();
+    XorMinimizerData data = { candidate_lmer, queue_pos_ };
+    if (xq_.empty() && queue_pos_ >= k_ - l_)
+      changed_minimizer = true;
+    xq_.push_back(data);
+    if (xq_.front().pos < queue_pos_ - k_ + l_) {
+      xq_.pop_front();
+      changed_minimizer = true;
+    }
+    if (queue_pos_ == k_ - l_)
+      changed_minimizer = true;
+    queue_pos_++;
+    if (str_pos_ >= (size_t) k_)
+      break;
+  }
+  last_minimizer_ = xq_.front().candidate ^ toggle_mask_;
+  return &last_minimizer_;
+}
+
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
   if (sketching_ == SketchingScheme::MOD && mod_sampler_)
     return NextMinimizerMod();
   if (str_pos_ >= finish_)  // Abort if we've exhausted string interval

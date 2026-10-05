@@ -33,6 +33,13 @@ struct MinimizerData {
   ssize_t pos;
 };
 
+// Queue element of the default (RandomXor, DNA) scan path: same 16-byte
+// layout as upstream Kraken 2; candidate = canonical l-mer ^ toggle.
+struct XorMinimizerData {
+  uint64_t candidate;
+  ssize_t pos;
+};
+
 // Cycle accumulators for NextMinimizer phase split (bench builds only).
 struct NextMinPhaseStats {
   uint64_t steps = 0;  // completed encode→canonical→rank→deque windows
@@ -93,7 +100,13 @@ class MinimizerScanner {
   void ComputeModStreamOrigins(const std::string &seq,
                                std::vector<uint32_t> *origin_at) const;
 
-  uint64_t *NextMinimizer();
+  uint64_t *NextMinimizer() {
+    switch (scan_kind_) {
+      case kScanXor: return NextMinimizerXor();
+      case kScanMod: return NextMinimizerMod();
+      default: return NextMinimizerGeneral();
+    }
+  }
   // Return last minimizer, only valid if NextMinimizer last returned non-NULL
   uint64_t last_minimizer() const { return last_minimizer_; }
   ssize_t k() const { return k_; }
@@ -142,6 +155,8 @@ class MinimizerScanner {
   // When non-null, every ℓ-mer passed to Rank() is appended (bench).
   void SetRankedLmerLog(std::vector<uint64_t> *log) {
     ranked_lmer_log_ = log;
+    if (log && scan_kind_ == kScanXor)
+      scan_kind_ = kScanGeneral;
     if (mod_sampler_)
       mod_sampler_->SetRankedLmerLog(log);
   }
@@ -158,6 +173,8 @@ class MinimizerScanner {
   void init_ranker(const std::string &greedy_mini_filename,
                    std::shared_ptr<const GreedyMiniTable> gm_table);
   uint64_t *NextMinimizerMod();
+  uint64_t *NextMinimizerGeneral();  // every other scheme (Mod included)
+  uint64_t *NextMinimizerXor();  // default path: Minimizer + RandomXor + DNA
   void PopDominatedRankFirst(uint64_t rank);
 
   const std::string *str_;  // pointer to sequence
@@ -197,6 +214,10 @@ class MinimizerScanner {
   // Always present so BENCH vs non-BENCH TUs share one MinimizerScanner layout
   // under -flto (RDTSC updates remain gated in mmscanner.cc).
   NextMinPhaseStats phase_stats_;
+  // RandomXor fast path (last members: the other schemes' offsets are unchanged).
+  enum : uint8_t { kScanGeneral = 0, kScanXor, kScanMod };
+  uint8_t scan_kind_ = kScanGeneral;  // NextMinimizer() dispatch
+  std::deque<XorMinimizerData> xq_;
 };
 
 }
