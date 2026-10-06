@@ -24,7 +24,7 @@ paths:
   data: data
 
 defaults:
-  datasets: cod,kestrel,human
+  datasets: cod,kestrel,human,ncbi-virus,se,hprc
   # k, m, the order list and the number of seeds are NOT configured here: their single
   # source is lib/constants.sh (K, M, N_SEEDS) and lib/orders.sh (ALL_ORDERS).
 
