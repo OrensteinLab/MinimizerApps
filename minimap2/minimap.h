@@ -82,18 +82,27 @@ typedef struct { size_t n, m; mm128_t *a; } mm128_v;
 // the index (mm128_t::x) is always derived the same injective way mm_sketch()
 // already does for the native order (see order.cpp's design comment).
 typedef enum {
+	// Values are persisted in .mmi files (order.cpp mm_order_serialize): keep
+	// them stable. 5 was the removed mod-minimizer-pcg-xor-hash.
 	MM_ORDER_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()
-	MM_ORDER_XOR_HASH,          // kmer ^ seed
-	MM_ORDER_XOR_PCG_HASH,      // pcg_rxs_m_xs64(kmer ^ seed)
-	MM_ORDER_GREEDYMINI,        // GreedyMini UHS rank table (binary alphabet + projection)
-	MM_ORDER_MOD_XOR_HASH,      // mod-minimizer, O_t = xor-hash
-	MM_ORDER_MOD_PCG_XOR_HASH   // mod-minimizer, O_t = xor-pcg-hash
+	MM_ORDER_XOR = 1,           // kmer ^ seed
+	MM_ORDER_XOR_PCG_HASH = 2,  // pcg_rxs_m_xs64(kmer ^ seed)
+	MM_ORDER_GREEDYMINI = 3,    // GreedyMini UHS rank table (binary alphabet + projection)
+	MM_ORDER_MOD_XOR = 4        // mod-minimizer, O_t = xor
 } mm_order_kind_t;
+
+// GreedyMini DNA -> binary projection polarity (Sigma plane = {A,T} vs {C,G}),
+// same choice as sshash's --gm-projection.
+typedef enum {
+	MM_GM_PROJ_AT0_CG1 = 0,     // A,T -> 0; C,G -> 1 (default)
+	MM_GM_PROJ_AT1_CG0 = 1      // every Sigma bit flipped
+} mm_gm_projection_t;
 
 typedef struct {
 	mm_order_kind_t kind;
-	uint64_t seed;                // xor-hash / xor-pcg-hash / mod-* O_t seed
+	uint64_t seed;                // xor / xor-pcg-hash / mod-minimizer-xor O_t seed
 	const char *greedymini_file;  // path to a .gm table; only read at mm_order_init() time
+	mm_gm_projection_t gm_projection; // greedymini only
 	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
 	int k;                        // the minimizer length this order is used with (validated
 	                               // against the GreedyMini table's own gm_k at init time)

@@ -31,7 +31,8 @@ endif
 # -Wlto-type-mismatch from stale TUs (e.g. classify.o vs mmscanner.o).
 MM_HEADERS = mmscanner.h minimizer_rankers.h sketching_schemes.h \
 	mod_minimizer.h dna_kmer.h greedymini_rank.h \
-	../../common/minimizer-orders/mod_residue_deque.h
+	../../common/minimizer-orders/greedymini_rank.h \
+	../../common/minimizer-orders/greedymini_centre.h
 
 all: check_prof_mode $(PROGS)
 
@@ -55,7 +56,7 @@ test: $(TESTS)
 	./test_mod_minimizer
 
 clean:
-	rm -f *.o $(PROGS) $(TESTS) $(PROF_STAMP)
+	rm -f *.o $(PROGS) $(TESTS) scan_dump $(PROF_STAMP)
 
 taxonomy.o: taxonomy.cc taxonomy.h mmap_file.h
 hyperloglogplus.o: hyperloglogplus.cc hyperloglogplus.h
@@ -123,7 +124,8 @@ mmscanner_bench.o: mmscanner.cc $(MM_HEADERS)
 benchmark_minimizers: benchmark_minimizers.o mmscanner_bench.o
 	$(CXX) $(CXXFLAGS) -o $@ benchmark_minimizers.o mmscanner_bench.o $(LDFLAGS)
 
-test_scheme_rankers.o: test_scheme_rankers.cc greedymini_rank.h minimizer_rankers.h
+test_scheme_rankers.o: test_scheme_rankers.cc greedymini_rank.h minimizer_rankers.h \
+	kraken2_data.h $(MM_HEADERS)
 test_scheme_rankers: test_scheme_rankers.o
 	$(CXX) $(CXXFLAGS) -o $@ test_scheme_rankers.o $(LDFLAGS)
 
@@ -132,3 +134,11 @@ test_mod_minimizer.o: test_mod_minimizer.cc $(MM_HEADERS)
 
 test_mod_minimizer: test_mod_minimizer.o mmscanner.o
 	$(CXX) $(CXXFLAGS) -o $@ test_mod_minimizer.o mmscanner.o $(LDFLAGS)
+
+# Test/benchmark tool (not part of `all`): key-stream dump and scan timing via
+# the public MinimizerScanner API only. Build: make -C kraken2/src scan_dump
+scan_dump.o: scan_dump.cc $(MM_HEADERS) utilities.h
+	$(CXX) $(CXXFLAGS) -c -o $@ scan_dump.cc
+
+scan_dump: scan_dump.o mmscanner.o utilities.o
+	$(CXX) $(CXXFLAGS) -o $@ scan_dump.o mmscanner.o utilities.o $(LDFLAGS)

@@ -2,15 +2,27 @@
 
 #include "include/dictionary.hpp"
 #include "include/minimizer_iterator.hpp"
-#include "include/mod_minimizer_iterator.hpp"
 #include "include/util.hpp"
 
 namespace sshash {
 
-template <typename Dict>
+/*
+    `Mode` is the minimizer order, a compile-time parameter that selects the minimizer iterator
+    of the classical path and, through it, the inlined hash: minimizer_iterator<Mode> for native,
+    xor-hash and xor-pcg-hash (they hash canonical m-mers),
+    strand_invariant_minimizer_iterator for GreedyMini (hashes raw m-mers). It is a template
+    parameter, not a runtime branch, so that each instantiation compiles to what a build with
+    only that order would (a runtime branch in `lookup` -- or in `minimizer_iterator::next` --
+    stopped them from being inlined and cost native queries ~15%). `Regular` selects, likewise,
+    the "regular parsing" lookup (see util::compute_minimizer_single_strand): a runtime test of it
+    in the per-k-mer path alone cost 1-2% of the classical one. The dictionary picks the
+    instantiation from `hasher.mode()` (dispatch_order) and `regular_parsing()`.
+*/
+template <typename Dict, custom_order_mode Mode = custom_order_mode::NATIVE, bool Regular = false>
 struct streaming_query  //
 {
     using kmer_t = typename Dict::kmer_type;
+    using minimizer_iterator_t = order_minimizer_iterator<kmer_t, Mode>;
 
     streaming_query(Dict const* dict)
 
@@ -23,9 +35,6 @@ struct streaming_query  //
         , m_m(dict->m_m)
 
         , m_minimizer_it(dict->m_k, dict->m_m, dict->m_hasher)
-        , m_mod_minimizer_it(dict->m_k, dict->m_m, dict->m_t, dict->m_hasher)
-        , m_mod_minimizer_it_rc(dict->m_k, dict->m_m, dict->m_t, dict->m_hasher)
-        , m_read_pos(0)
         , m_curr_mini_info()
 
         , m_it(dict->m_spss.strings, m_k)
@@ -41,50 +50,29 @@ struct streaming_query  //
         , m_num_skipped_singleton_lookups(0)
         , m_num_bucket_cache_hits(0)
 
-    {}
+    {
+        /* The iterator is picked at compile time; pairing it with the wrong order would hash
+           with the wrong function and silently give minimizers that differ from the built
+           index's. */
+        if (dict->m_hasher.mode() != Mode or dict->m_regular_parsing != Regular) {
+            throw std::logic_error("streaming_query: the instantiation does not match the index");
+        }
+    }
 
     void reset() {
         m_start = true;
         m_remaining_string_bases = 0;
         m_res = lookup_result();
         m_minimizer_it.reset();
-        m_mod_minimizer_it.set_position(0);
-        m_read_pos = 0;
-        m_rc_mini_infos.clear();
         m_last_seed_mini_info = minimizer_info();
         m_last_seed_positive = false;
         m_bucket_cache.size = 0;
+        m_prev_probed = false;
     }
 
-    /* Precompute the mod-sampling minimizer of every k-mer window of the
-       reverse complement of `seq` (the whole read/sequence about to be
-       streamed), so `lookup`'s reverse-complement probe below becomes an O(1)
-       array index instead of a fresh O(k-t+1) brute-force scan on every miss.
-       Requires the whole sequence up front, so callers that only see a
-       sliding window (e.g. the multiline FASTA path) simply don't call this;
-       `lookup` then falls back to the brute-force computation, exactly as
-       before this optimization. Call once per read, right after `reset()`. */
-    void set_sequence(char const* seq, uint64_t len) {
-        m_read_pos = 0;
-        if (!m_dict->mod_minimizer() or len < m_k) {
-            m_rc_mini_infos.clear();
-            return;
-        }
-        const uint64_t num_kmers = len - m_k + 1;
-        m_rc_buffer.resize(len);
-        kmer_t::compute_reverse_complement(seq, m_rc_buffer.data(), len);
-        m_rc_mini_infos.resize(num_kmers);
-        m_mod_minimizer_it_rc.set_position(0);
-        kmer_t rc_kmer = util::string_to_uint_kmer<kmer_t>(m_rc_buffer.data(), m_k);
-        m_rc_mini_infos[0] = m_mod_minimizer_it_rc.next(rc_kmer);
-        for (uint64_t j = 1; j != num_kmers; ++j) {
-            rc_kmer.drop_char();
-            rc_kmer.set(m_k - 1, kmer_t::char_to_uint(m_rc_buffer[j + m_k - 1]));
-            m_rc_mini_infos[j] = m_mod_minimizer_it_rc.next(rc_kmer);
-        }
-    }
-
-    lookup_result lookup(char const* kmer)  //
+    /* always inlined into the query loop, as the compiler does with upstream's lookup; the
+       inlining of everything below it depends on this */
+    __attribute__((always_inline)) lookup_result lookup(char const* kmer)  //
     {
         /* 1. validation */
         bool is_valid =
@@ -95,29 +83,7 @@ struct streaming_query  //
             return m_res;
         }
 
-        if (!m_dict->mod_minimizer() and m_dict->regular_parsing()) {
-            /* Ad hoc classical-order comparison mode: brute-force O(w) per
-               kmer is already fast on cheap hashes, so it stays a plain
-               per-kmer dictionary::lookup -- no streaming speedup here, but
-               always correct (see the "Incremental mod-sampling" plan for
-               why this is explicitly out of scope). Checked after
-               mod_minimizer(), matching dictionary::lookup's and
-               compute_minimizer_tuples's own priority: mod-minimizer is
-               unconditionally two-probe regardless of --regular (a no-op for
-               mod-minimizer-* orders, per build.cpp's own help text), so it
-               must take the fast incremental path below, not this one. */
-            m_start = false;
-            m_remaining_string_bases = 0;
-            m_res = m_dict->lookup(kmer);
-            if (m_res.kmer_id == constants::invalid_uint64) {
-                m_num_negative += 1;
-            } else {
-                m_num_searches += 1;
-            }
-            return m_res;
-        }
-
-        /* 2. compute uint kmer and kmer_rc from input char kmer and minimizers */
+        /* 2. compute uint kmer and kmer_rc from input char kmer */
         if (!m_start) {
             m_kmer.drop_char();
             m_kmer.set(m_k - 1, kmer_t::char_to_uint(kmer[m_k - 1]));
@@ -132,43 +98,27 @@ struct streaming_query  //
             m_kmer_rc.reverse_complement_inplace(m_k);
         }
 
-        if (m_dict->mod_minimizer()) {
-            /* Incremental forward-strand mod-sampling (mod_minimizer_iterator):
-               amortized O(1) vs util::compute_mod_minimizer_single_strand's own
-               O(k-t+1) brute-force scan -- see that file's doc comment. A new,
-               separate path: it doesn't reuse seed()'s singleton-bucket-skip/
-               bucket-cache shortcuts below, which assume the classical
-               scheme's forwardness/mirror-equivariance guarantees. */
+        if constexpr (Regular) {
+            /* Regular (single-strand) parsing: the minimizer scheme is neither
+               forward-strand-canonical nor mirror-equivariant, so seed()'s
+               singleton-bucket-skip/bucket-cache shortcuts (which rely on
+               those guarantees) are not used. Extension alone only needs the
+               stored string, so it is tried first; on a miss, fall back to
+               the two-probe lookup and, if positive, start a new extension. */
             m_start = false;
-            m_remaining_string_bases = 0;
-            minimizer_info mini_info_fwd = m_mod_minimizer_it.next(m_kmer);
-            m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_fwd);
-            if (m_res.kmer_id == constants::invalid_uint64) {
-                /* This second, reverse-complement probe's own sliding window
-                   moves in the opposite direction relative to the forward
-                   read being streamed, so it can't reuse mod_minimizer_it's
-                   incremental state directly. Instead, whenever the whole
-                   read was known up front (see set_sequence), its answer for
-                   every position was already precomputed there by running a
-                   second mod_minimizer_iterator forward over the read's own
-                   reverse complement -- an O(1) array index here. Otherwise
-                   (set_sequence wasn't called for this read), fall back to
-                   the brute-force per-call computation. */
-                minimizer_info mini_info_rc =
-                    (m_read_pos < m_rc_mini_infos.size())
-                        ? m_rc_mini_infos[m_rc_mini_infos.size() - 1 - m_read_pos]
-                        : util::compute_mod_minimizer_single_strand(
-                              m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher);
-                assert(mini_info_rc == util::compute_mod_minimizer_single_strand(
-                                           m_kmer_rc, m_k, m_m, m_dict->m_t, m_dict->m_hasher));
-                m_res = m_dict->lookup(m_kmer, m_kmer_rc, mini_info_rc);
-            }
-            ++m_read_pos;
-            if (m_res.kmer_id == constants::invalid_uint64) {
-                m_num_negative += 1;
+            const bool extended = try_extend();
+            if (extended) {
+                ++m_num_extensions;
             } else {
-                m_num_searches += 1;
+                m_res = regular_lookup();
+                if (m_res.kmer_id == constants::invalid_uint64) {
+                    m_num_negative += 1;
+                } else {
+                    m_num_searches += 1;
+                    begin_extension();
+                }
             }
+            assert(equal_lookup_result(m_dict->lookup(kmer), m_res));
             return m_res;
         }
 
@@ -218,12 +168,7 @@ private:
     uint64_t m_k, m_m;
 
     /* minimizer state */
-    minimizer_iterator<kmer_t> m_minimizer_it;
-    mod_minimizer_iterator<kmer_t> m_mod_minimizer_it;
-    mod_minimizer_iterator<kmer_t> m_mod_minimizer_it_rc;
-    std::vector<char> m_rc_buffer;
-    std::vector<minimizer_info> m_rc_mini_infos;
-    uint64_t m_read_pos;
+    minimizer_iterator_t m_minimizer_it;
     minimizer_info m_curr_mini_info;
 
     /* string state */
@@ -249,6 +194,10 @@ private:
 
     /* large and cold: keep it last, away from the per-kmer members above */
     typename Dict::spss_type::bucket_cache m_bucket_cache;
+
+    /* --regular early return: minimizers and outcome of the last probed kmer */
+    uint64_t m_prev_mini = 0, m_prev_mini_rc = 0;
+    bool m_prev_found = false, m_prev_probed = false;
 
     /* Whether the minimizer of the last seed is its own reverse complement
        (possible for even m only). Rarely needed, so computed on demand. */
@@ -344,6 +293,62 @@ private:
         assert(m_res.minimizer_found == true);
         m_num_searches += 1;
         begin_extension();
+    }
+
+    /* Try to extend the previous positive result by one kmer along the
+       stored string: the next query kmer is positive, with the same
+       orientation, iff it equals the next (forward) or previous (backward)
+       kmer of the string. This only reads the string, so it is independent of
+       how minimizers are defined, hence valid for any order. Unlike the
+       classical path's extension it demands the orientation-consistent
+       comparison only (forward: kmer, backward: its reverse complement), so
+       the result is exactly what dictionary::lookup returns -- which, for a
+       palindromic kmer (even k only), reports backward, not forward. */
+    bool try_extend() {
+        if (m_remaining_string_bases == 0) return false;
+        const bool forward = m_res.kmer_orientation == constants::forward_orientation;
+        auto expected =
+            forward ? (m_it.next(), m_it.get()) : (m_it.next_reverse(), m_it.get_reverse());
+        if (expected == (forward ? m_kmer : m_kmer_rc) and
+            !(forward and (m_k & 1) == 0 and m_kmer == m_kmer_rc))  //
+        {
+            m_res.kmer_id += m_res.kmer_orientation;
+            m_res.kmer_id_in_string += m_res.kmer_orientation;
+            m_remaining_string_bases -= 1;
+            return true;
+        }
+        m_remaining_string_bases = 0;
+        return false;
+    }
+
+    /*
+        Two-probe lookup of a classical order under --regular, with the early return of
+        Algorithm 2 of the SSHash paper: the minimizers of the kmer and of its reverse
+        complement are computed once; if both equal those of the last probed kmer and neither
+        was found in the index then, the kmer is negative without any lookup. Otherwise the
+        kmer is probed with its forward minimizer and, only if that fails, with the reverse
+        complement's (dictionary::lookup, from the minimizers already computed).
+    */
+    lookup_result regular_lookup() {
+        const minimizer_info mini = util::compute_minimizer_single_strand(
+            m_kmer, m_k, m_m, m_dict->m_hasher);
+        const minimizer_info mini_rc = util::compute_minimizer_single_strand(
+            m_kmer_rc, m_k, m_m, m_dict->m_hasher);
+        if (m_prev_probed and !m_prev_found and mini.minimizer == m_prev_mini and
+            mini_rc.minimizer == m_prev_mini_rc) {
+            return lookup_result();
+        }
+        lookup_result res = m_dict->lookup(m_kmer, m_kmer_rc, mini);
+        bool found = res.minimizer_found or res.kmer_id != constants::invalid_uint64;
+        if (res.kmer_id == constants::invalid_uint64) {
+            res = m_dict->lookup(m_kmer, m_kmer_rc, mini_rc);
+            found = found or res.minimizer_found or res.kmer_id != constants::invalid_uint64;
+        }
+        m_prev_mini = mini.minimizer;
+        m_prev_mini_rc = mini_rc.minimizer;
+        m_prev_found = found;
+        m_prev_probed = true;
+        return res;
     }
 
     void begin_extension() {

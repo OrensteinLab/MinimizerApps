@@ -5,7 +5,6 @@ reset_run_options() {
   K=31
   M=11
   ORDERS="all"
-  GM_FILE=""
   THREADS=8
   N_SEEDS=5
   FORCE=0
@@ -26,7 +25,7 @@ run_experiment() {
     reset_run_options
     eval "${env_lines[$i]}"
     echo "=== [$((i + 1))/$n] datasets=$DATASETS k=$K m=$M orders=$ORDERS n=$N_SEEDS $(date) ==="
-    run_schemes
+    run_sweep
   done
   export_results
 }

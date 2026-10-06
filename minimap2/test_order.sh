@@ -3,12 +3,11 @@
 # (order.h/order.cpp). See the plan's "Sanity checks / tests" section.
 #
 # greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
-# this script's fixed -k 15 -w 10 exactly). There is no mod-minimizer-
-# greedymini for minimap2 (unlike kraken2/sshash) -- it would need a second,
-# differently-sized table (gm_k == the mod-minimizer t, not k) just for that
-# one variant, so it was dropped instead of adding that second table.
+# this script's fixed -k 15 -w 10 exactly), with both AT/CG projections
+# (greedymini-at1 = --gm-projection at1-cg0). The only mod-minimizer order is
+# mod-minimizer-xor (O_t = xor).
 #
-# Usage: ./test_order.sh (run from minimap2/, after `make`)
+# Usage: ./test_order.sh (run from minimap2/, after `make all sketch_dump`)
 set -u
 cd "$(dirname "$0")"
 BIN=./minimap2
@@ -21,9 +20,9 @@ pass=0 fail=0
 ok()   { pass=$((pass+1)); echo "  [PASS] $1"; }
 bad()  { fail=$((fail+1)); echo "  [FAIL] $1"; }
 
-ORDERS_SEEDED="xor-hash xor-pcg-hash"
-ORDERS_MOD="mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash"
-ALL_TEST_ORDERS="native $ORDERS_SEEDED greedymini $ORDERS_MOD"
+ORDERS_SEEDED="xor xor-pcg-hash"
+ORDERS_MOD="mod-minimizer-xor"
+ALL_TEST_ORDERS="native $ORDERS_SEEDED greedymini greedymini-at1 $ORDERS_MOD"
 SEED=42
 MOD_T=5
 GM_FILE="$(cd .. && pwd)/orders/GreedyMini/w10_k15_canonical.gm"
@@ -32,6 +31,7 @@ order_flags() {
 	case "$1" in
 		native) echo "" ;;
 		greedymini) echo "--minimizer-order greedymini --greedymini-file $GM_FILE" ;;
+		greedymini-at1) echo "--minimizer-order greedymini --greedymini-file $GM_FILE --gm-projection at1-cg0" ;;
 		mod-minimizer-*) echo "--minimizer-order $1 --order-seed $SEED --mod-t $MOD_T" ;;
 		*) echo "--minimizer-order $1 --order-seed $SEED" ;;
 	esac
@@ -60,8 +60,14 @@ for o in $ALL_TEST_ORDERS; do
 		bad "density non-degenerate: $o (got '$n')"
 	fi
 done
-echo "  native=${density[native]} xor-hash=${density[xor-hash]} xor-pcg-hash=${density[xor-pcg-hash]}"
-echo "  mod-minimizer-xor-hash=${density[mod-minimizer-xor-hash]} mod-minimizer-pcg-xor-hash=${density[mod-minimizer-pcg-xor-hash]}"
+echo "  native=${density[native]} xor=${density[xor]} xor-pcg-hash=${density[xor-pcg-hash]}"
+echo "  greedymini=${density[greedymini]} greedymini-at1=${density[greedymini-at1]} mod-minimizer-xor=${density[mod-minimizer-xor]}"
+# The flipped projection is a different order: same table, complemented keys.
+if [ "${density[greedymini]}" != "${density[greedymini-at1]}" ]; then
+	ok "--gm-projection at1-cg0 changes the selection"
+else
+	bad "--gm-projection at1-cg0 selected exactly the same minimizer count as at0-cg1"
+fi
 
 echo "== 3. .mmi round-trip: dump+reload maps identically to a fresh build+map =="
 for o in $ALL_TEST_ORDERS; do
@@ -77,7 +83,7 @@ for o in $ALL_TEST_ORDERS; do
 done
 
 echo "== 4. split (-I) multi-part .mmi round-trip (order metadata written once, reused by later parts) =="
-o=mod-minimizer-xor-hash
+o=mod-minimizer-xor
 f=$(order_flags "$o")
 $BIN -a $f "$REF" "$QRY" > "$TMP/split_direct.sam" 2>/dev/null
 $BIN -d "$TMP/split.mmi" -I 5k $f "$REF" >/dev/null 2>&1
@@ -127,11 +133,28 @@ if $BIN -a --minimizer-order greedymini "$REF" "$QRY" >/dev/null 2>&1; then
 else
 	ok "greedymini without --greedymini-file rejected"
 fi
-if $BIN -a --minimizer-order mod-minimizer-xor-hash "$REF" "$QRY" >/dev/null 2>&1; then
+if $BIN -a --minimizer-order mod-minimizer-xor "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "mod-minimizer-* without --mod-t should be rejected"
 else
 	ok "mod-minimizer-* without --mod-t rejected"
 fi
+if $BIN -a --minimizer-order xor --gm-projection at1-cg0 "$REF" "$QRY" >/dev/null 2>&1; then
+	bad "--gm-projection with a non-greedymini order should be rejected"
+else
+	ok "--gm-projection with a non-greedymini order rejected"
+fi
+if $BIN -a $(order_flags greedymini) --gm-projection bogus "$REF" "$QRY" >/dev/null 2>&1; then
+	bad "unknown --gm-projection value should be rejected"
+else
+	ok "unknown --gm-projection value rejected"
+fi
+for old in xor-hash mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash; do
+	if $BIN -a --minimizer-order $old --order-seed 1 --mod-t 5 "$REF" "$QRY" >/dev/null 2>&1; then
+		bad "removed/renamed order name '$old' should be rejected"
+	else
+		ok "removed/renamed order name '$old' rejected"
+	fi
+done
 if $BIN -a --order-seed 1 "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "--order-seed without --minimizer-order should be rejected"
 else
@@ -143,8 +166,7 @@ r=4; k=15; w=10
 t=$(( r + (k - r) % w ))
 if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
 
-echo "== 10. mod-minimizer at a large window (w > 16): regression test for a stale kraken2-derived"
-echo "   assert that bounded w itself by ModResidueDeque::kMaxCap instead of only per-residue capacity =="
+echo "== 10. mod-minimizer at a large window (w=50): the deque ring is sized from w+k-t, not a fixed cap =="
 for o in $ORDERS_MOD; do
 	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$MOD_T" -w 50 "$REF" "$QRY" > "$TMP/w50_$o.sam" 2>"$TMP/w50_$o.err"; then
 		ok "-w 50 builds+maps: $o"
@@ -153,7 +175,7 @@ for o in $ORDERS_MOD; do
 	fi
 done
 
-echo "== 11. mod-minimizer O(1)-amortized selection: brute-force cross-validation =="
+echo "== 11. mod-minimizer selection: brute-force cross-validation (Python port + compiled sketch_dump) =="
 PY=/usr/bin/python3.11
 command -v "$PY" >/dev/null 2>&1 || PY=python3
 if "$PY" validate_mod_minimizer.py >"$TMP/validate_mod_minimizer.out" 2>&1; then

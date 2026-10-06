@@ -7,8 +7,8 @@ the underlying alignment problem is solvable), even though their minimizer
 counts and exact identity differ.
 
 greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
-this test's fixed -k 15 -w 10). No mod-minimizer-greedymini for minimap2
-(unlike kraken2/sshash) -- see README.md.
+this test's fixed -k 15 -w 10), in both AT/CG projections (greedymini-at1 =
+--gm-projection at1-cg0).
 
 Run with: python3.11 -m pytest benchmark/minimap2/tests -q
 (needs a python3 new enough for these type hints -- see lib/constants.sh's
@@ -29,7 +29,7 @@ MINIMAP2_BIN = REPO_ROOT / "minimap2" / "minimap2"
 DATA_DIR = HERE / "_test_data"
 
 GM_FILE = REPO_ROOT / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
-ORDERS = ["native", "xor-hash", "xor-pcg-hash", "greedymini", "mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash"]
+ORDERS = ["native", "xor", "xor-pcg-hash", "greedymini", "greedymini-at1", "mod-minimizer-xor"]
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +49,8 @@ def _order_flags(order: str) -> list[str]:
         return []
     if order == "greedymini":
         return ["--minimizer-order", "greedymini", "--greedymini-file", str(GM_FILE)]
+    if order == "greedymini-at1":
+        return ["--minimizer-order", "greedymini", "--greedymini-file", str(GM_FILE), "--gm-projection", "at1-cg0"]
     flags = ["--minimizer-order", order, "--order-seed", "42"]
     if order.startswith("mod-minimizer-"):
         flags += ["--mod-t", "5"]

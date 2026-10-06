@@ -38,6 +38,7 @@ ARGOS_RUN_RE = re.compile(r"^ARGOS\.([A-Z0-9]+)\.", re.I)
 RANK = "genus"
 FIELDS = [
     "scheme",
+    "minimum_hit_groups",
     "dataset",
     "rank",
     "scope",
@@ -72,6 +73,9 @@ def parse_args(argv):
     p.add_argument("--kraken", required=True)
     p.add_argument("--out-tsv", required=True)
     p.add_argument("--scheme", default="")
+    p.add_argument("--minimum-hit-groups", type=int, default=None,
+                   help="classify --minimum-hit-groups used for this output; "
+                        "recorded in the minimum_hit_groups column")
     p.add_argument("--expected", default="", help="table_s5_kraken2_expected.csv")
     return p.parse_args(argv)
 
@@ -206,6 +210,8 @@ def main(argv=None):
         w = csv.DictWriter(f, fieldnames=FIELDS)
         w.writeheader()
         for rec in rows:
+            rec["minimum_hit_groups"] = (
+                "" if args.minimum_hit_groups is None else args.minimum_hit_groups)
             w.writerow(rec)
 
     mean_rec = rows[-2]

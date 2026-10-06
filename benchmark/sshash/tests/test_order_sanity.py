@@ -22,23 +22,14 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 
 from scripts.config import monorepo_root, repo_root
-from scripts.orders import ORDERS, build_flags, order_t_values
+from scripts.orders import ORDERS, build_flags, check_gm_order
 
 BENCH_DIR = Path(__file__).resolve().parents[1]
 SSHASH = repo_root() / "build" / "sshash"
 SAMPLE = repo_root() / "data" / "unitigs_stitched" / "salmonella_enterica_k31_ust.fa.gz"
-# Plain greedymini's table (gm_k=15, Extend-k'd up to l=m=21).
-GM_FILE = monorepo_root() / "orders" / "GreedyMini" / "w11_k15_canonical.gm"
-# mod-minimizer-greedymini's O_t tables: t=11 (no extend needed: gm_k=11=t)
-# and t=10 (gm_k=10=t); mod-minimizer-greedymini-v2 is a labeled A/B variant
-# of the t=11 table (config.yaml's mod_t_gm_labels) -- see scripts/orders.py.
-MOD_GM_FILE = monorepo_root() / "orders" / "GreedyMini" / "w21_k11_canonical.gm"
-MOD_GM_FILE_T10 = monorepo_root() / "orders" / "GreedyMini" / "w22_k10_canonical.gm"
-MOD_GM_FILE_V2 = monorepo_root() / "orders" / "GreedyMini" / "w21_k11_canonical_v2.gm"
 POS_TXT = BENCH_DIR / "data" / "queries" / "salmonella_enterica_k31_pos.txt"
 NEG_TXT = BENCH_DIR / "data" / "queries" / "salmonella_enterica_k31_neg.txt"
-# m=21 (up from the original 11): matches the mod-minimizer paper's own
-# tested SSHash regime (k=31, m=21, w=11) -- see orders/README.md.
+# k=31, m=21 gives w=11, the window the GreedyMini tables were built for.
 K, M = 31, 21
 EXPECTED_NUM_KMERS = 4787534  # independent of m: m only affects minimizer construction, not the k-mer set
 
@@ -46,27 +37,15 @@ SEEDS = {
     "native": 1,
     "xor-hash": 42,
     "xor-pcg-hash": 7,
-    "greedymini": 99,
-    "mod-minimizer-native-hash": 11,
-    "mod-minimizer-xor-hash": 12,
-    "mod-minimizer-pcg-xor-hash": 13,
-    "mod-minimizer-greedymini": 14,
-    "mod-minimizer-greedymini-v2": 15,
+    "greedymini-k13": 98,
+    "greedymini-k15": 99,
+    "greedymini-k13-at1": 100,
+    "greedymini-k15-at1": 101,
 }
 
 
-def _gm_file_for(order: str, t: int | None) -> str | None:
-    if order == "greedymini":
-        return str(GM_FILE)
-    if order == "mod-minimizer-greedymini":
-        return str(MOD_GM_FILE_T10) if t == 10 else str(MOD_GM_FILE)
-    if order == "mod-minimizer-greedymini-v2":
-        return str(MOD_GM_FILE_V2)
-    return None
-
-
-def _run_label(order: str, t: int | None) -> str:
-    return order if t is None else f"{order}_t{t}"
+def _run_label(order: str, regular: bool) -> str:
+    return f"{order}_regular" if regular else order
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:
@@ -80,11 +59,11 @@ def _json_blob(text: str) -> dict:
     return json.loads(m.group(0))
 
 
-def _build(order: str, t: int | None, out_path: Path) -> dict:
-    flags = build_flags(order, SEEDS[order], _gm_file_for(order, t), t)
+def _build(order: str, regular: bool, out_path: Path) -> dict:
+    flags = build_flags(order, SEEDS[order]) + (["--regular"] if regular else [])
     cmd = [str(SSHASH), "build", "-i", str(SAMPLE), "-k", str(K), "-m", str(M), "-t", "4", "--verbose", *flags, "-o", str(out_path)]
     rc, out = _run(cmd)
-    assert rc == 0, f"build failed for order={_run_label(order, t)}: {out[-2000:]}"
+    assert rc == 0, f"build failed for order={_run_label(order, regular)}: {out[-2000:]}"
     return _json_blob(out)
 
 
@@ -107,20 +86,19 @@ def _query(index_path: Path, query_fasta: Path) -> dict:
 
 
 def test_orders_module() -> None:
-    assert set(ORDERS) == {
-        "native", "xor-hash", "xor-pcg-hash", "greedymini",
-        "mod-minimizer-native-hash", "mod-minimizer-xor-hash",
-        "mod-minimizer-pcg-xor-hash", "mod-minimizer-greedymini",
-        "mod-minimizer-greedymini-v2",
-    }
-    assert build_flags("native", 1) == ["-s", "1"]
-    assert build_flags("xor-hash", 42) == ["-O", "xor-hash", "-s", "42"]
-    assert build_flags("mod-minimizer-xor-hash", 5, t=10) == ["-O", "mod-minimizer-xor-hash", "--t-length", "10", "-s", "5"]
-    assert order_t_values("native") == (None,)
-    assert order_t_values("mod-minimizer-greedymini") == (10, 11)
-    assert order_t_values("mod-minimizer-greedymini-v2") == (11,)
-    assert order_t_values("mod-minimizer-xor-hash") == (10, 11)
-    print("ok  orders module: flag mapping (incl. mod-minimizer-* + t)")
+    assert {
+        "native", "xor-hash", "xor-pcg-hash",
+        "greedymini-k13", "greedymini-k15", "greedymini-k13-at1", "greedymini-k15-at1",
+    } <= set(ORDERS)
+    flags = build_flags("greedymini-k13-at1", 7)
+    assert flags[:2] == ["-O", "greedymini"] and flags[-2:] == ["-s", "7"]
+    assert "--gm-projection" in flags and flags[flags.index("--gm-projection") + 1] == "at1-cg0"
+    assert "--gm-projection" not in build_flags("greedymini-k15", 7)
+    assert check_gm_order("greedymini-k15", 21) is None
+    assert check_gm_order("greedymini-k13-at1", 21) is None
+    assert "m - gm_k even" in (check_gm_order("greedymini-k13", 20) or "")
+    assert "greedymini" not in ORDERS
+    print("ok  orders module: flag mapping")
 
 
 def test_lib_orders_sh_converts_hex_seed_to_decimal() -> None:
@@ -168,40 +146,37 @@ def test_sshash_integration() -> None:
         n_neg = sum(1 for ln in NEG_TXT.read_text().splitlines() if ln.strip())
 
         counts: dict[str, int] = {}
-        for order in ORDERS:
-            for t in order_t_values(order):
-                label = _run_label(order, t)
-                index_path = work / f"{label}.sshash"
-                build_json = _build(order, t, index_path)
-                num_kmers = int(build_json["num_kmers"])
-                counts[label] = num_kmers
-                # `check` exercises sshash's own internal is_member/neighbour
-                # consistency for every stored k-mer, including its reverse
-                # complement -- this is what actually regression-tests
-                # mod-minimizer's two-probe Lookup fallback (see
-                # sshash/include/util.hpp's compute_mod_minimizer_single_strand
-                # doc comment): it caught the "wrong orientation" bug during
-                # this feature's own development.
-                _check(index_path)
+        # every order with canonical parsing, plus native under --regular (the two-probe
+        # "regular parsing" modality)
+        for order, regular in [(o, False) for o in ORDERS] + [("native", True)]:
+            label = _run_label(order, regular)
+            index_path = work / f"{label}.sshash"
+            build_json = _build(order, regular, index_path)
+            num_kmers = int(build_json["num_kmers"])
+            counts[label] = num_kmers
+            # `check` exercises sshash's own internal is_member/neighbour
+            # consistency for every stored k-mer, including its reverse
+            # complement (and, under --regular, the two-probe Lookup fallback).
+            _check(index_path)
 
-                pos_result = _query(index_path, pos_fa)
-                assert int(pos_result["num_positive_kmers"]) == n_pos, (
-                    f"{label}: expected all {n_pos} positive k-mers present, "
-                    f"got {pos_result['num_positive_kmers']}"
-                )
-                assert int(pos_result["num_negative_kmers"]) == 0, f"{label}: unexpected absent k-mer in positive set"
+            pos_result = _query(index_path, pos_fa)
+            assert int(pos_result["num_positive_kmers"]) == n_pos, (
+                f"{label}: expected all {n_pos} positive k-mers present, "
+                f"got {pos_result['num_positive_kmers']}"
+            )
+            assert int(pos_result["num_negative_kmers"]) == 0, f"{label}: unexpected absent k-mer in positive set"
 
-                neg_result = _query(index_path, neg_fa)
-                assert int(neg_result["num_negative_kmers"]) == n_neg, (
-                    f"{label}: expected all {n_neg} negative k-mers absent, "
-                    f"got {neg_result['num_negative_kmers']}"
-                )
-                assert int(neg_result["num_positive_kmers"]) == 0, f"{label}: unexpected present k-mer in negative set"
+            neg_result = _query(index_path, neg_fa)
+            assert int(neg_result["num_negative_kmers"]) == n_neg, (
+                f"{label}: expected all {n_neg} negative k-mers absent, "
+                f"got {neg_result['num_negative_kmers']}"
+            )
+            assert int(neg_result["num_positive_kmers"]) == 0, f"{label}: unexpected present k-mer in negative set"
 
         assert len(set(counts.values())) == 1, counts
         assert counts["native"] == EXPECTED_NUM_KMERS, counts
         print(f"ok  sshash integration: num_kmers={counts['native']} identical across {sorted(counts)}")
-        print(f"     positive/negative query answers identical across all orders/t ({n_pos} pos / {n_neg} neg)")
+        print(f"     positive/negative query answers identical across all orders ({n_pos} pos / {n_neg} neg)")
 
 
 def main() -> int:

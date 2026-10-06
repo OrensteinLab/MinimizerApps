@@ -302,13 +302,14 @@ IndexData *load_index(Options &opts) {
   auto opts_filesize = sb.st_size;
   size_t read_size = std::min((size_t)opts_filesize, sizeof(IndexOptions));
   idx_opt_fs.read((char *) &idx_opts, read_size);
-  if (idx_opts.db_version > KRAKEN2_DB_VERSION)
-    errx(EX_DATAERR, "unsupported opts.k2d db_version %d (supported: 0–%d)",
-         idx_opts.db_version, KRAKEN2_DB_VERSION);
-  if (idx_opts.db_version >= KRAKEN2_DB_VERSION &&
+  if (!IndexOptionsValid(idx_opts, (size_t)opts_filesize) ||
       read_size < sizeof(IndexOptions))
-    errx(EX_DATAERR, "opts.k2d truncated for db_version %d (%zu bytes)",
-         idx_opts.db_version, read_size);
+    errx(EX_DATAERR, "%s: %s (size %lld, expected %zu; db_version %d, "
+         "expected %d; magic 0x%08x, expected 0x%08x)",
+         opts.options_filename.c_str(), IndexRebuildMessage(),
+         (long long)opts_filesize, sizeof(IndexOptions),
+         idx_opts.db_version, KRAKEN2_DB_VERSION,
+         (unsigned)idx_opts.magic, (unsigned)KRAKEN2_OPTS_MAGIC);
   opts.use_translated_search = ! idx_opts.dna_db;
 
   IndexData *index_data = new IndexData();
@@ -319,11 +320,9 @@ IndexData *load_index(Options &opts) {
   DecodeIndexSchemes(idx_opts, sketching, order);
 
   if (order == Order::GM && idx_opts.gm_num_entries > 0) {
-    // gm_alphabet: 0 = binary, 1 = dna
-    const GmAlphabet alphabet = (GmAlphabet)idx_opts.gm_alphabet;
     const string gm_path =
         MinimizerScanner::gm_k2d_path(opts.index_filename);
-    index_data->gm_table = MinimizerScanner::shared_gm_table(gm_path, alphabet);
+    index_data->gm_table = MinimizerScanner::shared_gm_table(gm_path);
     if (!index_data->gm_table)
       errx(EX_NOINPUT, "GreedyMini rank table not found at %s", gm_path.c_str());
   }

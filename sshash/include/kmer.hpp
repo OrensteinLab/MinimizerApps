@@ -166,7 +166,10 @@ struct dna_uint_kmer_t : alpha_kmer_t<Kmer, 2, nucleotides> {
 
     static constexpr bool has_reverse_complement = true;
 
-    [[maybe_unused]] void reverse_complement_inplace(uint64_t k) override {
+    /* always inlined, like crc64 and canonical_mmer_at: left to the compiler's size heuristics
+       it ended up out of line in the streaming lookup, which cost 7% */
+    [[maybe_unused]] __attribute__((always_inline)) void reverse_complement_inplace(
+        uint64_t k) override {
         assert(k <= max_k);
         dna_uint_kmer_t rev(0);
         for (uint16_t i = 0; i < uint_kmer_bits; i += 64) { rev.append64(crc64(base::pop64())); }

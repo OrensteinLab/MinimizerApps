@@ -1,19 +1,17 @@
-# Compare every minimizer-order scheme (plain and mod-minimizer) on the
-# standard_p10 library, one seed, one timed classify repeat each.
+# Compare the five order schemes (plain + mod-minimizer) on the
+# standard_p10 library, one seed (one classify per hit-group setting).
 name: sweep_schemes
-description: All six order schemes (plain + mod-minimizer) on standard_p10, 1 seed, 1 classify repeat.
+description: All five order schemes (plain + mod-minimizer) on standard_p10, 1 seed.
 
 defaults:
   library: standard_p10
   n_seeds: 1
-  n_classify: 1
   threads: 16
   parallel_jobs: 1
 
 configs:
-  - scheme: RandomXor
-  - scheme: RandomPcg
-  - scheme: GreedyMini
-  - scheme: ModRandom
-  - scheme: ModRandomPcg
-  - scheme: ModGreedyMini
+  - scheme: xor
+  - scheme: xor-pcg
+  - scheme: greedymini
+  - scheme: mod-minimizer-xor
+  - scheme: mod-minimizer-greedymini

@@ -22,27 +22,27 @@ Everything else in this folder is an unmodified import of upstream.
 
 Same order menu as the other three apps (see
 [`orders/README.md`](../orders/README.md) for the shared implementation and
-the cross-app CLI-flag table): `xor-hash`, `xor-pcg-hash`, `greedymini`
+the cross-app CLI-flag table): `xor`, `xor-pcg-hash`, `greedymini`
 (binary alphabet + on-the-fly projection only -- no DNA-alphabet backend, no
-Extend-k: the table's `gm_k` must equal `-k` exactly), and
-`mod-minimizer-{xor-hash,pcg-xor-hash}`. No `mod-minimizer-greedymini` here
-(unlike kraken2/sshash) -- dropped to avoid needing a second,
-differently-sized GreedyMini table (`gm_k` == the mod-minimizer `t`, not
-`k`) just for that one variant.
+Extend-k: the table's `gm_k` must equal `-k` exactly; either AT/CG
+projection polarity, `--gm-projection`, as in sshash), and
+`mod-minimizer-xor` (mod-sampling with `xor` as the t-mer order).
 
 ```bash
 ./minimap2 -a ref.fa reads.fq                                                    # native, unchanged
-./minimap2 -a --minimizer-order xor-hash --order-seed 42 ref.fa reads.fq
+./minimap2 -a --minimizer-order xor --order-seed 42 ref.fa reads.fq
 ./minimap2 -a --minimizer-order xor-pcg-hash --order-seed 42 ref.fa reads.fq
 ./minimap2 -a --minimizer-order greedymini \
     --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # needs -k 15 -w 10 (or matching gm_k)
+./minimap2 -a --minimizer-order greedymini --gm-projection at1-cg0 \
+    --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # A,T -> 1 / C,G -> 0 instead of the default at0-cg1
 
-# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): xor-hash or xor-pcg-hash as O_t
-./minimap2 -a --minimizer-order mod-minimizer-xor-hash --order-seed 42 --mod-t 5 ref.fa reads.fq
+# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024), xor as O_t
+./minimap2 -a --minimizer-order mod-minimizer-xor --order-seed 42 --mod-t 5 ref.fa reads.fq
 ```
 
 Long-only flags (`--minimizer-order`, `--order-seed`, `--greedymini-file`,
-`--gm-alphabet`, `--mod-t`): unlike kraken2/kmc/sshash's short flags, `-O`
+`--gm-projection`, `--mod-t`): unlike kraken2/kmc/sshash's short flags, `-O`
 (gap-open penalty) and `-s` (min DP score) were already taken by minimap2
 itself.
 
@@ -68,10 +68,15 @@ and never becomes the value actually stored in the index.
 - `greedymini` requires a table whose `gm_k` matches `-k` exactly --
   Extend-k (a table built for a shorter length than it's used at) isn't
   supported here, unlike kraken2/kmc/sshash.
+- `mod-minimizer-xor`'s scan uses kraken2's single monotone deque over all
+  live t-mers (no per-residue deques, no division on the hot path); the
+  sampled k-mer follows the paper's smallest-offset tie-break, checked
+  against a brute force by `validate_mod_minimizer.py`.
 
 ## Build and test
 
 ```bash
 make all     # CC compiles the C sources; CXX (g++) compiles order.cpp; -lstdc++ added to LIBS
-make test    # ./test_order.sh -- sanity checks for every order except greedymini (needs a table; see above)
+make test    # builds the sketch_dump test driver, then ./test_order.sh -- sanity checks for every order,
+             # including validate_mod_minimizer.py (brute force vs. the compiled mod-minimizer sketch)
 ```

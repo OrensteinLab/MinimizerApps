@@ -18,23 +18,11 @@ lookup_result dictionary<Kmer, Offsets>::lookup(Kmer uint_kmer,
     uint_kmer_rc.reverse_complement_inplace(m_k);
 
     lookup_result res;
-    if (m_mod_minimizer) {
-        /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc comment and
-           dictionary_builder::compute_minimizer_tuples): construction stores a kmer's minimizer
-           for whichever single strand it was walked in, with no forward/reverse-complement
-           combination, so a lookup here mirrors the 2022 SSHash paper's own regular-parsing
-           Lookup ("will first search for g and -- only if not found -- will also search for ĝ.
-           This effectively doubles the query time ... in the worst case"). */
-        auto mini_info = util::compute_mod_minimizer_single_strand(uint_kmer, m_k, m_m, m_t, m_hasher);
-        res = lookup(uint_kmer, uint_kmer_rc, mini_info);
-        if (res.kmer_id == constants::invalid_uint64) {
-            auto mini_info_rc =
-                util::compute_mod_minimizer_single_strand(uint_kmer_rc, m_k, m_m, m_t, m_hasher);
-            res = lookup(uint_kmer, uint_kmer_rc, mini_info_rc);
-        }
-    } else if (m_regular_parsing) {
-        /* Comparison mode: same two-probe shape as mod-minimizer's regular parsing
-           above, but for a classical order -- see compute_minimizer_single_strand. */
+    if (m_regular_parsing) {
+        /* "Regular parsing" (see compute_minimizer_single_strand): construction stores a kmer's
+           minimizer for whichever single strand it was walked in, with no forward/reverse-
+           complement combination, so lookup searches for the kmer and, only if not found, for
+           its reverse complement (the 2022 SSHash paper's regular-parsing Lookup). */
         auto mini_info = util::compute_minimizer_single_strand(uint_kmer, m_k, m_m, m_hasher);
         res = lookup(uint_kmer, uint_kmer_rc, mini_info);
         if (res.kmer_id == constants::invalid_uint64) {
@@ -60,18 +48,10 @@ lookup_result dictionary<Kmer, Offsets>::lookup(const Kmer uint_kmer,           
 {
     /* Independent-recomputation self-check. The classical single-probe scheme has one
        frame-invariant recomputation to check against; the two-probe "regular parsing"
-       fallback (mod-minimizer always, or the classical scheme under --regular) calls this
-       with either the forward or the reverse-complement strand's own single-strand
-       minimizer_info (see the public lookup's two-probe fallback above and
-       streaming_query::lookup's mod-minimizer branch), so it must match one of the two. */
+       fallback (--regular) calls this with either the forward or the reverse-complement
+       strand's own single-strand minimizer_info, so it must match one of the two. */
     assert([&] {
         minimizer_info got(mini_info.minimizer, mini_info.pos_in_kmer);
-        if (m_mod_minimizer) {
-            return got == util::compute_mod_minimizer_single_strand(uint_kmer, m_k, m_m, m_t,
-                                                                     m_hasher) or
-                   got == util::compute_mod_minimizer_single_strand(uint_kmer_rc, m_k, m_m, m_t,
-                                                                     m_hasher);
-        }
         if (m_regular_parsing) {
             return got == util::compute_minimizer_single_strand(uint_kmer, m_k, m_m, m_hasher) or
                    got == util::compute_minimizer_single_strand(uint_kmer_rc, m_k, m_m, m_hasher);
@@ -208,7 +188,7 @@ neighbourhood<Kmer> dictionary<Kmer, Offsets>::string_neighbours(
 template <typename Kmer, typename Offsets>
 uint64_t dictionary<Kmer, Offsets>::num_bits() const {
     return 8 * (sizeof(m_vnum) + sizeof(m_num_kmers) + sizeof(m_num_strings) + sizeof(m_k) +
-                sizeof(m_m) + sizeof(m_mod_minimizer) + sizeof(m_t) + sizeof(m_regular_parsing) +
+                sizeof(m_m) + sizeof(m_regular_parsing) +
                 sizeof(m_hasher)) +
            m_spss.num_bits() + m_ssi.num_bits() + m_weights.num_bits();
 }

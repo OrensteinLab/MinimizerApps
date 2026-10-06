@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Theoretical expected density_factor for every minimap2 order (native,
-xor-hash, xor-pcg-hash, greedymini, mod-minimizer-xor-hash,
-mod-minimizer-pcg-xor-hash), via Monte Carlo simulation on an i.i.d.
+xor, xor-pcg-hash, greedymini, greedymini-at1, mod-minimizer-xor), via
+Monte Carlo simulation on an i.i.d.
 uniform-random DNA stream -- not measured on any real dataset. Mirrors
 benchmark/sshash/scripts/expected_density.py's own approach and naming,
 ported to minimap2's own order formulas (minimap2/order.cpp), reusing
@@ -10,8 +10,7 @@ ones order.cpp's own C++ is built on -- gm_acgt_to_atcg/
 gm_extract_dna_key_atcg/dna_reverse_complement/pcg_rxs_m_xs64/xor_hash/
 xor_pcg_hash) rather than re-deriving them a third time.
 
-xor-hash/xor-pcg-hash/greedymini (and their mod-minimizer-* counterparts)
-are seed-dependent, so this reports mean and std across the benchmark's
+xor/xor-pcg-hash/mod-minimizer-xor are seed-dependent, so this reports mean and std across the benchmark's
 predefined seeds (see config.yaml), not a single value; native has no seed
 at all in minimap2 (mm_hash64 takes none), so it's computed once and
 repeated n_seeds times as a formality for a uniform table shape.
@@ -53,21 +52,20 @@ DEFAULT_MOD_N_BASES = 40_000
 DEFAULT_SEED = 0xC0FFEE01
 
 ORDERS = [
-    "native", "xor-hash", "xor-pcg-hash", "greedymini",
-    "mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash",
+    "native", "xor", "xor-pcg-hash", "greedymini", "greedymini-at1",
+    "mod-minimizer-xor",
 ]
-MOD_ORDERS = frozenset({"mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash"})
+MOD_ORDERS = frozenset({"mod-minimizer-xor"})
 
-# Which base order each order uses as its hash/rank function -- mod-minimizer-*
-# reuses xor-hash/xor-pcg-hash as O_t, exactly as order.cpp's own
-# order_rank_tmer() dispatches (see that function's own switch statement).
+# Which base order each order uses as its hash/rank function --
+# mod-minimizer-xor ranks t-mers by xor, as order.cpp's sketch_mod_minimizer.
 _BASE_ORDER = {
     "native": "native",
-    "xor-hash": "xor-hash",
+    "xor": "xor",
     "xor-pcg-hash": "xor-pcg-hash",
     "greedymini": "greedymini",
-    "mod-minimizer-xor-hash": "xor-hash",
-    "mod-minimizer-pcg-xor-hash": "xor-pcg-hash",
+    "greedymini-at1": "greedymini-at1",
+    "mod-minimizer-xor": "xor",
 }
 
 
@@ -89,20 +87,21 @@ def mm_hash64(key: int, mask: int) -> int:
     return key
 
 
-def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int) -> int:
+def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, key_flip: int = 0) -> int:
     """Direct port of order.cpp's greedymini_rank(): dual-orientation UHS
     rank probe (gm_k == l always -- minimap2 disallows Extend-k, checked
     at load time) packed above a PCG-scrambled tiebreak, exactly as
     minimap2 computes and stores it. `seed` is unused (greedymini's ranks
     come from its table, not a seed) -- kept only for hash_fn signature
-    parity with xor_hash/xor_pcg_hash."""
+    parity with xor_hash/xor_pcg_hash. key_flip = 2^gm_k - 1 for
+    --gm-projection at1-cg0 (every Sigma bit complemented), else 0."""
     gm_k = l
     atcg = gm_acgt_to_atcg(lmer)
-    best = gm_ranks[gm_extract_dna_key_atcg(atcg, l, gm_k)]
+    best = gm_ranks[gm_extract_dna_key_atcg(atcg, l, gm_k) ^ key_flip]
     rc = dna_reverse_complement(lmer, l)
     if rc != lmer:
         atcg_rc = gm_acgt_to_atcg(rc)
-        p_rc = gm_ranks[gm_extract_dna_key_atcg(atcg_rc, l, gm_k)]
+        p_rc = gm_ranks[gm_extract_dna_key_atcg(atcg_rc, l, gm_k) ^ key_flip]
         if p_rc < best:
             best = p_rc
     tiebreak = pcg_rxs_m_xs64(lmer) & 0xFFFFFFFFFFFF
@@ -116,13 +115,14 @@ def _hash_fn(base_order: str, length: int, gm_ranks: list[int] | None):
     if base_order == "native":
         mask = (1 << (2 * length)) - 1
         return lambda value, seed: mm_hash64(value, mask)
-    if base_order == "xor-hash":
+    if base_order == "xor":
         return xor_hash
     if base_order == "xor-pcg-hash":
         return xor_pcg_hash
-    if base_order == "greedymini":
+    if base_order in ("greedymini", "greedymini-at1"):
         assert gm_ranks is not None
-        return lambda value, seed: greedymini_hash(value, length, gm_ranks, seed)
+        flip = (1 << length) - 1 if base_order == "greedymini-at1" else 0
+        return lambda value, seed: greedymini_hash(value, length, gm_ranks, seed, flip)
     raise ValueError(f"unknown base order: {base_order}")
 
 
@@ -197,7 +197,7 @@ def compute_all_orders(
     out: list[dict] = []
     for order in ORDERS:
         is_mod = order in MOD_ORDERS
-        needs_gm = _BASE_ORDER[order] == "greedymini"
+        needs_gm = _BASE_ORDER[order].startswith("greedymini")
         t = mod_t if is_mod else None
         if needs_gm and gm_ranks is None:
             out.append({
@@ -263,7 +263,8 @@ def ensure_expected_orders(
     path = expected_orders_csv_path(results)
     if not force and path.is_file():
         cached = load_expected_orders(results)
-        if cached and all(int(r.get("k") or 0) == k and int(r.get("w") or 0) == w for r in cached.values()):
+        if (cached and set(cached) == set(ORDERS)
+                and all(int(r.get("k") or 0) == k and int(r.get("w") or 0) == w for r in cached.values())):
             return cached
     rows = compute_all_orders(k, w, seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases, mod_t=mod_t, is_hpc=is_hpc)
     path.parent.mkdir(parents=True, exist_ok=True)

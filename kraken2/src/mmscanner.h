@@ -23,9 +23,19 @@ const uint64_t DEFAULT_SPACED_SEED_MASK = 0;
 const int BITS_PER_CHAR_DNA = 2;
 const int BITS_PER_CHAR_PRO = 4;
 const int CURRENT_REVCOM_VERSION = 1;
+// GM centre order: compare table ranks first (see GMRanker::rank_first), with
+// the Sigma plane rolled one base per step or recomputed (pext) per l-mer.
+const bool kDefaultRollSigma = false;
 
 struct MinimizerData {
   uint64_t rank;
+  uint64_t candidate;
+  ssize_t pos;
+};
+
+// Queue element of the default (RandomXor, DNA) scan path: same 16-byte
+// layout as upstream Kraken 2; candidate = canonical l-mer ^ toggle.
+struct XorMinimizerData {
   uint64_t candidate;
   ssize_t pos;
 };
@@ -70,12 +80,10 @@ class MinimizerScanner {
                             const std::vector<uint64_t> &ranks);
   static std::string gm_k2d_path(const std::string &hashtable_filename);
   static std::shared_ptr<const GreedyMiniTable>
-      shared_gm_table(const std::string &filename,
-                      GmAlphabet alphabet = GmAlphabet::BINARY);
+      shared_gm_table(const std::string &filename);
   static void register_shared_gm_table(
       const std::string &filename,
-      std::shared_ptr<const GreedyMiniTable> table,
-      GmAlphabet alphabet = GmAlphabet::BINARY);
+      std::shared_ptr<const GreedyMiniTable> table);
   static void embed_gm_table(const std::string &source_path,
                              const std::string &hashtable_filename,
                              std::shared_ptr<const GreedyMiniTable> table);
@@ -92,7 +100,13 @@ class MinimizerScanner {
   void ComputeModStreamOrigins(const std::string &seq,
                                std::vector<uint32_t> *origin_at) const;
 
-  uint64_t *NextMinimizer();
+  uint64_t *NextMinimizer() {
+    switch (scan_kind_) {
+      case kScanXor: return NextMinimizerXor();
+      case kScanMod: return NextMinimizerMod();
+      default: return NextMinimizerGeneral();
+    }
+  }
   // Return last minimizer, only valid if NextMinimizer last returned non-NULL
   uint64_t last_minimizer() const { return last_minimizer_; }
   ssize_t k() const { return k_; }
@@ -126,6 +140,11 @@ class MinimizerScanner {
     return ranker_ && ranker_->has_uhs_stats();
   }
 
+  void SetRankFirst(bool rank_first, bool roll_sigma = false);
+  // Counted only when built with KRAKEN2_MINIMIZER_BENCHMARK (zero otherwise).
+  uint64_t rank_compares() const { return rank_cmp_; }
+  uint64_t tie_compares() const { return tie_cmp_; }
+
   void ClearPhaseStats() {
     phase_stats_ = {};
   }
@@ -136,6 +155,8 @@ class MinimizerScanner {
   // When non-null, every ℓ-mer passed to Rank() is appended (bench).
   void SetRankedLmerLog(std::vector<uint64_t> *log) {
     ranked_lmer_log_ = log;
+    if (log && scan_kind_ == kScanXor)
+      scan_kind_ = kScanGeneral;
     if (mod_sampler_)
       mod_sampler_->SetRankedLmerLog(log);
   }
@@ -152,6 +173,9 @@ class MinimizerScanner {
   void init_ranker(const std::string &greedy_mini_filename,
                    std::shared_ptr<const GreedyMiniTable> gm_table);
   uint64_t *NextMinimizerMod();
+  uint64_t *NextMinimizerGeneral();  // every other scheme (Mod included)
+  uint64_t *NextMinimizerXor();  // default path: Minimizer + RandomXor + DNA
+  void PopDominatedRankFirst(uint64_t rank);
 
   const std::string *str_;  // pointer to sequence
   ssize_t k_;
@@ -173,6 +197,12 @@ class MinimizerScanner {
   SketchingScheme sketching_;
   Order order_;
   std::unique_ptr<MinimizerRanker> ranker_;
+  // GM centre order compared rank first (see GMRanker::rank_first); null
+  // otherwise. sigma_ is the rolled Sigma plane of lmer_ when roll_sigma_.
+  GMRanker *gm_ = nullptr, *gm_rf_ = nullptr;
+  uint64_t sigma_ = 0, sigma_mask_ = 0;
+  bool roll_sigma_ = false;
+  uint64_t tie_cmp_ = 0, rank_cmp_ = 0;  // rank-first counters (benchmark builds only)
   std::unique_ptr<ModSampler> mod_sampler_;
   ssize_t seq_pos_;  // non-ambiguous bases since last reset (MOD + shared)
   // LoadSequence start (or 0 after 'N'); absolute k-mer/window index for Mod.
@@ -184,6 +214,10 @@ class MinimizerScanner {
   // Always present so BENCH vs non-BENCH TUs share one MinimizerScanner layout
   // under -flto (RDTSC updates remain gated in mmscanner.cc).
   NextMinPhaseStats phase_stats_;
+  // RandomXor fast path (last members: the other schemes' offsets are unchanged).
+  enum : uint8_t { kScanGeneral = 0, kScanXor, kScanMod };
+  uint8_t scan_kind_ = kScanGeneral;  // NextMinimizer() dispatch
+  std::deque<XorMinimizerData> xq_;
 };
 
 }

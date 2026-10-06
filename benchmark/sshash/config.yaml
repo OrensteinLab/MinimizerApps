@@ -25,27 +25,16 @@ paths:
 
 defaults:
   datasets: cod,kestrel,human
-  k: 31
-  # m=21 (up from the original 11): matches the mod-minimizer paper's own
-  # tested SSHash regime (k=31, m=21, giving w=k-m+1=11) -- see
-  # orders/README.md "mod-minimizer" and sshash/README.md.
-  m: 21
-  orders: native,xor-hash,xor-pcg-hash,greedymini,mod-minimizer-native-hash,mod-minimizer-xor-hash,mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,mod-minimizer-greedymini-v2
-  n_seeds: 5
-  # Plain greedymini's table: gm_k=15, Extend-k'd up to l=m=21 (density ~1.523
-  # at its own design window w=11).
-  gm_file: w11_k15_canonical.gm
-  # mod-minimizer-greedymini's O_t table for t=11 (no extend needed: gm_k=11=t).
-  mod_t_gm_file: w21_k11_canonical.gm
-  # ...and for t=10 (gm_k=10=t), filling in the t=10 case the original table
-  # never covered.
-  mod_t_gm_file_t10: w22_k10_canonical.gm
+  # k, m, the order list and the number of seeds are NOT configured here: their single
+  # source is lib/constants.sh (K, M, N_SEEDS) and lib/orders.sh (ALL_ORDERS).
 
-# Extra labeled mod-minimizer-greedymini table variants, each exposed as its
-# own order "mod-minimizer-greedymini-<label>" (fixed at t=11, an A/B
-# comparison against the default table above -- see lib/orders.sh's
-# order_gm_file/mod_t_gm_label_file and scripts/orders.py's
-# mod_t_gm_label_file). Register a new variant by adding a line here, not by
-# adding code.
-mod_t_gm_labels:
-  v2: w21_k11_canonical_v2.gm
+# Plain-greedymini tables, each exposed as its own order "greedymini-<label>"
+# (centre extension of the gm_k table to the m-mer, see orders/README.md; needs
+# m - gm_k even, so at m=21 only k13 and k15). Every greedymini order also has a
+# flipped-polarity twin with an "-at1" suffix (sshash --gm-projection at1-cg0:
+# DNA->binary projection AT->1, CG->0 instead of the default AT->0, CG->1), e.g.
+# greedymini-k13-at1. Register a new table by adding a line here (ORDERS picks
+# it up from this map -- no code change).
+greedymini_labels:
+  k13: w11_k13_canonical.gm
+  k15: w11_k15_canonical.gm

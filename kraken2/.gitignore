@@ -17,6 +17,7 @@ src/benchmark_minimizers
 src/mmtest
 src/test_scheme_rankers
 src/test_mod_minimizer
+src/scan_dump
 
 # NFS leftover stubs
 .nfs*

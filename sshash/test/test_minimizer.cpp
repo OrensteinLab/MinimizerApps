@@ -80,8 +80,10 @@ static bool has_tie(kmer_t kmer, uint64_t k, uint64_t m, hasher_type const& hash
 }
 
 template <typename kmer_t>
-static void test_kmers(uint64_t k, uint64_t m, uint64_t num_kmers, std::mt19937_64& gen) {
+static void test_kmers(uint64_t k, uint64_t m, uint64_t num_kmers, std::mt19937_64& gen,
+                       custom_order_mode mode) {
     hasher_type hasher(1234);
+    hasher.configure(mode, m);
     std::string s(k, 0);
     for (uint64_t n = 0; n != num_kmers; ++n) {
         for (uint64_t i = 0; i != k; ++i) s[i] = "ACGT"[gen() & 3];
@@ -102,13 +104,14 @@ static void test_kmers(uint64_t k, uint64_t m, uint64_t num_kmers, std::mt19937_
     mirror-equivariant too but moves the anchor backwards on ~1e-5 of the
     windows).
 */
-template <typename kmer_t>
+template <typename kmer_t, custom_order_mode Mode>
 static void test_iterator(uint64_t k, uint64_t m, uint64_t length, std::mt19937_64& gen) {
     hasher_type hasher(1234);
+    hasher.configure(Mode, m);
     std::string s(length, 0);
     for (uint64_t i = 0; i != length; ++i) s[i] = "ACGT"[gen() & 3];
 
-    minimizer_iterator<kmer_t> it(k, m, hasher);
+    minimizer_iterator<kmer_t, Mode> it(k, m, hasher);
     it.set_position(0);
 
     uint64_t prev_pos_in_seq = 0;
@@ -139,22 +142,123 @@ static void test_iterator(uint64_t k, uint64_t m, uint64_t length, std::mt19937_
     }
 }
 
-int main() {
+/*
+    GreedyMini (strand-invariant order): the iterator and util::compute_minimizer hash the RAW
+    m-mers and canonicalize lazily. Check both against an independent brute-force reference that
+    follows the original definition: hash the numerically-canonical m-mer with the *reference*
+    dual-orientation hash, leftmost minimum, ties broken centre-closest (mirror images: smaller
+    index if kmer <= rc(kmer)). Sequences are random with injected tandem repeats and
+    reverse-complement copies, so that ties (equal hashes at several loci) actually fire.
+*/
+template <typename kmer_t>
+static minimizer_info gm_reference_minimizer(kmer_t kmer, uint64_t k, uint64_t m,
+                                             hasher_type const& hasher) {
+    kmer_t kmer_rc = kmer;
+    kmer_rc.reverse_complement_inplace(k);
+    std::vector<uint64_t> h(k - m + 1), val(k - m + 1);
+    kmer_t w = kmer;
+    for (uint64_t i = 0; i != k - m + 1; ++i) {
+        kmer_t mm = w;
+        mm.take_chars(m);
+        val[i] = util::canonical_mmer<kmer_t>(uint64_t(mm), m);
+        h[i] = hasher.hash_reference(val[i]);
+        w.drop_char();
+    }
+    uint64_t best = 0;
+    for (uint64_t i = 1; i != k - m + 1; ++i) {
+        if (h[i] < h[best]) best = i;
+    }
+    const uint64_t two_c = k - m;
+    uint64_t best_dist = constants::invalid_uint64, lo = best, hi = best;
+    for (uint64_t i = best; i != k - m + 1; ++i) {
+        if (h[i] != h[best]) continue;
+        const uint64_t dist = 2 * i > two_c ? 2 * i - two_c : two_c - 2 * i;
+        if (dist < best_dist) {
+            best_dist = dist;
+            lo = hi = i;
+        } else if (dist == best_dist) {
+            hi = i;
+        }
+    }
+    const uint64_t chosen = (lo == hi or !(kmer_rc < kmer)) ? lo : hi;
+    return {val[best], chosen};
+}
+
+template <typename kmer_t>
+static void test_iterator_gm(uint64_t k, uint64_t m, uint64_t length, std::mt19937_64& gen,
+                             hasher_type const& hasher, uint64_t& num_tie_windows) {
+    std::string s;
+    while (s.size() < length) {
+        const uint64_t kind = gen() % 4;
+        const uint64_t len = 20 + gen() % 80;
+        std::string seg;
+        if (kind == 0) {  // random
+            for (uint64_t i = 0; i != len; ++i) seg += "ACGT"[gen() & 3];
+        } else if (kind == 1) {  // tandem repeat with a short period
+            std::string unit;
+            for (uint64_t i = 0, p = 1 + gen() % 6; i != p; ++i) unit += "ACGT"[gen() & 3];
+            for (uint64_t i = 0; i != len; ++i) seg += unit[i % unit.size()];
+        } else if (kind == 2) {  // palindromic hairpin: y + rc(y)
+            std::string y;
+            for (uint64_t i = 0; i != len / 2; ++i) y += "ACGT"[gen() & 3];
+            std::string r(y.rbegin(), y.rend());
+            for (char& c : r) c = c == 'A' ? 'T' : c == 'C' ? 'G' : c == 'G' ? 'C' : 'A';
+            seg = y + r;
+        } else {  // copy of an earlier stretch, or its reverse complement
+            if (s.size() > len) {
+                seg = s.substr(gen() % (s.size() - len), len);
+                if (gen() & 1) {
+                    std::string r(seg.rbegin(), seg.rend());
+                    for (char& c : r) c = c == 'A' ? 'T' : c == 'C' ? 'G' : c == 'G' ? 'C' : 'A';
+                    seg = r;
+                }
+            }
+        }
+        s += seg;
+    }
+    s.resize(length);
+
+    strand_invariant_minimizer_iterator<kmer_t> it(k, m, hasher);
+    it.set_position(0);
+    for (uint64_t i = 0; i + k <= length; ++i) {
+        kmer_t kmer = util::string_to_uint_kmer<kmer_t>(s.data() + i, k);
+        auto got = it.next(kmer);
+        auto direct = util::compute_minimizer(kmer, k, m, hasher);
+        auto expected = gm_reference_minimizer<kmer_t>(kmer, k, m, hasher);
+        ++num_checked;
+        if (has_tie(kmer, k, m, hasher)) ++num_tie_windows;
+        if (got.minimizer != expected.minimizer or got.pos_in_kmer != expected.pos_in_kmer or
+            direct.minimizer != expected.minimizer or direct.pos_in_kmer != expected.pos_in_kmer) {
+            fail("GreedyMini iterator/compute_minimizer disagree with the reference at position " +
+                 std::to_string(i) + " (k=" + std::to_string(k) + ", m=" + std::to_string(m) +
+                 ")");
+            return;
+        }
+    }
+}
+
+int main(int argc, char** argv) {
     using kmer_t = dna_uint_kmer_t<uint64_t>;
     using wide_kmer_t = dna_uint_kmer_t<__uint128_t>;
 
     std::mt19937_64 gen(42);
 
+    /* the strand-dependent orders: native, xor-hash, xor-pcg-hash */
+    const custom_order_mode plain_modes[] = {custom_order_mode::NATIVE, custom_order_mode::XOR_HASH,
+                                             custom_order_mode::XOR_PCG_HASH};
+
     std::cout << "checking mirror-equivariance of the minimizer..." << std::endl;
-    for (uint64_t k : {5, 15, 21, 31}) {
-        for (uint64_t m = 1; m <= std::min<uint64_t>(k, kmer_t::max_m); ++m) {
-            test_kmers<kmer_t>(k, m, 20000, gen);
+    for (auto mode : plain_modes) {
+        for (uint64_t k : {5, 15, 21, 31}) {
+            for (uint64_t m = 1; m <= std::min<uint64_t>(k, kmer_t::max_m); ++m) {
+                test_kmers<kmer_t>(k, m, 20000, gen, mode);
+            }
         }
-    }
-    for (uint64_t k : {31, 47, 63}) {
-        for (uint64_t m : {1, 2, 3, 7, 13, 21, 31}) {
-            if (m > k) continue;
-            test_kmers<wide_kmer_t>(k, m, 20000, gen);
+        for (uint64_t k : {31, 47, 63}) {
+            for (uint64_t m : {1, 2, 3, 7, 13, 21, 31}) {
+                if (m > k) continue;
+                test_kmers<wide_kmer_t>(k, m, 20000, gen, mode);
+            }
         }
     }
 
@@ -168,13 +272,43 @@ int main() {
               << std::endl;
 
     std::cout << "checking the incremental iterator against the reference..." << std::endl;
-    for (uint64_t k : {5, 15, 31}) {
-        for (uint64_t m = 1; m <= std::min<uint64_t>(k, kmer_t::max_m); ++m) {
-            test_iterator<kmer_t>(k, m, 20000, gen);
+    auto check_iterators = [&](auto mode) {
+        constexpr custom_order_mode Mode = decltype(mode)::value;
+        for (uint64_t k : {5, 15, 31}) {
+            for (uint64_t m = 1; m <= std::min<uint64_t>(k, kmer_t::max_m); ++m) {
+                test_iterator<kmer_t, Mode>(k, m, 20000, gen);
+            }
         }
-    }
-    for (uint64_t k : {47, 63}) {
-        for (uint64_t m : {2, 3, 13, 31}) { test_iterator<wide_kmer_t>(k, m, 20000, gen); }
+        for (uint64_t k : {47, 63}) {
+            for (uint64_t m : {2, 3, 13, 31}) { test_iterator<wide_kmer_t, Mode>(k, m, 20000, gen); }
+        }
+    };
+    check_iterators(order_tag<custom_order_mode::NATIVE>());
+    check_iterators(order_tag<custom_order_mode::XOR_HASH>());
+    check_iterators(order_tag<custom_order_mode::XOR_PCG_HASH>());
+
+    /* optional: GreedyMini tables given on the command line (strand-invariant raw path) */
+    for (int a = 1; a < argc; ++a) {
+        for (auto proj : {gm_projection::AT0_CG1, gm_projection::AT1_CG0}) {
+            uint64_t before = num_checked, tie_windows = 0;
+            for (uint64_t m : {13, 14, 15, 16, 17, 21, 23}) {
+                hasher_type hasher(1234);
+                try {
+                    hasher.configure(custom_order_mode::GREEDYMINI, m, argv[a],
+                                     proj);
+                } catch (std::exception const&) { continue; }  // gm_k > m, or m - gm_k odd
+                for (uint64_t k : {21, 25, 31}) {
+                    if (m > k) continue;
+                    test_iterator_gm<kmer_t>(k, m, 60000, gen, hasher, tie_windows);
+                }
+                for (uint64_t k : {31, 47, 63}) {
+                    test_iterator_gm<wide_kmer_t>(k, m, 60000, gen, hasher, tie_windows);
+                }
+            }
+            std::cout << "GreedyMini " << argv[a] << " " << gm_projection_name(proj)  << ": "
+                      << (num_checked - before) << " windows match the reference (" << tie_windows
+                      << " with a hash tie)" << std::endl;
+        }
     }
 
     std::cout << "checked " << num_checked << " kmers" << std::endl;

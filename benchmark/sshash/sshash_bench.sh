@@ -15,7 +15,7 @@ source "$HERE/lib/datasets.sh"
 source "$HERE/lib/run.sh"
 source "$HERE/lib/experiment.sh"
 
-# DATASETS_CSV and DEFAULT_GM_FILE are set by load_bench_config from config.yaml.
+# DATASETS_CSV and the GreedyMini table paths are set by load_bench_config from config.yaml.
 
 usage() {
   cat <<EOF
@@ -33,33 +33,22 @@ Run options:
   -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human)
   -k K                    k-mer length (default: 31)
   -m M                    Minimizer length, fixed across ALL orders by design
-                          (default: 21, giving w=k-m+1=11 -- the mod-minimizer
-                          paper's own tested SSHash regime; see README)
-  -O, --orders LIST       native,xor-hash,xor-pcg-hash,greedymini,
-                          mod-minimizer-native-hash,mod-minimizer-xor-hash,
-                          mod-minimizer-pcg-xor-hash,mod-minimizer-greedymini,
-                          mod-minimizer-greedymini-v2, or "all" (default: all).
+                          (default: 21, giving w=k-m+1=11)
+  -O, --orders LIST       native,xor-hash,xor-pcg-hash,greedymini-k13,
+                          greedymini-k15, or "all" (default: all).
+                          GreedyMini tables are named by their gm_k
+                          (greedymini-k13, greedymini-k15: sshash -O greedymini
+                          with the centre extension of the table to the m-mer;
+                          needs m - gm_k even), plus the flipped DNA->binary
+                          polarity twin of either via an "-at1" suffix
+                          (greedymini-k15-at1, ...; sshash --gm-projection
+                          at1-cg0). See config.yaml's greedymini_labels.
                           Every order (including native) is run once per seed
                           -- sshash has no seed-less baseline the way kmc's
-                          lex does. Each mod-minimizer-* order (including
-                          mod-minimizer-greedymini itself) additionally runs
-                          once per t in {10, 11}, EXCEPT a labeled table
-                          variant (mod-minimizer-greedymini-<label>, e.g.
-                          -v2), fixed at t=11 -- see config.yaml's
-                          mod_t_gm_labels to register another such variant.
+                          lex does.
   -M, --modality VALUE   canonical (default, single-probe) or regular
                           (two-probe, sshash build --regular). Separate axis
-                          from -O; a mod-minimizer-* order is always regular
-                          regardless. E.g. -O native -M regular is the
-                          apples-to-apples comparison against mod-minimizer's
-                          own (mandatory) two-probe path.
-  --greedy-mini-file PATH GreedyMini .gm table for -O greedymini
-                          (default: orders/GreedyMini/w11_k15_canonical.gm;
-                          mod-minimizer-greedymini's own O_t tables are fixed
-                          to config.yaml's mod_t_gm_file (t=11) and
-                          mod_t_gm_file_t10 (t=10), and a labeled variant's
-                          (e.g. -greedymini-v2) to config.yaml's
-                          mod_t_gm_labels -- none overridable from here)
+                          from -O, e.g. -O native -M regular.
   -n, --n-seeds N         First N predefined seeds from config.yaml (default: 5, max: ${#BENCH_SEEDS[@]})
   -t, --threads N         sshash build/query -t (default: 8)
   --sshash PATH           sshash binary (default: $REPO_ROOT/build/sshash)
@@ -100,7 +89,6 @@ parse_options() {
         [[ "$MODALITY" == "canonical" || "$MODALITY" == "regular" ]] || \
           die "--modality must be 'canonical' or 'regular', got: $MODALITY"
         shift 2 ;;
-      --greedy-mini-file) GM_FILE="$2"; shift 2 ;;
       -n|--n-seeds) N_SEEDS="$2"; shift 2 ;;
       -t|--threads) THREADS="$2"; shift 2 ;;
       --sshash) SSHASH="$2"; shift 2 ;;
@@ -174,14 +162,14 @@ case "$CMD" in
   run)
     SSHASH_BIN="$(resolve_sshash)"
     SSHASH_VERSION="$(sshash_version "$SSHASH_BIN")"
-    run_schemes
+    run_sweep
     export_results
     ;;
   all)
     cmd_download
     SSHASH_BIN="$(resolve_sshash)"
     SSHASH_VERSION="$(sshash_version "$SSHASH_BIN")"
-    run_schemes
+    run_sweep
     export_results
     ;;
   experiment)

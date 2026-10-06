@@ -1,10 +1,10 @@
 /*
  * GreedyMini rank calculation (Golan et al. 2025), shared by kraken2 and kmc.
  *
- * Two alphabet modes (GmAlphabet):
- *
- * BINARY (default): binary UHS on {0,1}^gm_k sigma-extended to DNA, with
- * Extend-k when l > gm_k:
+ * Binary UHS on {0,1}^gm_k sigma-extended to DNA, with
+ * Extend-k (prefix extension, used by kmc; kraken2's binary order for
+ * l > gm_k and sshash use the centre extension of greedymini_centre.h) when
+ * l > gm_k:
  *   DNA packing is ACGT = 0,1,2,3 (A=00, C=01, G=10, T=11).
  *   1. Remap each base ACGT -> ATCG bitplanes (A=00, T=01, C=10, G=11)
  *      so MSB = AT vs CG (Sigma) and LSB = within-pair residual (Gamma).
@@ -19,12 +19,6 @@
  *   double-stranded use orients by gm_k so reverse-symmetric tables stay valid.
  *   DNA hot path uses BMI2 pext when available.
  *
- * DNA: native DNA UHS on {A,C,G,T}^gm_k (ACGT=0123), table size 4^gm_k:
- *   key        = top 2*gm_k bits (first gm_k bases)
- *   tiebreaker = low 2*(l - gm_k) bits (remaining bases)
- *   Orient by better gm_k UHS primary across DNA fwd/RC, then pack
- *   (primary << tb_shift) | (tiebreaker ^ tb_mask) in that frame.
- *
  * Paper / .gm encoding:
  *   - UHS members have contiguous finite ranks 0 .. m-1
  *   - Non-UHS keys store sentinel = table size ("infinity")
@@ -33,9 +27,7 @@
  *
  * Both apps use this canonically (double-stranded orientation via
  * dna_reverse_complement below); there is no non-canonical code path.
- * kraken2 only ever instantiates the BINARY alphabet in practice (its gm_k
- * values are too large for a 4^gm_k DNA table); kmc uses both, at its own
- * much smaller p. See orders/README.md.
+ * See orders/README.md.
  */
 
 #ifndef MINIMIZER_ORDERS_GREEDYMINI_RANK_H_
@@ -62,32 +54,7 @@
 // both end up visible together (e.g. via `using namespace kraken2`).
 
 // ---------------------------------------------------------------------------
-// Alphabet mode (persisted in IndexOptions.gm_alphabet; 0 = legacy binary)
-// ---------------------------------------------------------------------------
-
-enum class GmAlphabet : uint8_t {
-  BINARY = 0,  // sigma-extend + tiebreaker
-  DNA    = 1   // contiguous DNA key + suffix tiebreaker
-};
-
-inline const char *gm_alphabet_name(GmAlphabet a) {
-  return a == GmAlphabet::DNA ? "dna" : "binary";
-}
-
-inline GmAlphabet parse_gm_alphabet(const std::string &s) {
-  std::string lower = s;
-  for (char &c : lower)
-    c = (char)std::tolower((unsigned char)c);
-  if (lower == "binary")
-    return GmAlphabet::BINARY;
-  if (lower == "dna")
-    return GmAlphabet::DNA;
-  throw std::invalid_argument(
-      "unknown gm-alphabet '" + s + "' (choices: binary, dna)");
-}
-
-// ---------------------------------------------------------------------------
-// Bit helpers (closed-form masks; binary / sigma-extend path)
+// Bit helpers (closed-form masks; sigma-extend path)
 // ---------------------------------------------------------------------------
 
 // Even bit positions 0,2,4,... = LSBs of DNA bases (ATCG residual after remap).
@@ -233,24 +200,6 @@ inline void gm_extract_generic(uint64_t lmer, int l, int gm_k, int bpc,
   }
 }
 
-// DNA-alphabet key: contiguous top 2*gm_k bits (first gm_k ACGT bases).
-inline uint32_t gm_extract_dna_alphabet_key(uint64_t lmer, int l, int gm_k) {
-  const int key_bits = 2 * gm_k;
-  const uint64_t mask =
-      (key_bits >= 64) ? ~0ULL : ((1ULL << key_bits) - 1ULL);
-  return (uint32_t)((lmer >> (2 * (l - gm_k))) & mask);
-}
-
-// DNA-alphabet tiebreaker: contiguous low 2*(l - gm_k) bits (suffix bases).
-inline uint64_t gm_extract_dna_alphabet_tb(uint64_t lmer, int l, int gm_k) {
-  const int tb_bits = 2 * (l - gm_k);
-  if (tb_bits <= 0)
-    return 0;
-  if (tb_bits >= 64)
-    return lmer;
-  return lmer & ((1ULL << tb_bits) - 1ULL);
-}
-
 inline int gm_k_from_size(size_t table_size) {
   int gm_k = 0;
   size_t sz = table_size;
@@ -271,34 +220,23 @@ class GreedyMiniTable {
   // enum avoids C++11 ODR issues with static constexpr used by reference.
   enum : uint16_t { kInfRank = 0xFFFFu };
 
-  GreedyMiniTable()
-      : alphabet_(GmAlphabet::BINARY), gm_k_(0), uhs_size_(0) {}
+  GreedyMiniTable() : gm_k_(0), uhs_size_(0) {}
 
-  explicit GreedyMiniTable(const std::vector<uint64_t> &raw_gm,
-                           GmAlphabet alphabet = GmAlphabet::BINARY) {
-    load_from_raw(raw_gm, alphabet);
+  explicit GreedyMiniTable(const std::vector<uint64_t> &raw_gm) {
+    load_from_raw(raw_gm);
   }
 
-  void load_from_raw(const std::vector<uint64_t> &raw_gm,
-                     GmAlphabet alphabet = GmAlphabet::BINARY) {
+  void load_from_raw(const std::vector<uint64_t> &raw_gm) {
     if (raw_gm.empty())
       throw std::invalid_argument("empty GreedyMini table");
-    alphabet_ = alphabet;
     const size_t n = raw_gm.size();
     const int log2n = gm_k_from_size(n);
     if (((size_t)1 << log2n) != n)
       throw std::invalid_argument("GreedyMini table size is not a power of 2");
 
-    if (alphabet_ == GmAlphabet::DNA) {
-      if ((log2n % 2) != 0)
-        throw std::invalid_argument(
-            "DNA GreedyMini table size must be 4^k (even log2)");
-      gm_k_ = log2n / 2;  // bases
-    } else {
-      gm_k_ = log2n;  // binary bits
-    }
+    gm_k_ = log2n;  // binary bits
 
-    // Sentinel = table length (2^gm_k binary, or 4^gm_k DNA).
+    // Sentinel = table length (2^gm_k).
     const uint64_t inf_sentinel = (uint64_t)n;
     ranks_.assign(n, kInfRank);
     uhs_size_ = 0;
@@ -317,12 +255,9 @@ class GreedyMiniTable {
   }
 
   bool empty() const { return ranks_.empty(); }
-  GmAlphabet alphabet() const { return alphabet_; }
   int gm_k() const { return gm_k_; }
-  // Bits used to index the table (binary: gm_k; DNA: 2*gm_k).
-  int key_bits() const {
-    return alphabet_ == GmAlphabet::DNA ? 2 * gm_k_ : gm_k_;
-  }
+  // Bits used to index the table.
+  int key_bits() const { return gm_k_; }
   uint32_t uhs_size() const { return uhs_size_; }
   size_t size() const { return ranks_.size(); }
   const uint16_t *data() const { return ranks_.data(); }
@@ -331,7 +266,6 @@ class GreedyMiniTable {
   uint16_t primary(uint32_t key) const { return ranks_[key]; }
 
  private:
-  GmAlphabet alphabet_;
   int gm_k_;
   uint32_t uhs_size_;
   std::vector<uint16_t> ranks_;
@@ -369,12 +303,11 @@ inline void write_gm_file_raw(const std::string &filename,
 }
 
 inline std::shared_ptr<const GreedyMiniTable>
-load_gm_table(const std::string &filename,
-              GmAlphabet alphabet = GmAlphabet::BINARY) {
+load_gm_table(const std::string &filename) {
   auto raw = load_gm_file_raw(filename);
   if (raw.empty())
     return nullptr;
-  return std::make_shared<const GreedyMiniTable>(raw, alphabet);
+  return std::make_shared<const GreedyMiniTable>(raw);
 }
 
 // Export compact table back to classic .gm encoding (UHS ranks / n sentinel).

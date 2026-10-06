@@ -35,10 +35,6 @@ inline uint64_t nm_rdtsc() {
 std::mutex gm_table_cache_mu;
 std::map<std::string, std::weak_ptr<const GreedyMiniTable>> gm_table_cache;
 
-std::string gm_cache_key(const std::string &filename, GmAlphabet alphabet) {
-  return filename + ":" + gm_alphabet_name(alphabet);
-}
-
 bool same_gm_file(const std::string &a, const std::string &b) {
   if (a == b)
     return true;
@@ -85,18 +81,16 @@ std::string MinimizerScanner::gm_k2d_path(const std::string &hashtable_filename)
 
 void MinimizerScanner::register_shared_gm_table(
     const std::string &filename,
-    std::shared_ptr<const GreedyMiniTable> table,
-    GmAlphabet alphabet) {
+    std::shared_ptr<const GreedyMiniTable> table) {
   if (filename.empty() || !table || table->empty())
     return;
   std::lock_guard<std::mutex> lock(gm_table_cache_mu);
-  gm_table_cache[gm_cache_key(filename, alphabet)] = table;
+  gm_table_cache[filename] = table;
 }
 
 std::shared_ptr<const GreedyMiniTable>
-MinimizerScanner::shared_gm_table(const std::string &filename,
-                                  GmAlphabet alphabet) {
-  const std::string key = gm_cache_key(filename, alphabet);
+MinimizerScanner::shared_gm_table(const std::string &filename) {
+  const std::string &key = filename;
   std::lock_guard<std::mutex> lock(gm_table_cache_mu);
   auto it = gm_table_cache.find(key);
   if (it != gm_table_cache.end()) {
@@ -105,10 +99,10 @@ MinimizerScanner::shared_gm_table(const std::string &filename,
   }
   std::shared_ptr<const GreedyMiniTable> loaded;
   try {
-    loaded = load_gm_table(filename, alphabet);
+    loaded = load_gm_table(filename);
   } catch (const std::exception &ex) {
-    errx(EX_DATAERR, "GreedyMini table '%s' (alphabet=%s): %s",
-         filename.c_str(), gm_alphabet_name(alphabet), ex.what());
+    errx(EX_DATAERR, "GreedyMini table '%s': %s",
+         filename.c_str(), ex.what());
   }
   if (!loaded || loaded->empty())
     return nullptr;
@@ -122,20 +116,18 @@ void MinimizerScanner::embed_gm_table(
     std::shared_ptr<const GreedyMiniTable> table) {
   if (!table || table->empty())
     errx(EX_DATAERR, "cannot embed empty GreedyMini rank table");
-  const GmAlphabet alphabet = table->alphabet();
   const string dest_path = gm_k2d_path(hashtable_filename);
-  register_shared_gm_table(source_path, table, alphabet);
+  register_shared_gm_table(source_path, table);
   if (!same_gm_file(source_path, dest_path)) {
     write_gm_file(dest_path, gm_table_to_raw(*table));
-    register_shared_gm_table(dest_path, table, alphabet);
+    register_shared_gm_table(dest_path, table);
     std::cerr << "GreedyMini rank table written to " << dest_path
-              << " (alphabet=" << gm_alphabet_name(alphabet)
-              << ", gm_k=" << table->gm_k()
+              << " (gm_k=" << table->gm_k()
               << ", UHS=" << table->uhs_size()
               << "/" << table->size() << ")" << std::endl;
   }
   else {
-    register_shared_gm_table(dest_path, table, alphabet);
+    register_shared_gm_table(dest_path, table);
     std::cerr << "GreedyMini rank table already at " << dest_path << std::endl;
   }
 }
@@ -154,17 +146,14 @@ void MinimizerScanner::init_ranker(
   cfg.revcom_version = revcom_version_;
   cfg.greedy_mini_filename = greedy_mini_filename;
   cfg.gm_table = gm_table;
-  cfg.gm_alphabet =
-      gm_table ? gm_table->alphabet() : GmAlphabet::BINARY;
 
   if (order_ == Order::GM && !cfg.gm_table) {
     if (greedy_mini_filename.empty())
       errx(EX_USAGE, "GreedyMini order requires a rank file (.gm)");
-    cfg.gm_table = shared_gm_table(greedy_mini_filename, cfg.gm_alphabet);
+    cfg.gm_table = shared_gm_table(greedy_mini_filename);
     if (!cfg.gm_table || cfg.gm_table->empty())
       errx(EX_NOINPUT, "failed to load GreedyMini rank file: %s",
            greedy_mini_filename.c_str());
-    cfg.gm_alphabet = cfg.gm_table->alphabet();
   }
 
   if (sketching_ == SketchingScheme::MOD) {
@@ -184,6 +173,25 @@ void MinimizerScanner::init_ranker(
   } catch (const std::exception &ex) {
     errx(EX_DATAERR, "%s", ex.what());
   }
+  gm_rf_ = nullptr;
+  gm_ = nullptr;
+  if (order_ == Order::GM && dna_) {
+    gm_ = dynamic_cast<GMRanker *>(ranker_.get());
+    if (gm_ && gm_->rank_first()) {
+      sigma_mask_ = gm_->sigma_mask();
+      SetRankFirst(true, kDefaultRollSigma);
+    }
+  }
+}
+
+// Test / benchmark hook: rank_first = false takes the Rank() path (full packed
+// value of every l-mer, the reference behaviour); roll_sigma = true keeps the
+// Sigma plane by one shift per base instead of one pext per l-mer. All
+// combinations select the same minimizers. No-op unless the ranker supports
+// rank-first comparison (GM centre order, revcom version 1).
+void MinimizerScanner::SetRankFirst(bool rank_first, bool roll_sigma) {
+  gm_rf_ = (gm_ && gm_->rank_first() && rank_first) ? gm_ : nullptr;
+  roll_sigma_ = gm_rf_ && roll_sigma;
 }
 
 MinimizerScanner::MinimizerScanner(ssize_t k, ssize_t l,
@@ -275,6 +283,13 @@ MinimizerScanner::MinimizerScanner(ssize_t k, ssize_t l,
   }
 
   init_ranker(greedy_mini_filename, gm_table);
+  if (sketching_ == SketchingScheme::MOD && mod_sampler_)
+    scan_kind_ = kScanMod;
+#if !defined(KRAKEN2_MINIMIZER_BENCHMARK)
+  else if (sketching_ == SketchingScheme::MINIMIZER &&
+           order_ == Order::RANDOM_XOR && dna_)
+    scan_kind_ = kScanXor;
+#endif
 }
 
 void MinimizerScanner::ComputeModStreamOrigins(
@@ -307,11 +322,13 @@ void MinimizerScanner::LoadSequence(const string &seq, size_t start,
   if ((ssize_t) (finish_ - start_) + 1 < l_)  // Invalidate scanner if interval < 1 l-mer
     str_pos_ = finish_;
   queue_.clear();
+  xq_.clear();
   queue_pos_ = 0;
   loaded_ch_ = 0;
   last_minimizer_ = ~0;
   last_ambig_ = 0;
   lmer_ = 0;
+  sigma_ = 0;
   seq_pos_ = 0;
   stream_origin_ = 0;
   if (ranker_)
@@ -332,7 +349,7 @@ void MinimizerScanner::LoadSequence(const string &seq, size_t start,
   }
 }
 
-uint64_t *MinimizerScanner::NextMinimizerMod() {
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerMod() {
   if (str_pos_ >= finish_)
     return nullptr;
 
@@ -395,7 +412,97 @@ uint64_t *MinimizerScanner::NextMinimizerMod() {
   }
 }
 
-uint64_t *MinimizerScanner::NextMinimizer() {
+// Pop the queue back while it is worse than the l-mer lmer_ with table rank
+// `rank` (the leftmost minimum stays on ties). Equal finite ranks compare the
+// full packed values, which is what Rank() would have returned; infinite
+// ranks are all equal.
+void MinimizerScanner::PopDominatedRankFirst(uint64_t rank) {
+  uint64_t value = 0;
+  bool have_value = false;
+  while (! queue_.empty()) {
+    const uint64_t back = queue_.back().rank;
+#if defined(KRAKEN2_MINIMIZER_BENCHMARK)
+    rank_cmp_++;
+#endif
+    if (back < rank)
+      break;
+    if (back == rank) {
+      if (rank == GMRanker::kInfRank)
+        break;
+#if defined(KRAKEN2_MINIMIZER_BENCHMARK)
+      tie_cmp_++;
+#endif
+      if (! have_value) {
+        value = gm_rf_->value(lmer_);
+        have_value = true;
+      }
+      if (gm_rf_->value(queue_.back().candidate) <= value)
+        break;
+    }
+    queue_.pop_back();
+  }
+}
+
+// Default path (Minimizer sketching, RandomXor order, DNA): the original
+// Kraken 2 scan loop (16-byte queue elements, no virtual ranker call, no GM
+// or Mod bookkeeping). Returns exactly what the general loop below returns.
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerXor() {
+  if (str_pos_ >= finish_)
+    return nullptr;
+  bool changed_minimizer = false;
+  while (! changed_minimizer) {
+    if (loaded_ch_ == l_)
+      loaded_ch_--;
+    while (loaded_ch_ < l_ && str_pos_ < finish_) {
+      loaded_ch_++;
+      lmer_ <<= BITS_PER_CHAR_DNA;
+      last_ambig_ <<= BITS_PER_CHAR_DNA;
+      auto lookup_code = lookup_table_[ (int) (*str_)[str_pos_++] ];
+      if (lookup_code == UINT8_MAX) {
+        xq_.clear();
+        queue_pos_ = 0;
+        lmer_ = 0;
+        loaded_ch_ = 0;
+        last_ambig_ |= (1u << BITS_PER_CHAR_DNA) - 1;
+      }
+      else
+        lmer_ |= lookup_code;
+      lmer_ &= lmer_mask_;
+      last_ambig_ &= lmer_mask_;
+      if ((str_pos_ - start_) >= (size_t) k_ && loaded_ch_ < l_)
+        return &last_minimizer_;
+    }
+    if (loaded_ch_ < l_)
+      return nullptr;
+    uint64_t canonical_lmer = canonical_representation(lmer_, l_);
+    if (spaced_seed_mask_)
+      canonical_lmer &= spaced_seed_mask_;
+    uint64_t candidate_lmer = canonical_lmer ^ toggle_mask_;
+    if (k_ == l_) {
+      last_minimizer_ = canonical_lmer;
+      return &last_minimizer_;
+    }
+    while (! xq_.empty() && xq_.back().candidate > candidate_lmer)
+      xq_.pop_back();
+    XorMinimizerData data = { candidate_lmer, queue_pos_ };
+    if (xq_.empty() && queue_pos_ >= k_ - l_)
+      changed_minimizer = true;
+    xq_.push_back(data);
+    if (xq_.front().pos < queue_pos_ - k_ + l_) {
+      xq_.pop_front();
+      changed_minimizer = true;
+    }
+    if (queue_pos_ == k_ - l_)
+      changed_minimizer = true;
+    queue_pos_++;
+    if (str_pos_ >= (size_t) k_)
+      break;
+  }
+  last_minimizer_ = xq_.front().candidate ^ toggle_mask_;
+  return &last_minimizer_;
+}
+
+__attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
   if (sketching_ == SketchingScheme::MOD && mod_sampler_)
     return NextMinimizerMod();
   if (str_pos_ >= finish_)  // Abort if we've exhausted string interval
@@ -419,6 +526,7 @@ uint64_t *MinimizerScanner::NextMinimizer() {
         queue_.clear();
         queue_pos_ = 0;
         lmer_ = 0;
+        sigma_ = 0;
         loaded_ch_ = 0;
         last_ambig_ |= ambig_code;
         seq_pos_ = 0;
@@ -427,6 +535,9 @@ uint64_t *MinimizerScanner::NextMinimizer() {
       }
       else {
         lmer_ |= lookup_code;
+        if (roll_sigma_)
+          sigma_ = gm_centre::roll_in_low(sigma_, gm_rf_->sigma_bit(lookup_code),
+                                          sigma_mask_);
         seq_pos_++;
       }
       lmer_ &= lmer_mask_;
@@ -469,13 +580,22 @@ uint64_t *MinimizerScanner::NextMinimizer() {
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
     const uint64_t t_rank0 = nm_rdtsc();
 #endif
-    uint64_t rank = ranker_->Rank(rank_arg);
+    // GM centre order, rank first: the rank is one table load of the Sigma
+    // plane (rolled, or one pext of lmer_); the full packed value is only
+    // computed when a finite rank ties with the back of the queue.
+    const uint64_t rank =
+        gm_rf_ ? gm_rf_->rank_of_sigma(roll_sigma_ ? sigma_
+                                                    : gm_rf_->sigma_of(lmer_))
+               : ranker_->Rank(rank_arg);
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
     const uint64_t t_rank1 = nm_rdtsc();
     const uint64_t t_deq0 = t_rank1;
 #endif
-    while (! queue_.empty() && queue_.back().rank > rank)
-      queue_.pop_back();
+    if (gm_rf_)
+      PopDominatedRankFirst(rank);
+    else
+      while (! queue_.empty() && queue_.back().rank > rank)
+        queue_.pop_back();
     MinimizerData data = { rank, candidate, queue_pos_ };
     if (queue_.empty() && queue_pos_ >= k_ - l_) {
       // Empty queue means front will change

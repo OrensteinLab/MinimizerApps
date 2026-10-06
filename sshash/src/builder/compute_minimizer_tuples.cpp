@@ -1,7 +1,6 @@
 #include "include/util.hpp"
 #include "include/kmer_iterator.hpp"
 #include "include/minimizer_iterator.hpp"
-#include "include/mod_minimizer_iterator.hpp"
 
 namespace sshash {
 
@@ -45,79 +44,71 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
             kmer_iterator<Kmer, bits::bit_vector::builder> kmer_it(strings_builder, k);
             hasher_type hasher(build_config.seed);
-            /* O_t (ranks t-mers) for mod-minimizer, O_m (ranks m-mers) for the
-               classic scheme -- see dictionary_builder::build's own hasher
-               configuration for the same choice. */
-            const uint64_t hasher_l = build_config.mod_minimizer ? build_config.t : m;
-            hasher.configure(build_config.order, hasher_l, build_config.greedy_mini_filename,
-                             build_config.gm_alphabet);
-            minimizer_iterator<Kmer> minimizer_it(k, m, hasher);
-            mod_minimizer_iterator<Kmer> mod_minimizer_it(k, m, build_config.t, hasher);
+            hasher.configure(build_config.order, m, build_config.greedy_mini_filename,
+                             build_config.gm_proj);
 
-            for (uint64_t i = index_begin; i < index_end; ++i)  //
-            {
-                const uint64_t begin = strings_offsets_builder[i];
-                const uint64_t end = strings_offsets_builder[i + 1];
-                const uint64_t sequence_len = end - begin;
-                assert(sequence_len >= k);
+            /* the body is instantiated per order (see dispatch_order) */
+            auto compute = [&](auto mode) {
+                order_minimizer_iterator<Kmer, decltype(mode)::value> minimizer_it(k, m, hasher);
 
-                minimizer_info prev_mini_info;
-                assert(prev_mini_info.minimizer == constants::invalid_uint64);
-                uint64_t num_kmers_in_super_kmer = 0;
+                for (uint64_t i = index_begin; i < index_end; ++i)  //
+                {
+                    const uint64_t begin = strings_offsets_builder[i];
+                    const uint64_t end = strings_offsets_builder[i + 1];
+                    const uint64_t sequence_len = end - begin;
+                    assert(sequence_len >= k);
 
-                kmer_it.at(Kmer::bits_per_char * begin);
-                minimizer_it.set_position(begin);
-                mod_minimizer_it.set_position(begin);
+                    minimizer_info prev_mini_info;
+                    assert(prev_mini_info.minimizer == constants::invalid_uint64);
+                    uint64_t num_kmers_in_super_kmer = 0;
 
-                for (uint64_t j = 0; j != sequence_len - k + 1; ++j) {
-                    auto uint_kmer = kmer_it.get();
-                    minimizer_info mini_info;
-                    if (build_config.mod_minimizer) {
-                        /* "Regular parsing" (see util::compute_mod_minimizer_single_strand's doc
-                           comment): keep whichever single strand the unitig was actually walked
-                           in, no reverse-complement combination -- Lookup's two-probe fallback
-                           (dictionary::lookup) handles the other orientation at query time.
-                           mod_minimizer_it computes the same thing incrementally (amortized O(1)
-                           vs the brute-force O(k-t+1) reference; see its own doc comment). */
-                        mini_info = mod_minimizer_it.next(uint_kmer);
-                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
-                    } else if (build_config.regular_parsing) {
-                        /* Comparison mode: same shape as mod-minimizer's regular
-                           parsing above, but for a classical order. */
-                        mini_info = util::compute_minimizer_single_strand(uint_kmer, k, m, hasher);
-                        mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
-                    } else {
-                        mini_info = minimizer_it.next(uint_kmer);
-                    }
-                    assert(mini_info.pos_in_seq < end - m + 1);
-                    assert(mini_info.pos_in_kmer < k - m + 1);
+                    kmer_it.at(Kmer::bits_per_char * begin);
+                    minimizer_it.set_position(begin);
 
-                    mini_info.pos_in_seq =
-                        strings_offsets_builder.encode(mini_info.pos_in_seq, begin, i);
+                    for (uint64_t j = 0; j != sequence_len - k + 1; ++j) {
+                        auto uint_kmer = kmer_it.get();
+                        minimizer_info mini_info;
+                        if (build_config.regular_parsing) {
+                            /* "Regular parsing": keep whichever single strand the unitig was
+                               actually walked in, no reverse-complement combination --
+                               dictionary::lookup's two-probe fallback handles the other
+                               orientation at query time. */
+                            mini_info = util::compute_minimizer_single_strand(uint_kmer, k, m, hasher);
+                            mini_info.pos_in_seq = begin + j + mini_info.pos_in_kmer;
+                        } else {
+                            mini_info = minimizer_it.next(uint_kmer);
+                        }
+                        assert(mini_info.pos_in_seq < end - m + 1);
+                        assert(mini_info.pos_in_kmer < k - m + 1);
 
-                    if (prev_mini_info.minimizer == constants::invalid_uint64) {
-                        prev_mini_info = mini_info;
-                    }
+                        mini_info.pos_in_seq =
+                            strings_offsets_builder.encode(mini_info.pos_in_seq, begin, i);
 
-                    /*
-                        The minimizer's value is the canonical m-mer at the
-                        anchored locus, hence a function of `pos_in_seq` alone:
-                        comparing positions is enough to detect a super-kmer
-                        break, no need to also compare values.
-                    */
-                    if (mini_info.pos_in_seq != prev_mini_info.pos_in_seq)  //
-                    {
-                        save(prev_mini_info, num_kmers_in_super_kmer);
-                        prev_mini_info = mini_info;
-                        num_kmers_in_super_kmer = 0;
+                        if (prev_mini_info.minimizer == constants::invalid_uint64) {
+                            prev_mini_info = mini_info;
+                        }
+
+                        /*
+                            The minimizer's value is the canonical m-mer at the
+                            anchored locus, hence a function of `pos_in_seq` alone:
+                            comparing positions is enough to detect a super-kmer
+                            break, no need to also compare values.
+                        */
+                        if (mini_info.pos_in_seq != prev_mini_info.pos_in_seq)  //
+                        {
+                            save(prev_mini_info, num_kmers_in_super_kmer);
+                            prev_mini_info = mini_info;
+                            num_kmers_in_super_kmer = 0;
+                        }
+
+                        num_kmers_in_super_kmer += 1;
+                        kmer_it.next();
                     }
 
-                    num_kmers_in_super_kmer += 1;
-                    kmer_it.next();
+                    save(prev_mini_info, num_kmers_in_super_kmer);
                 }
-
-                save(prev_mini_info, num_kmers_in_super_kmer);
-            }
+            };
+            dispatch_order(hasher.mode(), compute);
 
             /* flush leftover */
             if (!buffer.empty()) minimizers.sort_and_flush(buffer);

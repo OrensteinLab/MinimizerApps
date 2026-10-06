@@ -140,13 +140,12 @@ shared implementation.
 ./sshash build -i FILE -k 31 -m 21 -O xor-hash -s SEED ...
 ./sshash build -i FILE -k 31 -m 21 -O xor-pcg-hash -s SEED ...
 ./sshash build -i FILE -k 31 -m 21 -O greedymini \
-    --greedy-mini-file ../orders/GreedyMini/w11_k15_canonical.gm [--gm-alphabet binary|dna] ...
-
-# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024): any base order as O_t
-./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-xor-hash --t-length 10 -s SEED ...
+    --greedy-mini-file ../orders/GreedyMini/w11_k13_canonical.gm \
+    [--gm-projection at0-cg1|at1-cg0] ...    # DNA->binary polarity
+./sshash build -i FILE -k 31 -m 21 -O native --regular ...   # two-probe "regular parsing"
 ```
 
-The chosen order (and, for `greedymini`/`mod-minimizer-greedymini`, the rank
+The chosen order (and, for `greedymini`, the rank
 table itself) is embedded in the serialized `.sshash` index, so
 `query`/`check`/`bench` reconstruct it automatically from `-i` alone -- no
 sidecar files or extra flags needed.
@@ -155,19 +154,62 @@ sidecar files or extra flags needed.
 `Kmer::max_m` -- 32 for the 2-bit DNA alphabet this fork always builds with,
 see `include/kmer.hpp`); `include/constants.hpp`'s `min_l`/`max_l` are
 unrelated -- they size the skew index's bucket-size partitioning, not `m`.
-See [`../orders/README.md`](../orders/README.md#mod-minimizer) for mod-minimizer
-itself: it's an orthogonal option on top of the 4 orders above, not a 5th
-mode, and the only one of these that falls back to sshash's older "regular
-parsing" construction/lookup (single-strand build, two-probe query) instead
-of its newer single-probe "canonical parsing" -- see that section for why.
+`--regular` switches any order to sshash's older "regular parsing" construction/lookup
+(single-strand build, two-probe query) instead of the default single-probe "canonical
+parsing".
 
-**NOTE**: this fork always builds with
-`-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` (the default in
-`CMakeLists.txt` is flipped from upstream's `Off`), so its 2-bit packing
-matches the shared minimizer-order implementation. This also changes the
-`native` order's own on-disk character mapping from vanilla upstream's
-default, so **indexes built by this fork are not binary-compatible with
-indexes built by unmodified upstream `sshash`**, and vice versa.
+*GreedyMini order.* An explicit canonical
+(mirror-symmetric) table of `gm_k`-mers is extended to the m-mer by its centre: view the
+m-mer as `xyz`, `|x| = |z| = i = (m - gm_k) / 2`, `|y| = gm_k`; rank by `rank[Sigma(y)]`
+(Sigma = the {A,T} vs {C,G} bit of each base; one table probe, strand invariant because
+the table is mirror symmetric and `rc` maps `y` to its mirror), break ties by
+`min(Sigma(xyz), reverse(Sigma(xyz)))` and then by the Gamma plane, which keeps `hash()`
+injective on canonical m-mers. This needs `m - gm_k` even (at `m = 21`: the `k13` and `k15`
+tables, i.e. odd `gm_k`), `16 + 2m <= 63` and a mirror-symmetric table; all are checked and
+rejected with a clear error. Expected density on i.i.d. DNA at `m = 21, w = 11`: 1.592 (k13)
+and 1.524 (k15). `--gm-projection` flips the Sigma polarity. Older
+indexes are refused.
+
+`build --verbose --bucket-stats` additionally prints the bucket-size and super-k-mer histograms
+(off by default; the benchmark harness passes it to fill its histogram sheets).
+
+*Implementation note (no CLI/format change beyond the above).* `hash(x) == hash(rc(x))`, so
+the minimizer code (`strand_invariant_minimizer_iterator`, `util::compute_minimizer`, ...)
+hashes the *raw* forward m-mer and builds the canonical m-mer value only for a locus that
+becomes the minimum (the order is a compile-time parameter of the hot paths -- `minimizer_iterator<Kmer, Mode>`,
+`streaming_query<Dict, Mode>`, `util::compute_minimizer_for<Mode>`, the builder's loop --
+selected once by `dispatch_order`, so the native order compiles to upstream's multiply and xor
+with the magic precomputed, and xor-hash/xor-pcg-hash to a xor and a PCG scramble). A hash is
+`(rank, tie-break)` with the rank in its top bits, so windows with different ranks are ordered
+by their ranks alone: `hash()` is computed from the Sigma/Gamma bit planes of the m-mer and of
+its reverse complement (`hash_from_planes`; two `pext` and one bit reversal), but the code
+that scans windows needs only `centre_rank` (one table load from the Sigma plane of the whole
+k-mer) and takes full hashes only of windows that share the minimum rank. The streaming
+iterator rolls the Sigma plane one base per call, keeps the window ranks in a ring (each rank
+stored twice so a window set is contiguous; a re-scan takes the minimum 8 ranks at a time
+with SSE4.1), and requires either consecutive one-base slides or a `reset()`/`set_position()`
+before the first k-mer of a read or string. `util::compute_minimizer` (used by `lookup`) is
+rank-first too. `custom_order_hasher.hpp` keeps the slow per-base `hash_reference()` and
+`util.hpp` the all-windows `compute_minimizer_reference()`; `test/test_gm_centre.cpp`
+(fast == reference == independent string implementation == Python-reference vectors,
+rc-invariance, injectivity, rejections) and `test/test_gm_rolling.cpp` (ranks, rolling,
+iterator vs the pre-ring iterator, `compute_minimizer` vs the reference, tie-heavy synthetic
+tables) check all of this. For `--regular` indexes the streaming query applies Algorithm 2's
+early return: a k-mer whose forward and reverse-complement minimizers equal those of the last
+probed k-mer, whose minimizers were not in the index, is negative without a lookup. Only the
+binary-alphabet GreedyMini tables (`2^gm_k` entries) are supported; the
+DNA-alphabet tables of kmc are not. The on-disk version is 13.
+
+**NOTE**: GreedyMini works on sshash's default nucleotide encoding (A=00, C=01, G=11, T=10):
+Sigma is bit 0 of a base, Gamma is bit 1, and complementing flips bit 1 only. Its hash of a
+window depends on the base sequence alone, so it equals the one computed on the ACGT = 0123
+packing of the shared implementation (`common/minimizer-orders/greedymini_rank.h`); only
+the numeric tie-break between a k-mer-window and its reverse complement (the canonical m-mer
+value) depends on the packing. `-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` is still
+accepted for the native and xor orders but `-O greedymini` is then refused at configuration.
+With the default encoding the `native` order builds the same index as vanilla upstream
+`sshash` (apart from the version and the fields this fork adds to the serialized hasher and
+dictionary).
 
 Dependencies
 ------------
@@ -253,10 +295,12 @@ if your queries are to be read from a (multi-line) FASTA file.
     ./sshash query -i salmonella_100.sshash -q ../data/queries/SRR5833294.10K.fastq.gz
 
 A k-mer and its reverse complement are always both found, and there is no
-`--canonical` flag to choose. For every order except `mod-minimizer-*`, a
+`--canonical` flag to choose. A
 lookup costs a single bucket probe and reports, in `kmer_orientation`, which
-of the two was found; a `mod-minimizer-*` index costs up to two probes in the
-worst case instead (see [`../orders/README.md`](../orders/README.md#mod-minimizer)).
+of the two was found; a `--regular` index costs up to two probes in the worst case instead.
+Streaming queries (`sshash query`) extend along the stored string after each
+hit for every order, so the two-probe cost of `--regular` is paid only on the k-mers that
+are not an extension of the previous one.
 
 The query above should originate the following report (reported here for reference):
 

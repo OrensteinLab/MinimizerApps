@@ -1,8 +1,8 @@
 # minimap2 benchmark harness
 
-Compares minimap2's minimizer orders (native, xor-hash, xor-pcg-hash,
-greedymini, and mod-minimizer-{xor-hash,pcg-xor-hash} -- no
-mod-minimizer-greedymini here, unlike kraken2/sshash; see
+Compares minimap2's minimizer orders (native, xor, xor-pcg-hash,
+greedymini, greedymini-at1 -- greedymini with the flipped AT/CG projection,
+`--gm-projection at1-cg0` -- and mod-minimizer-xor; see
 [`orders/README.md`](../../orders/README.md)) the way Jain et al. 2020
 ("Weighted minimizer sampling improves long read mapping" -- Winnowmap,
 Bioinformatics 36(Supp_1):i111-i118) evaluated Winnowmap's weighted
@@ -107,7 +107,7 @@ never clobbered by `.env`.
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
 | `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
-| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`; no `mod-minimizer-greedymini`, see below); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`) |
+| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`, `greedymini-at1`) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
@@ -150,20 +150,17 @@ reverse-complement symmetric (the two t-mer offsets under strand reversal
 sum to a fixed constant, but reducing each mod `w` independently doesn't
 generally land on mirrored l-mer slots). Measured directly (build an index
 from a 3kb real-genome sequence, query with its own reverse complement):
-mod-minimizer-xor-hash shared only 4 of 140 minimizer keys between the two
-strands, versus ~90%+ for xor-hash/native/greedymini, which use per-locus
-canonical parsing and don't have this issue. This is the same property
-`orders/README.md`'s "mod-minimizer" section already documents sshash
-working around with a dual-probe/"regular parsing" fallback -- **not yet
-ported to minimap2**. It has little visible effect at `w=10` (there's
+mod-minimizer-xor shared only 4 of 140 minimizer keys between the two
+strands, versus ~90%+ for xor/native/greedymini, which use per-locus
+canonical parsing and don't have this issue. sshash's (since removed)
+mod-minimizer worked around this with a dual-probe/"regular parsing"
+fallback -- **not ported to minimap2**. It has little visible effect at `w=10` (there's
 enough redundant minimizer coverage that mapping still mostly succeeds); a
 sparser, still-in-regime setting (larger `k`, same `w`) could expose it
 more. **Treat every mod-minimizer-\* result as provisional** until that
 fallback is ported.
 
-Two now-fixed bugs in `minimap2/order.cpp`'s `sketch_mod_minimizer` (see
-that file's git history for the exact fixes and brute-force cross-checks):
-a tie-break that compared `(residue - window_start) % w` instead of the
-true (unreduced) t-mer offset -- wrong on any rank tie, and ties are common
-with xor-hash's weak avalanche -- and a per-residue deque capacity formula
-that could silently overflow its fixed-size backing array for large `w`.
+`minimap2/order.cpp`'s `sketch_mod_minimizer` uses kraken2's single
+monotone deque over all live t-mers; `minimap2/validate_mod_minimizer.py`
+(run by `make -C minimap2 test`) checks the compiled sketch against a brute
+force, including N gaps and palindromic k-mers.

@@ -137,40 +137,40 @@ assert LOWER_IS_BETTER | HIGHER_IS_BETTER == set(SUMMARY_METRICS)
 assert not (LOWER_IS_BETTER & HIGHER_IS_BETTER)
 
 ORDER_SORT = [
-    "native", "xor-hash", "xor-pcg-hash", "greedymini",
-    "mod-minimizer-xor-hash", "mod-minimizer-pcg-xor-hash",
+    "native", "xor", "xor-pcg-hash", "greedymini", "greedymini-at1",
+    "mod-minimizer-xor",
 ]
 
 # t-mer length for mod-minimizer's inner order O_t; fixed at 5 throughout
 # this benchmark (see orders/README.md's r=4 formula: t=r+(k-r)%w=5 for
 # k=15,w=10) -- not tracked per-row in summary_rows, so kept here instead of
 # threading mod_t through that function just for the 'orders' sheet's sake.
-_ORDER_T = {"mod-minimizer-xor-hash": 5, "mod-minimizer-pcg-xor-hash": 5}
+_ORDER_T = {"mod-minimizer-xor": 5}
 
 ORDER_DESCRIPTIONS = {
     "native": {
         "description": "minimap2's own unmodified baseline order (mm_hash64-based)",
         "cli": "(no --minimizer-order)",
     },
-    "xor-hash": {
+    "xor": {
         "description": "XOR the k-mer with the seed, then rank canonically",
-        "cli": "--minimizer-order xor-hash --order-seed SEED",
+        "cli": "--minimizer-order xor --order-seed SEED",
     },
     "xor-pcg-hash": {
-        "description": "xor-hash's XOR step, then PCG RXS-M-XS 64-bit scramble before ranking",
+        "description": "xor's XOR step, then PCG RXS-M-XS 64-bit scramble before ranking",
         "cli": "--minimizer-order xor-pcg-hash --order-seed SEED",
     },
     "greedymini": {
         "description": "Ranks k-mers by the precomputed GreedyMini w10_k15 rank table (binary alphabet, dual-orientation projection, no Extend-k)",
         "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/w10_k15_canonical.gm",
     },
-    "mod-minimizer-xor-hash": {
-        "description": "Mod-minimizer (WABI 2024): ranks t-mers by xor-hash, samples the k-mer at the winning t-mer's position mod w",
-        "cli": "--minimizer-order mod-minimizer-xor-hash --order-seed SEED --mod-t 5",
+    "greedymini-at1": {
+        "description": "greedymini with the flipped DNA -> binary projection (A,T -> 1, C,G -> 0: every table key complemented), as sshash's --gm-projection at1-cg0",
+        "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/w10_k15_canonical.gm --gm-projection at1-cg0",
     },
-    "mod-minimizer-pcg-xor-hash": {
-        "description": "Mod-minimizer: ranks t-mers by xor-pcg-hash, samples the k-mer at the winning t-mer's position mod w",
-        "cli": "--minimizer-order mod-minimizer-pcg-xor-hash --order-seed SEED --mod-t 5",
+    "mod-minimizer-xor": {
+        "description": "Mod-minimizer (WABI 2024): ranks t-mers by xor, samples the k-mer at the winning t-mer's position mod w",
+        "cli": "--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t 5",
     },
 }
 
@@ -568,10 +568,10 @@ def overview_rows() -> list[dict]:
         row("all", "dataset", "chm13_chrX = Winnowmap's D1 (CHM13 chrX v0.7), grch38_wg = Winnowmap's D2 (GRCh38 whole genome); both with PBSIM2-simulated PacBio reads (see datasets sheet)"),
         row("all", "k / w", "minimizer k-mer length and window size (k=15, w=10 -- minimap2's own map-pb/map-ont default window); HPC (homopolymer-compressed) k-mers on via -x map-pb"),
         row("summary/runs", "mid_occ_cap", "map-time repeat-filter condition: 'default' = minimap2 picks mid_occ itself per index; a number = fixed with -f <N> for every order (set to native's own default value, so all orders filter repeats by the same rule). Each (dataset, mid_occ_cap) is its own block: own native baseline, divider, correlation rows"),
-        row("all", "order", "minimizer order: native (minimap2's own hash) | xor-hash | xor-pcg-hash | greedymini | mod-minimizer-xor-hash | mod-minimizer-pcg-xor-hash -- see orders sheet"),
+        row("all", "order", "minimizer order: native (minimap2's own hash) | xor | xor-pcg-hash | greedymini | greedymini-at1 (flipped AT/CG projection) | mod-minimizer-xor -- see orders sheet"),
         row("runs", "mod_t", "t-mer length of mod-minimizer's inner order (5); blank for non-mod orders, merged across each order's seeds"),
-        row("runs", "seed / seed_idx", "order seed (XOR key / PCG tiebreak) and its index in config.yaml's shared seed list; native and greedymini are seed-independent, so run once (seed_idx 0)"),
-        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini, 5 otherwise)"),
+        row("runs", "seed / seed_idx", "order seed (XOR key) and its index in config.yaml's shared seed list; native and greedymini(-at1) are seed-independent, so run once (seed_idx 0)"),
+        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini/greedymini-at1, 5 otherwise)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "simulated reads in the dataset / of those, reads whose true origin overlaps repeats.bed (D1: centromeric DXZ1 array; D2: a chr9 segmental duplication pair)"),
         # --- density
         row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_hpc_kmers. -x map-pb turns on HPC, so minimap2 picks minimizers over homopolymer-compressed k-mers -- same scale as expected_density_factor; 1 = theoretical minimum, ~2 = random order"),
