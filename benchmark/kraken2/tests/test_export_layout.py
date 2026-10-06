@@ -6,6 +6,7 @@ multi-library merge, on synthetic per-run numbers (no database needed).
 
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -88,6 +89,15 @@ def make_library(base, lib, datasets):
     if not os.path.isdir(run_root):
         os.makedirs(run_root)
     ps, acc = [], {}
+    # fake hash.k2d headers (capacity, size, key_bits, value_bits): size = 1000 * (order index + 1)
+    for oi, order in enumerate(ORDERS):
+        for sd in (1, 2, 3):
+            d = os.path.join(run_root, order, str(sd), "db")
+            if not os.path.isdir(d):
+                os.makedirs(d)
+            with open(os.path.join(d, "hash.k2d"), "wb") as f:
+                f.write(struct.pack("<4Q", 5000, 1000 * (oi + 1) + sd, 18, 14))
+                f.write(b"\0" * 64)
     for ds in datasets:
         ps += per_seed(lib, ds)
         kind = {"strain-exclusion": "labeled", "fda-argos": "argos", "cami": "cami", "mock": "mock"}.get(ds)
@@ -152,7 +162,103 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(sorted(r["order"] for r in build), sorted(SHORT))
         for sheet in ("classify", "classify_runs"):
             for f in tables[sheet][0]:
-                self.assertFalse(f.startswith(("build_", "expected_", "particular_", "rank_")), (sheet, f))
+                self.assertFalse(f.startswith(("build_", "index_size", "rank_")), (sheet, f))
+
+    def test_column_order_density_first(self):
+        run_root, (xlsx, tdir, tables) = self.lib()
+        ids = {"build": 3, "build_runs": 5, "classify": 5, "classify_runs": 7}
+        for sheet in ("build", "build_runs", "classify", "classify_runs"):
+            fields = tables[sheet][0]
+            i = ids[sheet]
+            names = [f.replace("_mean", "") for f in fields[i:] if not f.endswith(("_std", "_ratio"))]
+            self.assertEqual(names[:3], ["expected_density_factor", "particular_density_factor", "distinct_minimizers"], sheet)
+            if sheet.startswith("build"):
+                self.assertEqual(names[3:6], ["index_size_gb", "build_wall_s", "build_max_rss_gb"])
+            else:
+                self.assertEqual(names[3], "classify_wall_s")
+            cats = E._categories(sheet, fields)
+            self.assertEqual(cats[fields.index(fields[i])], "density")
+            self.assertIn("minimizers", cats)
+        # classify_runs carries the per-seed order properties joined by seed
+        runs = tables["classify_runs"][1]
+        r = [x for x in runs if x["order"] == "greedymini" and x["seed_idx"] == 2][0]
+        self.assertEqual(r["distinct_minimizers"], 3002)
+        self.assertEqual(tables["orders"][0][-4:-2], ["expected_density_factor_mean", "expected_density_factor_std"])
+
+    def test_distinct_minimizers_header(self):
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, "xor", "1", "db"))
+            p = os.path.join(d, "xor", "1", "db", "hash.k2d")
+            with open(p, "wb") as f:
+                f.write(struct.pack("<4Q", 10, 7, 18, 14) + b"x" * 100)
+            self.assertEqual(E._distinct_minimizers(d, "xor", 1), 7)
+            self.assertIsNone(E._distinct_minimizers(d, "xor", 2))          # no db
+            with open(p, "wb") as f:
+                f.write(b"short")
+            self.assertIsNone(E._distinct_minimizers(d, "xor", 1))           # truncated header
+            self.assertIsNone(E._distinct_minimizers(None, "xor", 1))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_distinct_minimizers_columns(self):
+        run_root, (xlsx, tdir, tables) = self.lib()
+        build = dict((r["order"], r) for r in tables["build"][1])
+        self.assertAlmostEqual(build["xor"]["distinct_minimizers_mean"], 1002.0)
+        self.assertEqual(build["xor"]["distinct_minimizers_ratio"], 1.0)
+        self.assertAlmostEqual(build["greedymini"]["distinct_minimizers_ratio"], round(3002 / 1002, 4))
+        self.assertIn("distinct_minimizers_ratio", tables["classify"][0])
+        spec = E.sheet_spec("build", tables["build"][0], tables["build"][1])
+        self.assertEqual(spec["ratio_fields"]["distinct_minimizers_ratio"], "lower")
+
+    def test_correlation_rows(self):
+        run_root, (xlsx, tdir, tables) = self.lib()
+        import zipfile
+        for sheet in ("build", "classify"):
+            fields, rows = tables[sheet]
+            footer, flat = E.correlation_rows(sheet, fields, rows)
+            self.assertEqual([f["label"].split(" (")[0] for f in footer],
+                             ["correlation with density", "correlation with distinct minimizers"])
+            n = len(rows)
+            dcol = E.col_letter(fields.index("particular_density_factor_ratio") + 1)
+            cells = dict((f, (fm, cv)) for f, fm, cv in footer[0]["cells"])
+            self.assertEqual(set(cells), set(f for f in fields if f.endswith("_ratio")))
+            fm, cv = cells["particular_density_factor_ratio"]
+            self.assertEqual(fm, 'IFERROR(CORREL($%s$3:$%s$%d,%s$3:%s$%d),"")' % (dcol, dcol, n + 2, dcol, dcol, n + 2))
+            self.assertEqual(cv, 1.0)
+            # cached value: Pearson r over the pairs where both cells are numbers
+            col = "distinct_minimizers_ratio"
+            pairs = [(r["particular_density_factor_ratio"], r[col]) for r in rows
+                     if r.get("particular_density_factor_ratio") is not None and r.get(col) is not None]
+            self.assertAlmostEqual(cells[col][1], round(E._pearson([a for a, _ in pairs], [b for _, b in pairs]), 4), places=4)
+            for fr in flat:
+                self.assertEqual(fr["sheet"], sheet)
+        self.assertIn("(n = 4)", E.correlation_rows("build", *tables["build"])[0][0]["label"])
+        # blanks are skipped pairwise; constant column -> no value
+        fields = ["library", "particular_density_factor_ratio", "x_ratio", "y_ratio"]
+        rows = [{"particular_density_factor_ratio": 1.0, "x_ratio": 1.0, "y_ratio": 2.0},
+                {"particular_density_factor_ratio": 2.0, "x_ratio": None, "y_ratio": 2.0},
+                {"particular_density_factor_ratio": 3.0, "x_ratio": 3.0, "y_ratio": 2.0},
+                {"particular_density_factor_ratio": 4.0, "x_ratio": 4.0, "y_ratio": 2.0}]
+        _f, flat = E.correlation_rows("classify", fields, rows)
+        v = dict((r["column"], r) for r in flat if r["row_label"] == "correlation with density")
+        self.assertEqual(v["x_ratio"]["n"], 3)
+        self.assertAlmostEqual(v["x_ratio"]["value"], 1.0)
+        self.assertIsNone(v["y_ratio"]["value"])
+        # workbook XML: formula + cached value; csv mirror has data only + correlations csv
+        z = zipfile.ZipFile(xlsx)
+        names = list(load_xlsx(xlsx))
+        sheetxml = z.read("xl/worksheets/sheet%d.xml" % (names.index("build") + 1)).decode()
+        self.assertIn("CORREL($", sheetxml)
+        self.assertIn("<v>1.0</v>", sheetxml.split("CORREL(")[1])
+        self.assertEqual(check_xlsx(xlsx), [])
+        with open(os.path.join(tdir, "kraken2_build.csv")) as f:
+            self.assertNotIn("correlation", f.read())
+        crows = E.read_csv(os.path.join(tdir, "kraken2_correlations.csv"))[1]
+        self.assertTrue(crows)
+        self.assertEqual(set(r["sheet"] for r in crows), set(["build", "classify"]))
+        self.assertEqual(set(E.read_csv(os.path.join(tdir, "kraken2_correlations.csv"))[0]),
+                         set(E.CORREL_FIELDS))
 
     def test_classify_and_classify_runs(self):
         run_root, (xlsx, tdir, tables) = self.lib()

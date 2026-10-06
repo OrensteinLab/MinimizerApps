@@ -62,8 +62,8 @@ for _p in (HERE, _COMMON):
         sys.path.insert(0, _p)
 
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
-from xlsx_book import write_book  # noqa: E402
-from xlsx_util import write_csv  # noqa: E402
+from xlsx_book import write_book, DATA_START_ROW  # noqa: E402
+from xlsx_util import write_csv, col_letter  # noqa: E402
 
 PREFIX = "kraken2_"
 WORKBOOK = "kraken2_results.xlsx"
@@ -288,6 +288,8 @@ CAT_ID = "id / params"
 CAT_BUILD = "build"
 CAT_DENSITY = "density"
 CAT_CLASSIFY = "classify"
+CAT_MINIMIZERS = "minimizers"
+CAT_SPACE = "space"
 CAT_PROFILE = "profile"
 CAT_VSREF = "vs reference"
 
@@ -300,13 +302,17 @@ BAND_ARGOS = "accuracy: fda-argos (real, genus concordance)"
 BAND_MOCK = "accuracy: mock (real, known composition)"
 ACC_BANDS = (BAND_READ, BAND_CAMI, BAND_ARGOS, BAND_MOCK)
 
+# Column groups in the SSHash order: id / params, density, minimizers, space, build.
 BUILD_METRICS = [
+    ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from tables/minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
+    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d). This is the density column the correlation rows of `build` / `classify` use", "lower", None),
+    ("distinct_minimizers", CAT_MINIMIZERS, "number of distinct minimizers (keys) in the built database = the `size` field of the 32-byte hash.k2d header (read without loading the table). A lower density gives fewer distinct minimizers", "lower", None),
+    ("index_size_gb", CAT_SPACE, "size of the built hash table (db/hash.k2d) in GB; blank when the db is not on disk", "lower", None),
     ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
     ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS (GB)", "lower", "build_gb"),
-    ("index_size_gb", CAT_BUILD, "size of the built hash table (db/hash.k2d) in GB; blank when the db is not on disk", "lower", None),
-    ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from tables/minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
-    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d)", "lower", None),
 ]
+# build properties repeated (per order and seed) on classify / classify_runs
+ORDER_PROPS = ["expected_density_factor", "particular_density_factor", "distinct_minimizers"]
 CLASSIFY_METRICS = [
     ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s) of the single classify run of this seed (/usr/bin/time -v): database load + processing. classify: mean over seeds", "lower", "class_s"),
     ("db_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_processing_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
@@ -401,14 +407,14 @@ for _c in ACC_COLS:
     METRIC_DIR[_c["name"]] = _c["dir"]
     METRIC_CAT[_c["name"]] = _c["band"]
 BUILD_NAMES = [m[0] for m in BUILD_METRICS]
-SUMMARY_NAMES = [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
+SUMMARY_NAMES = ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
 PROFILE_NAMES = [m[0] for m in PROFILE_METRICS]
 VSREF_NAMES = [m[0] for m in VSREF_METRICS]
-SUMMARY_CATS = (CAT_CLASSIFY,) + ACC_BANDS
+SUMMARY_CATS = (CAT_DENSITY, CAT_MINIMIZERS, CAT_CLASSIFY) + ACC_BANDS
 
 
 def runs_field_order():
-    return (RUN_ID_FIELDS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
+    return (RUN_ID_FIELDS + ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
             + [c["name"] for c in ACC_COLS])
 
 
@@ -434,7 +440,7 @@ def summary_field_order():
 
 
 def build_field_order():
-    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_BUILD, CAT_DENSITY))
+    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_DENSITY, CAT_MINIMIZERS, CAT_SPACE, CAT_BUILD))
 
 
 def profile_field_order():
@@ -496,6 +502,22 @@ def _index_size_gb(run_root, order, seed_idx):
         return None
 
 
+def _distinct_minimizers(run_root, order, seed_idx):
+    """`size` of the hash.k2d header (4 little-endian uint64: capacity, size,
+    key_bits, value_bits), read from the first 32 bytes only."""
+    if not run_root:
+        return None
+    p = os.path.join(run_root, order, str(seed_idx), "db", "hash.k2d")
+    try:
+        with open(p, "rb") as f:
+            head = f.read(32)
+        if len(head) < 32:
+            return None
+        return struct.unpack("<4Q", head)[1]
+    except (IOError, OSError, struct.error):
+        return None
+
+
 def order_map(per_seed_rows, acc_rows):
     """{run directory name: display name} for every order of one library."""
     longs = [split_context(r.get("context"))[1] for r in per_seed_rows]
@@ -527,7 +549,7 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             idx[key][kind].append(r)
     rfields = runs_field_order()
     runs, builds, prof, vsr = [], [], [], []
-    seen_build = set()
+    build_cache = {}
     for row in per_seed_rows:
         _lib, long_order, _ = split_context(row.get("context"))
         order = omap.get(long_order, short_order(long_order))   # display name; paths use long_order
@@ -538,7 +560,26 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             ("run_id", "%s/%s/%s" % (library, order, seed_idx)), ("library", library),
             ("dataset", ds), ("minimum_hit_groups", mhg), ("order", order), ("seed_idx", seed_idx),
             ("seed", _seed_hex(row.get("seed")))])
+        # build row: one per (order, seed), whatever the number of datasets / minimum_hit_groups
+        if (order, seed_idx) not in build_cache:
+            b = OrderedDict((f, ident.get(f)) for f in build_runs_field_order())
+            for m in BUILD_METRICS:
+                if m[4]:
+                    b[m[0]] = clean_value(row.get(m[4]))
+            b["distinct_minimizers"] = _distinct_minimizers(run_root, long_order, seed_idx)
+            b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
+            # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
+            d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
+                 or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
+            if d:
+                b["expected_density_factor"] = clean_value(d.get("fac_expected"))
+                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
+            build_cache[(order, seed_idx)] = b
+            builds.append(b)
+        b = build_cache[(order, seed_idx)]
         out = OrderedDict((f, ident.get(f)) for f in rfields)
+        for name in ORDER_PROPS:
+            out[name] = b.get(name)
         for m in CLASSIFY_METRICS:
             out[m[0]] = clean_value(row.get(m[4]))
         for m in RUN_ONLY:
@@ -549,21 +590,6 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             if sel:
                 out[c["name"]] = clean_value(_detail_pick(picked, sel, ds))
         runs.append(out)
-        # build: one row per (order, seed), whatever the number of datasets
-        if (order, seed_idx) not in seen_build:
-            seen_build.add((order, seed_idx))
-            b = OrderedDict((f, ident.get(f)) for f in build_runs_field_order())
-            for m in BUILD_METRICS:
-                if m[4]:
-                    b[m[0]] = clean_value(row.get(m[4]))
-            b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
-            # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
-            d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
-                 or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
-            if d:
-                b["expected_density_factor"] = clean_value(d.get("fac_expected"))
-                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
-            builds.append(b)
         for names, dest in ((PROFILE_METRICS, prof), (VSREF_METRICS, vsr)):
             o2 = OrderedDict((f, ident.get(f)) for f in RUN_ID_FIELDS)
             for m in names:
@@ -1172,6 +1198,8 @@ COMMON_DOC = [
     ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant, Bray-Curtis, off-target) or higher is better (speed, sensitivity, PPV, F1, concordant, taxa F1). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
     ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
     ("classify/classify_runs", "classify", "classify_wall_s / db_load_s / classify_processing_s", "one classify run per cell: wall = database load + processing. db_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; db_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
+    ("build/build_runs/classify/classify_runs", "column order", "column groups", "as in the SSHash summary sheet: id / params, then density (expected, particular density factor), minimizers (distinct_minimizers), space (index_size_gb, build / build_runs only), build (build_wall_s, build_max_rss_gb; build / build_runs only), then on classify / classify_runs the classify measures and the accuracy groups. The density and minimizer columns come first because they are what the correlation rows below the data use"),
+    ("build/classify", "correlation", "correlation with density / correlation with distinct minimizers (rows under the data)", "two rows right under the data, as in the SSHash summary sheet: in every `*_ratio` column a live formula IFERROR(CORREL(<reference ratio column>, <this ratio column>), \"\") with absolute ranges over all data rows (cached value stored next to it). Reference columns: particular_density_factor_ratio (the density factor measured on the benchmark library; the SSHash sheet uses its density_factor_ratio) and distinct_minimizers_ratio. Ratios are against xor within the same block, so correlating over all rows is meaningful. `build` has one row per order, so its correlations rest on n = 5 points (the n is in the row label); in `classify` the density and distinct-minimizer values repeat for every dataset / minimum_hit_groups block of the same order, so the effective number of independent points is the number of orders (5), not the number of rows. The values (and the number of pairs used) are also in kraken2_correlations.csv (columns sheet, row_label, column, value, n); the sheet CSVs themselves hold data only"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
     ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching (minimizer | mod-minimizer), the --order it ranks by (xor | xor-pcg | greedymini), the GreedyMini table (gm_table, e.g. w5_k15_canonical for greedymini and w5_k6_canonical for mod-minimizer-greedymini; blank for the xor orders) and a one-line description"),
     ("orders", "density", "expected_density_factor_mean / _std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density microbenchmark rows of the order (tables/minimizer_density.csv; independent of the library; blank for orders without density rows)"),
@@ -1214,7 +1242,9 @@ def overview_rows():
     for sheet, cat, col, meaning in COMMON_DOC:
         add(sheet, cat, col, meaning)
     for name, cat, meaning, _dir, _src in BUILD_METRICS:
-        add("build/build_runs", cat, name, meaning)
+        add("build/build_runs/classify/classify_runs" if name in ORDER_PROPS else "build/build_runs",
+            cat, name, meaning + (" (an order property: the same value repeats on every dataset / minimum_hit_groups row of the order in `classify` / `classify_runs`)"
+                                  if name in ORDER_PROPS else ""))
     for name, cat, meaning, _dir, _src in CLASSIFY_METRICS:
         add("classify/classify_runs", cat, name, meaning)
     for name, cat, meaning, _src in RUN_ONLY:
@@ -1418,8 +1448,68 @@ def sheet_spec(name, fields, rows):
     return spec
 
 
+# ---- correlation rows under the data of `build` and `classify` (as SSHash's summary sheet)
+CORREL_SHEETS = ("build", "classify")
+CORREL_DENSITY = "particular_density_factor_ratio"
+CORREL_MINIMIZERS = "distinct_minimizers_ratio"
+CORREL_ROWS = (("correlation with density", CORREL_DENSITY),
+               ("correlation with distinct minimizers", CORREL_MINIMIZERS))
+CORREL_FIELDS = ["sheet", "row_label", "column", "value", "n"]
+
+
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / float(n), sum(ys) / float(n)
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if dx == 0 or dy == 0:
+        return None
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (dx * dy)
+
+
+def correlation_rows(name, fields, rows):
+    """(footer rows for the sheet, rows of kraken2_correlations.csv). One footer row
+    per reference column (particular density ratio, distinct minimizers ratio);
+    each `*_ratio` column of the sheet gets IFERROR(CORREL(ref, column), "") with
+    absolute ranges over the data rows and the python value (pairs where both
+    cells are numbers) as cached value."""
+    if name not in CORREL_SHEETS or not rows:
+        return [], []
+    first, last = DATA_START_ROW, DATA_START_ROW + len(rows) - 1
+    footer, flat = [], []
+    for label, ref in CORREL_ROWS:
+        if ref not in fields:
+            continue
+        rl = col_letter(fields.index(ref) + 1)
+        cells = []
+        shown = label if name != "build" else "%s (n = %d)" % (label, len(rows))
+        for f in fields:
+            if not f.endswith("_ratio"):
+                continue
+            cl = col_letter(fields.index(f) + 1)
+            pairs = [(r.get(ref), r.get(f)) for r in rows if _num(r.get(ref)) and _num(r.get(f))]
+            val = _pearson([a for a, _b in pairs], [b for _a, b in pairs])
+            val = round(val, 4) if val is not None else None
+            formula = 'IFERROR(CORREL($%s$%d:$%s$%d,%s$%d:%s$%d),"")' % (rl, first, rl, last, cl, first, cl, last)
+            cells.append((f, formula, val))
+            flat.append(OrderedDict([("sheet", name), ("row_label", label), ("column", f),
+                                     ("value", val), ("n", len(pairs))]))
+        footer.append({"label": shown, "cells": cells})
+    return footer, flat
+
+
 def build_sheet_specs(tables):
-    return [sheet_spec(name, tables[name][0], tables[name][1]) for name in SHEETS if name in tables]
+    specs = []
+    for name in SHEETS:
+        if name in tables:
+            spec = sheet_spec(name, tables[name][0], tables[name][1])
+            footer, _flat = correlation_rows(name, tables[name][0], tables[name][1])
+            if footer:
+                spec["footer_rows"] = footer
+            specs.append(spec)
+    return specs
 
 
 def write_outputs(tables, csv_dir, xlsx_path):
@@ -1427,7 +1517,13 @@ def write_outputs(tables, csv_dir, xlsx_path):
     files of sheets that no longer exist (e.g. profile when no timing files) are removed."""
     for name, (fields, rows) in tables.items():
         write_csv(os.path.join(csv_dir, PREFIX + name + ".csv"), fields, rows)
-    keep = set(PREFIX + n + ".csv" for n in tables)
+    flat = []
+    for name in CORREL_SHEETS:
+        if name in tables:
+            flat += correlation_rows(name, tables[name][0], tables[name][1])[1]
+    if flat:
+        write_csv(os.path.join(csv_dir, PREFIX + "correlations.csv"), CORREL_FIELDS, flat)
+    keep = set(PREFIX + n + ".csv" for n in tables) | set([PREFIX + "correlations.csv"] if flat else [])
     for f in os.listdir(csv_dir):
         if f.startswith(PREFIX) and f.endswith(".csv") and f not in keep:
             try:

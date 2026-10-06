@@ -285,14 +285,25 @@ results/                             # all libraries merged
   | `libraries` | one per Kraken library: sequences, taxa, FASTA GB, role, query sets and orders run |
   | `datasets` | one per query set: reads, read length, `truth` (simulated / real), `scoring`, provenance, libraries |
   | `orders` | one per scheme/order: CLI, density factors (`expected_density_factor_mean/_std`, and per library `<library>_particular_density_factor_mean/_std`; also on `build`), `gm_table` (`w5_k15_canonical` / `w5_k6_canonical`), l / k / w, spaced seed. Orders are shown by short name (`greedymini`, `mod-minimizer-greedymini`; the table is in `gm_table`) |
-  | `build` | library × order, mean / std / ratio over seeds: `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `particular_density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
+  | `build` | library × order, mean / std / ratio over seeds, columns in the SSHash order (id / params, density, minimizers, space, build): `expected_density_factor`, `particular_density_factor`, `distinct_minimizers` (the `size` field of the `hash.k2d` header), then `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `particular_density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
   | `build_runs` | the per-seed rows behind `build` (same split as `summary` / `runs` in the sshash / kmc apps) |
-  | `classify` | library × dataset × `minimum_hit_groups` × order, classify phase only: `classify_wall_s` (= `db_load_s` + `classify_processing_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
+  | `classify` | library × dataset × `minimum_hit_groups` × order, classify phase only; right after the identity columns the order's density factors and `distinct_minimizers` (repeated for every dataset / `minimum_hit_groups` block), then the classify columns: `classify_wall_s` (= `db_load_s` + `classify_processing_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
   | `classify_runs` | one per seed × library × dataset × order, the rows behind `classify`: the raw numbers of the single classify run of that seed |
   | `profile` | NextMinimizer / phase profile (`nextminimizer_*`, `lookups_per_mbp`, `scan_s`, ...; needs `ENABLE_MINIMIZER_PROF=1`), library × dataset × `minimum_hit_groups` × order, mean / std / ratio; only present when `nextminimizer_timing_<dataset>_mhg<m>.txt` files exist (PROF builds) |
   | `vs_reference` | paired agreement with `xor` of the same seed, dataset and `minimum_hit_groups` (`genus_mape_pct`, `concordance_pct`, `jaccard_pct`, ...), mean / std |
   | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami`, `accuracy_mock` | accuracy of that dataset per slice (`minimum_hit_groups` × domain × rank / SRA run / group / detection threshold): one row per order, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to `xor` of the same slice; sorted dataset → `minimum_hit_groups` → slice → order, slice cells merged, border between slices. Higher-is-better ratios: sensitivity, ppv, f1, concordant, taxa precision / recall / F1; lower: discordant, bray_curtis, l1_distance, off_target; neutral (no ratio): ancestor, unclassified, excluded, classified / above-rank fractions, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics_mhg<m>.tsv`). Omitted when the dataset did not run |
   | `paper_check` | paper equivalence for `xor` at `minimum_hit_groups` 0 on the `strain_exclusion` library: our strain-exclusion genus sensitivity / PPV / F1 (prokaryote, virus; Table S1) and FDA-ARGOS genus concordant / discordant / ancestor / unclassified (unweighted mean over experiments; Table S5) next to the published Kraken 2 values (`tables/paper_kraken2_published.csv`, derived from `table_s1.csv` and `table_s5_kraken2_expected.csv`), `difference` and `within_tolerance` (absolute tolerance 0.01, `PAPER_TOLERANCE` in `export_layout.py`). Also `kraken2_paper_check.csv`. Differences are reported as they are |
+
+  Under the data of `build` and `classify` two rows, as in the SSHash summary
+  sheet: `correlation with density` and `correlation with distinct minimizers`.
+  Every `*_ratio` column holds a live `IFERROR(CORREL(<reference ratio column>,
+  <this column>),"")` over all data rows (reference: `particular_density_factor_ratio`
+  resp. `distinct_minimizers_ratio`), with the computed value cached next to the
+  formula. `build` has 5 rows (n = 5, in the label); in `classify` the density
+  and minimizer values repeat per dataset / `minimum_hit_groups` block, so the
+  number of independent points is the number of orders. The CSVs hold data only;
+  the values are in `kraken2_correlations.csv` (`sheet, row_label, column,
+  value, n`).
 
   Accuracy columns have no dataset prefix because each `classify` / `classify_runs` row is
   one dataset. The kinds differ and are not comparable across datasets (never
