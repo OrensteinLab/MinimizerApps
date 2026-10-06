@@ -1,0 +1,11 @@
+taxid,name,domain,genus_taxid,genus_name,gdna_pct,genome_copy_pct,cell_pct,strain
+287,Pseudomonas aeruginosa,bacteria,286,Pseudomonas,12,6.1,6.1,NRRL B-3509
+562,Escherichia coli,bacteria,561,Escherichia,12,8.5,8.5,NRRL B-1109
+28901,Salmonella enterica,bacteria,590,Salmonella,12,8.7,8.8,NRRL B-4212
+1613,Lactobacillus fermentum,bacteria,2742598,Limosilactobacillus,12,21.6,21.9,NRRL B-1840
+1351,Enterococcus faecalis,bacteria,1350,Enterococcus,12,14.6,14.6,NRRL B-537
+1280,Staphylococcus aureus,bacteria,1279,Staphylococcus,12,15.2,15.3,NRRL B-41012
+1639,Listeria monocytogenes,bacteria,1637,Listeria,12,13.9,13.9,NRRL B-33116
+1423,Bacillus subtilis,bacteria,1386,Bacillus,12,10.3,10.3,NRRL B-354
+4932,Saccharomyces cerevisiae,eukaryote,4930,Saccharomyces,2,0.57,0.29,NRRL Y-567
+5207,Cryptococcus neoformans,eukaryote,5206,Cryptococcus,2,0.37,0.18,NRRL Y-2534

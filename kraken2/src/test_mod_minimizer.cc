@@ -5,6 +5,7 @@
 #include "dna_kmer.h"
 #include "mmscanner.h"
 #include "mod_minimizer.h"
+#include "utilities.h"
 
 #include <deque>
 #include <cstdint>
@@ -729,10 +730,11 @@ static uint64_t pack_dna_lmer(const std::string &s, size_t pos, int l) {
 // GM ranks the raw ℓ-mer (gm_k orientation); the returned hash key is DNA-lex.
 static void test_gm_scanner_rank_raw_key_canonical() {
   std::vector<uint64_t> raw(16, 16);
+  // mirror-symmetric (canonical): ranks shared by a key and its mirror
   raw[0] = 0;
-  raw[1] = 1;
-  raw[2] = 2;
-  raw[5] = 3;
+  raw[1] = raw[8] = 1;
+  raw[2] = raw[4] = 2;
+  raw[5] = raw[10] = 3;
   auto table = std::make_shared<const GreedyMiniTable>(raw);
   const int k = 10, l = 6;
   const uint64_t lmer_mask = (1ULL << (2 * l)) - 1ULL;
@@ -774,10 +776,11 @@ static void test_gm_scanner_rank_raw_key_canonical() {
 
 static std::shared_ptr<const GreedyMiniTable> synthetic_gm_k4() {
   std::vector<uint64_t> raw(16, 16);
+  // mirror-symmetric (canonical): ranks shared by a key and its mirror
   raw[0] = 0;
-  raw[1] = 1;
-  raw[2] = 2;
-  raw[5] = 3;
+  raw[1] = raw[8] = 1;
+  raw[2] = raw[4] = 2;
+  raw[5] = raw[10] = 3;
   return std::make_shared<const GreedyMiniTable>(raw);
 }
 
@@ -855,6 +858,97 @@ static void test_gm_scanner_spaced_seed() {
     }
   }
   check(differ, "GM spaced mask changes some hash keys");
+}
+
+// Rank-first scanning (compare table ranks, full packed values only on equal
+// finite ranks; Sigma plane pext'd or rolled) must select exactly the
+// minimizers of the Rank() path. Random mirror-symmetric tables with many
+// equal and infinite ranks, centre extension l = gm_k + 2i, with and without
+// (also non-base-aligned) spaced seeds, sequences with N and low complexity.
+static std::shared_ptr<const GreedyMiniTable> random_symmetric_table(
+    int gm_k, std::mt19937_64 &rng) {
+  const size_t n = (size_t)1 << gm_k;
+  std::vector<uint64_t> raw(n, n);
+  uint64_t next_rank = 0;
+  for (size_t key = 0; key < n; key++) {
+    const size_t mir = (size_t)gm_centre::mirror_key((uint32_t)key, gm_k);
+    if (mir < key || raw[key] != n || (rng() & 3ULL) == 0)
+      continue;
+    raw[key] = raw[mir] = next_rank++;
+  }
+  return std::make_shared<const GreedyMiniTable>(raw);
+}
+
+static std::vector<uint64_t> scan_all(MinimizerScanner &sc,
+                                      const std::vector<std::string> &seqs) {
+  std::vector<uint64_t> out;
+  for (const std::string &seq : seqs) {
+    sc.LoadSequence(seq);
+    while (uint64_t *mm = sc.NextMinimizer())
+      out.push_back(sc.is_ambiguous() ? ~0ULL : *mm);
+    sc.LoadSequence(seq, 3, seq.size() > 20 ? seq.size() - 7 : seq.size());
+    while (uint64_t *mm = sc.NextMinimizer())
+      out.push_back(sc.is_ambiguous() ? ~0ULL : *mm);
+  }
+  return out;
+}
+
+static void test_gm_rank_first_matches_rank_path() {
+  std::mt19937_64 rng(99);
+  std::vector<std::string> seqs;
+  const char *bases = "ACGT";
+  for (int i = 0; i < 30; i++) {
+    std::string s;
+    const size_t n = (i < 4) ? (size_t)(rng() % 40) : 100 + rng() % 600;
+    for (size_t j = 0; j < n; j++) {
+      uint64_t r = rng();
+      char c = bases[r & 3ULL];
+      if (i % 3 == 1 && (r >> 8) % 40 == 0)
+        c = 'N';
+      if (i % 3 == 2)
+        c = bases[(r & 3ULL) & ((r >> 5) % 3 ? 1ULL : 3ULL)];
+      s.push_back(c);
+    }
+    seqs.push_back(s);
+  }
+  seqs.push_back(std::string(200, 'A'));
+  seqs.push_back("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT");
+
+  for (int gm_k : {4, 6, 9}) {
+    for (int trial = 0; trial < 3; trial++) {
+      auto table = random_symmetric_table(gm_k, rng);
+      for (int l = gm_k; l <= 31; l += 2) {
+        const int k = l + 1 + (int)(rng() % 6);
+        if (k > 31 + 8)
+          continue;
+        const uint64_t lmer_mask = (l >= 32) ? ~0ULL : ((1ULL << (2 * l)) - 1);
+        for (int mode = 0; mode < 3; mode++) {
+          uint64_t mask = 0;
+          if (mode == 1)
+            mask = MakeSpacedSeedMask(l, l / 4, 2);
+          else if (mode == 2)
+            mask = rng() & lmer_mask;  // not aligned to bases
+          const uint64_t toggle = (trial == 0) ? 0 : rng();
+          for (int revcom : {1, 0}) {
+            MinimizerScanner sc(k, l, mask, true, toggle, revcom,
+                                SketchingScheme::MINIMIZER, Order::GM, "",
+                                table);
+            sc.SetRankFirst(false);
+            const auto ref = scan_all(sc, seqs);
+            sc.SetRankFirst(true, false);
+            const bool same_pext = (scan_all(sc, seqs) == ref);
+            sc.SetRankFirst(true, true);
+            const bool same_roll = (scan_all(sc, seqs) == ref);
+            check(same_pext && same_roll && !ref.empty(),
+                  "GM rank-first scanner == Rank() scanner");
+            if (!(same_pext && same_roll))
+              std::cerr << "  gm_k=" << gm_k << " l=" << l << " k=" << k
+                        << " mode=" << mode << " revcom=" << revcom << "\n";
+          }
+        }
+      }
+    }
+  }
 }
 
 static void test_gm_scanner_revcom_v0() {
@@ -971,6 +1065,83 @@ static void test_mod_revcom_v0() {
   check(differ, "MOD revcom_version=0 differs from v1");
 }
 
+// The per-base push is specialised on the order / LUT choice; the debug-log
+// path uses the generic runtime-branching code. Both must give the same
+// stream, and the logs must hold the canonical (GM: raw) t-mers and the
+// canonical, spaced-seed-masked l-mers.
+static void test_mod_kinds_and_logs() {
+  std::mt19937_64 rng(77);
+  std::string dna(3000, 'A');
+  const char *bases = "ACGT";
+  for (size_t i = 0; i < dna.size(); i++)
+    dna[i] = bases[rng() & 3ULL];
+  dna[1000] = 'N';
+  struct Cfg { int k, l; Order order; bool gm; uint64_t spaced; int revcom; };
+  const uint64_t smask = 0x3ffffffff3333333ULL;
+  const Cfg cfgs[] = {
+      {35, 31, Order::RANDOM_XOR, false, 0, 1},
+      {35, 31, Order::RANDOM_XOR, false, smask, 1},
+      {35, 31, Order::RANDOM_XOR, false, smask, 0},
+      {35, 31, Order::RANDOM_PCG, false, smask, 1},   // t=6: canonical LUT
+      {40, 31, Order::RANDOM_PCG, false, smask, 1},   // t=11: ranker, no LUT
+      {40, 31, Order::RANDOM_XOR, false, 0, 0},       // t=11 xor, revcom v0
+      {6, 4, Order::GM, true, 0, 1},                  // t=4: raw LUT
+      {6, 4, Order::GM, true, 0x3fULL << 2, 1},
+  };
+  for (const Cfg &c : cfgs) {
+    std::shared_ptr<const GreedyMiniTable> table;
+    if (c.gm)
+      table = synthetic_gm_k4();
+    const uint64_t toggle = DEFAULT_TOGGLE_MASK;
+    ModSampler plain(c.k, c.l, 2, toggle, true, c.order, c.revcom, c.spaced,
+                     table);
+    ModSampler logged(c.k, c.l, 2, toggle, true, c.order, c.revcom, c.spaced,
+                      table);
+    std::vector<uint64_t> tlog, llog;
+    logged.SetRankedTmerLog(&tlog);
+    logged.SetRankedLmerLog(&llog);
+    const int t = plain.t();
+    const uint64_t lmask = (1ULL << (2 * c.l)) - 1ULL;
+    std::vector<uint64_t> a, b, exp_t, exp_l;
+    ssize_t seq_pos = 0;
+    uint64_t fwd_t = 0, fwd_l = 0;
+    int loaded = 0;
+    uint64_t la = UINT64_MAX, lb = UINT64_MAX;
+    for (char ch : dna) {
+      const uint8_t code = dna_lut(ch);
+      if (code > 3) {
+        plain.OnAmbiguous();
+        logged.OnAmbiguous();
+        seq_pos = 0;
+        loaded = 0;
+        fwd_t = fwd_l = 0;
+        continue;
+      }
+      seq_pos++;
+      loaded++;
+      fwd_t = ((fwd_t << 2) | code) & ((1ULL << (2 * t)) - 1ULL);
+      fwd_l = ((fwd_l << 2) | code) & lmask;
+      if (loaded >= t)
+        exp_t.push_back(c.gm ? fwd_t
+                             : dna_canonical_representation(fwd_t, (uint8_t)t,
+                                                            c.revcom));
+      if (loaded >= c.l) {
+        uint64_t cl =
+            dna_canonical_representation(fwd_l, (uint8_t)c.l, c.revcom);
+        exp_l.push_back(c.spaced ? (cl & c.spaced & lmask) : cl);
+      }
+      const ssize_t win = seq_pos >= c.k ? seq_pos - c.k : (ssize_t)-1;
+      if (plain.PushAndFinish(code, win, &la))
+        a.push_back(la);
+      if (logged.PushAndFinish(code, win, &lb))
+        b.push_back(lb);
+    }
+    check(!a.empty() && a == b, "kinds: specialised stream == logged stream");
+    check(tlog == exp_t, "kinds: t-mer log");
+    check(llog == exp_l, "kinds: l-mer log");
+  }
+}
+
 int main() {
   const uint64_t toggle = DEFAULT_TOGGLE_MASK;
   std::mt19937_64 rng(7);
@@ -1010,8 +1181,10 @@ int main() {
   test_gm_scanner_rank_raw_key_canonical();
   test_gm_scanner_spaced_seed();
   test_gm_scanner_revcom_v0();
+  test_gm_rank_first_matches_rank_path();
   test_mod_gm_matches_naive();
   test_mod_revcom_v0();
+  test_mod_kinds_and_logs();
 
   if (failures) {
     std::cerr << failures << " failure(s)\n";

@@ -1,30 +1,43 @@
 /*
  * Rankers used by MinimizerScanner: RandomXor, RandomPcg, GreedyMini.
  *
- * GreedyMini Rank() takes a raw ℓ-mer (scanner DNA-lex is only the hash key).
+ * GreedyMini Rank() takes a raw l-mer (scanner DNA-lex is only the hash key).
  *
- * Binary DNA:
- *   1. Remap ACGT→ATCG (MSB = AT/CG Σ, LSB = lex residual Γ)
- *   2. For each DNA strand (fwd and RC):
- *        primary ← table[Σ of first gm_k bases]
- *   3. Orient by the better gm_k UHS primary (finite ≺ ∞, then smaller rank).
- *      On primary tie, break with Extend-k suffix Σ then Γ.
- *   4. Pack ((primary << (ℓ−gm_k) | suffix_σ) << ℓ) | (Γ ^ toggle)
- *      from that strand. Spaced-seed AND is applied independently to each
- *      strand’s word (fwd and RC(raw)); never RC(x & mask).
+ * Binary DNA, l == gm_k (this is also what MOD+GM uses, with l = t = gm_k):
+ *   1. Remap ACGT->ATCG (MSB = AT/CG Sigma, LSB = lex residual Gamma)
+ *   2. primary <- table[Sigma of the l-mer] for each DNA strand (fwd and RC)
+ *   3. Orient by the better primary (finite < infinity, then smaller rank).
+ *      On primary tie, break with Gamma.
+ *   4. Pack (primary << l) | (Gamma ^ toggle) from that strand.
  *
- *   This is “canonical gm_k, then Extend-k / Extend-σ” — not DNA-lex on the
- *   full ℓ-mer (which breaks reverse-symmetric tables when ℓ > gm_k).
+ * Binary DNA, l > gm_k: CENTRE extension (l - gm_k even, mirror-symmetric
+ * table; valid l = gm_k, gm_k+2, ..., 31). The l-mer is x y z with
+ * |x| = |z| = (l - gm_k)/2, |y| = gm_k; the order is table[Sigma(y)], then the
+ * smaller of the two strand frames' Sigma(xyz), then the DNA, packed into one
+ * uint64. Strand invariant, injective on canonical l-mers (no spaced seed),
+ * and it keeps the table's designed density at every valid l. The algorithm
+ * and its proofs/notes live in common/minimizer-orders/greedymini_centre.h;
+ * this file only extracts the Sigma/Gamma planes from kraken2's ACGT encoding
+ * (TwoBitPlanes<true>). The scanner compares table ranks first (rank_first():
+ * Sigma plane + one table load per l-mer) and asks for the full packed value
+ * (value(), what Rank() returns) only when two finite ranks tie.
  *
- *   DNA alphabet (4^gm_k table): same gm_k orientation; pack primary of the
- *   first gm_k bases with the suffix DNA bits in that frame.
- *   BINARY + protein: MSB Σ / residual Γ with same Extend-k pack (no RC).
+ * Spaced seed (if any): the rank lookup always sees the UNMASKED centre (a
+ * mask that reaches into y would cost the table's density; kraken2's default
+ * 7 spaces does at l = 31); each strand's word is ANDed with the mask
+ * (never RC(x & mask)) only for the tie-break fields x, z, Gamma, and the order
+ * is the smaller of the two strands' packed values. As with the old prefix
+ * order, the mask never changes which table entry is looked up.
+ *
+ * Protein keys (and DNA with l == gm_k handled above) keep the original
+ * Extend-k (prefix) rank; kraken2 builds do not use them in practice.
  */
 
 #ifndef KRAKEN2_MINIMIZER_RANKERS_H_
 #define KRAKEN2_MINIMIZER_RANKERS_H_
 
 #include "greedymini_rank.h"
+#include "../../common/minimizer-orders/greedymini_centre.h"
 #include "dna_kmer.h"
 #include "sketching_schemes.h"
 #include "../../common/minimizer-orders/pcg_rxs_m_xs.h"
@@ -33,6 +46,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace kraken2 {
 
@@ -84,33 +98,25 @@ class GMRanker final : public MinimizerRanker {
            int revcom_version = DNA_REVCOM_VERSION)
       : l_(l), bpc_(bpc), gm_k_(0), ext_bits_(0), gamma_bits_(0),
         tb_bits_mask_(0), tb_mask_(0), spaced_mask_(0), key_pext_mask_(0),
-        suffix_pext_mask_(0), tb_pext_mask_(0), alphabet_(GmAlphabet::BINARY),
-        dna_(dna), skip_tb_xor_(true), skip_space_(true),
+        suffix_pext_mask_(0), tb_pext_mask_(0),
+        dna_(dna), centre_(false), sym_(false), skip_tb_xor_(true),
+        skip_space_(true),
         revcom_version_(revcom_version), table_(std::move(table)),
         ranks_ptr_(nullptr) {
     if (!table_ || table_->empty())
       throw std::invalid_argument("GreedyMini ranker requires a non-empty table");
-    alphabet_ = table_->alphabet();
     gm_k_ = table_->gm_k();
     if (gm_k_ > l_)
       throw std::invalid_argument("GreedyMini gm_k exceeds minimizer length l");
-    if (alphabet_ == GmAlphabet::DNA && bpc_ != 2)
-      throw std::invalid_argument(
-          "DNA GreedyMini alphabet requires DNA (2-bit) sequence");
     ranks_ptr_ = table_->data();
 
     // Low-field width below the UHS primary:
-    //   DNA alphabet: 2*(ℓ−gm_k) suffix DNA bits
-    //   Binary:       Extend-k suffix Σ (ℓ−gm_k) + Γ (ℓ·(bpc−1))
-    if (alphabet_ == GmAlphabet::DNA) {
-      ext_bits_ = 0;
-      gamma_bits_ = 2 * (l_ - gm_k_);
-    } else {
-      ext_bits_ = l_ - gm_k_;
-      gamma_bits_ = l_ * (bpc_ - 1);
-    }
-    // uint16 primary << (ext+gamma) must fit in uint64.
-    if (ext_bits_ + gamma_bits_ > 48)
+    //   Extend-k suffix Σ (ℓ−gm_k) + Γ (ℓ·(bpc−1))
+    ext_bits_ = l_ - gm_k_;
+    gamma_bits_ = l_ * (bpc_ - 1);
+    centre_ = (dna_ && l_ > gm_k_);
+    // uint16 primary << (ext+gamma) must fit in uint64 (Extend-k paths).
+    if (!centre_ && ext_bits_ + gamma_bits_ > 48)
       throw std::invalid_argument(
           "GreedyMini tiebreaker width leaves no room to pack primary");
 
@@ -125,6 +131,10 @@ class GMRanker final : public MinimizerRanker {
     key_pext_mask_ = gm_dna_key_pext_mask(l_, gm_k_);
     suffix_pext_mask_ = gm_dna_suffix_sigma_pext_mask(l_, gm_k_);
     tb_pext_mask_ = gm_dna_tb_pext_mask(l_);
+    odd_pext_mask_ = tb_pext_mask_ << 1;
+
+    if (centre_)
+      init_centre();
   }
 
   void Reset() override {}
@@ -134,15 +144,39 @@ class GMRanker final : public MinimizerRanker {
   bool has_uhs_stats() const override { return true; }
 
   uint64_t Rank(uint64_t lmer) override {
-    if (alphabet_ == GmAlphabet::DNA)
-      return rank_dna_alphabet(lmer);
     if (!dna_)
       return rank_binary_protein(lmer);
     return rank_binary_dna(lmer);
   }
 
+  // ---- rank-first interface (centre extension, exact reverse complement) ----
+  // The order is (table rank, tie-break fields); the rank is one table load
+  // from the Sigma plane of the UNMASKED l-mer (also with a spaced seed, and
+  // strand invariant), so a scanner can compare ranks and ask for the full
+  // value() only when two ranks are equal and finite. Infinite ranks all tie
+  // (their value is UINT64_MAX): no value needed.
+  bool rank_first() const { return centre_ && revcom_version_ == 1; }
+  // Sigma plane of an ACGT l-mer word; the scanner may instead roll it
+  // (sigma_bit / roll_in_low) one base per step.
+  uint64_t sigma_of(uint64_t lmer) const { return planes_.sigma(lmer); }
+  uint64_t sigma_bit(uint64_t base_code) const {
+    return planes_.base_sigma(base_code);
+  }
+  uint64_t sigma_mask() const { return planes_.mask(); }
+  enum : uint64_t { kInfRank = GreedyMiniTable::kInfRank };
+  uint64_t rank_of_sigma(uint64_t sigma) {
+    const uint64_t r = centre_order_.rank_of_sigma(sigma);
+    if (r == kInfRank)
+      stats_.non_uhs++;
+    else
+      stats_.uhs++;
+    return r;
+  }
+  // The full packed value of an l-mer (what Rank() returns), no statistics.
+  uint64_t value(uint64_t lmer) const { return rank_centre(lmer); }
+
   int gm_k() const { return gm_k_; }
-  GmAlphabet alphabet() const { return alphabet_; }
+  bool centre_extension() const { return centre_; }
   uint32_t uhs_size() const { return table_->uhs_size(); }
 
  private:
@@ -175,6 +209,56 @@ class GMRanker final : public MinimizerRanker {
     return r;
   }
 
+  // ---- centre extension (binary DNA, l > gm_k): see greedymini_centre.h ----
+
+  void init_centre() {
+    // Validates l - gm_k even, mirror symmetry, rank sharing and packed width.
+    centre_order_ = gm_centre::Order(table_, l_, tb_mask_);
+    planes_ = gm_centre::TwoBitPlanes<true>(l_);
+    // Unmasked + exact reverse complement: the rc strand's planes come from
+    // bit reversals of this strand's and share its rank.
+    sym_ = skip_space_ && revcom_version_ == 1;
+    // A mask that keeps or drops whole bases (every expanded kraken2 mask)
+    // acts on the ACGT word directly; any other mask acts on the ATCG remap.
+    const uint64_t evens = 0x5555555555555555ULL;
+    mask_whole_bases_ = ((spaced_mask_ & evens) << 1) == (spaced_mask_ & ~evens);
+  }
+
+  // Planes of one strand word, l bits each, first base in the highest bit:
+  // Sigma (AT/CG) of the unmasked word (rank lookup), and Sigma / Gamma of the
+  // word with the spaced seed applied (tie-break fields).
+  struct Planes {
+    uint64_t S, Sm, Gm;
+  };
+  Planes planes(uint64_t acgt) const {
+    Planes p;
+    p.S = planes_.sigma(acgt);
+    if (skip_space_) {
+      p.Sm = p.S;
+      p.Gm = planes_.gamma(acgt);
+    } else if (mask_whole_bases_) {
+      const uint64_t m = acgt & spaced_mask_;
+      p.Sm = planes_.sigma(m);
+      p.Gm = planes_.gamma(m);
+    } else {
+      // ATCG: Sigma in the odd bits, Gamma in the even bits
+      const uint64_t atcg_m = gm_acgt_to_atcg(acgt) & spaced_mask_;
+      p.Sm = gm_pext_odd(atcg_m, odd_pext_mask_);
+      p.Gm = gm_pext_even(atcg_m, tb_pext_mask_);
+    }
+    return p;
+  }
+
+  uint64_t rank_centre(uint64_t lmer) const {
+    const Planes a = planes(lmer);
+    if (sym_)
+      return centre_order_.value_of_planes(a.S, a.Gm);
+    const Planes b =
+        planes(dna_reverse_complement(lmer, (uint8_t)l_, revcom_version_));
+    return centre_order_.value_of_two_strands_masked(a.S, a.Sm, a.Gm, b.S,
+                                                      b.Sm, b.Gm);
+  }
+
   // One DNA orientation: gm_k UHS key (+ ATCG word for later Extend-k pack).
   struct StrandView {
     uint16_t primary;
@@ -185,33 +269,9 @@ class GMRanker final : public MinimizerRanker {
     return skip_space_ ? word : (word & spaced_mask_);
   }
 
-  uint64_t pack_dna_alphabet(uint16_t primary, uint64_t word) const {
-    if (primary == GreedyMiniTable::kInfRank)
-      return UINT64_MAX;
-#if defined(__BMI2__)
-    const uint64_t tb = _bzhi_u64(word, (unsigned)gamma_bits_);
-#else
-    const uint64_t tb = word & tb_bits_mask_;
-#endif
-    return ((uint64_t)primary << gamma_bits_) |
-           (skip_tb_xor_ ? tb : (tb ^ tb_mask_));
-  }
-
-  uint64_t rank_dna_alphabet(uint64_t lmer) {
-    const uint64_t a = space(lmer);
-    const uint16_t pa = ranks_ptr_[(uint32_t)(a >> gamma_bits_)];
-    const uint64_t rc =
-        dna_reverse_complement(lmer, (uint8_t)l_, revcom_version_);
-    if (rc == lmer)
-      return record_oriented(pack_dna_alphabet(pa, a));
-    const uint64_t b = space(rc);
-    const uint16_t pb = ranks_ptr_[(uint32_t)(b >> gamma_bits_)];
-    return record_oriented(pick_better_primary(
-        pa, pb, [&] { return pack_dna_alphabet(pa, a); },
-        [&] { return pack_dna_alphabet(pb, b); }));
-  }
-
   uint64_t rank_binary_dna(uint64_t lmer) {
+    if (centre_)
+      return record_oriented(rank_centre(lmer));
     const StrandView a = probe_strand(lmer);
     const uint64_t rc =
         dna_reverse_complement(lmer, (uint8_t)l_, revcom_version_);
@@ -272,16 +332,21 @@ class GMRanker final : public MinimizerRanker {
   int l_;
   int bpc_;
   int gm_k_;
-  int ext_bits_;    // Extend-k Σ suffix width (0 for DNA-alphabet mode)
-  int gamma_bits_;  // Γ / DNA-alphabet suffix width
+  int ext_bits_;    // Extend-k Σ suffix width
+  int gamma_bits_;  // Γ width
   uint64_t tb_bits_mask_;
   uint64_t tb_mask_;
   uint64_t spaced_mask_;
   uint64_t key_pext_mask_;
   uint64_t suffix_pext_mask_;
   uint64_t tb_pext_mask_;
-  GmAlphabet alphabet_;
   bool dna_;
+  bool centre_;
+  bool sym_;
+  gm_centre::Order centre_order_;
+  gm_centre::TwoBitPlanes<true> planes_;
+  uint64_t odd_pext_mask_ = 0;
+  bool mask_whole_bases_ = true;
   bool skip_tb_xor_;
   bool skip_space_;
   int revcom_version_;
@@ -303,7 +368,6 @@ struct RankerConfig {
   uint64_t spaced_seed_mask = 0;
   std::string greedy_mini_filename;
   std::shared_ptr<const GreedyMiniTable> gm_table;
-  GmAlphabet gm_alphabet = GmAlphabet::BINARY;
 };
 
 inline std::unique_ptr<MinimizerRanker>

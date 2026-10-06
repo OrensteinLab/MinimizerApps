@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
         string_ref sr;
         {
             auto raw = load_gm_file_raw(path);
-            GreedyMiniTable t(raw, GmAlphabet::BINARY);
+            GreedyMiniTable t(raw);
             sr.ranks.assign(t.data(), t.data() + t.size());
             sr.gk = t.gm_k();
         }
@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
         make_table(tmp, 14, true, 3);  // symmetric, but m - gm_k = 7 is odd
         if (!throws([&] { h.configure(custom_order_mode::GREEDYMINI, 21, tmp,
                                       gm_projection::AT0_CG1); },
-                    "to be even")) {
+                    "even")) {
             std::cerr << "gm_k = 14 at m=21 must be rejected" << std::endl;
             ++failures;
         }
@@ -302,7 +302,7 @@ int main(int argc, char** argv) {
                 string_ref sr;
                 {
                     auto raw = load_gm_file_raw(tmp);
-                    GreedyMiniTable t(raw, GmAlphabet::BINARY);
+                    GreedyMiniTable t(raw);
                     sr.ranks.assign(t.data(), t.data() + t.size());
                 }
                 sr.l = (int)c.l; sr.gk = c.gk; sr.flip = proj == gm_projection::AT1_CG0; sr.seed = 99;

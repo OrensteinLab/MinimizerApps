@@ -25,7 +25,6 @@ EXPERIMENTS_DIR = Path(__file__).resolve().parent / "experiments"
 RUN_KEYS = (
     "scheme",
     "n_seeds",
-    "n_classify",
     "threads",
     "parallel_jobs",
     "library",
@@ -34,7 +33,6 @@ RUN_KEYS = (
 SHELL_VAR_MAPPING = {
     "scheme": "SCHEME",
     "n_seeds": "N_SEEDS",
-    "n_classify": "N_CLASSIFY",
     "threads": "SCHEME_THREADS",
     "parallel_jobs": "PARALLEL_JOBS",
     "library": "LIBRARY",

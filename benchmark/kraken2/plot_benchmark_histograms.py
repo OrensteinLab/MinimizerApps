@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Plot histogram figures for Kraken 2 scheme benchmark classify timings.
+"""Per-seed summary figures for the Kraken 2 scheme benchmark.
 
-Reads the same run manifest as compare_benchmark.py and writes PNGs:
-  classify_wall_s.png
-  nextmin_s.png
-  nextmin_ns_per_call.png
-  lookup_s.png
-  lookups_per_Mbp.png
-  classify_vs_nextmin.png   (multi-panel summary)
+Every (scheme, seed, dataset, minimum-hit-groups) cell is classified exactly
+once, so there are no timing histograms over repeats: the replicates are the
+seeds. Reads the same run manifest as compare_benchmark.py and writes PNGs, each
+one a grid (rows = --minimum-hit-groups, columns = dataset) with one dot per
+seed and a bar at the mean over seeds, per scheme:
 
-Cold runs (classification_performance_cold.txt / nextminimizer_timing_cold.txt)
-are excluded — only timed *_NN.txt repeats are plotted.
+  classify_processing_s.png   classification time without the database load
+  db_load_s.png               database load time (wall - processing)
+  classify_wall_s.png         stacked mean: database load + processing
+  classify_max_rss_gb.png     classify peak RSS
+  fda-argos_genus_concordance.png   Table S5 genus concordant / discordant /
+                              ancestor / unclassified (mean over seeds), one panel per
+                              minimum-hit-groups
+and, only when nextminimizer_timing_<dataset>_mhg<m>.txt files exist (classify
+built with ENABLE_MINIMIZER_PROF=1):
+  nextmin_s.png, nextmin_ns_per_call.png, lookup_s.png, lookups_per_Mbp.png
 
-Invoked automatically by run_benchmark.sh after compare.
+Invoked automatically by run_benchmark.sh after compare. matplotlib only.
 
 Usage:
-  ./plot_benchmark_histograms.py --base-dir /path/to/benchmark
-  ./plot_benchmark_histograms.py --base-dir ... --out-dir .../figures --bins 20
+  ./plot_benchmark_histograms.py --base-dir /path/to/benchmark/runs/<library>
+  ./plot_benchmark_histograms.py --base-dir ... --out-dir .../figures
 """
 
 from __future__ import print_function
@@ -31,69 +37,58 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from compare_benchmark import (  # noqa: E402
+    DATASET_ORDER,
     SCHEME_ORDER,
-    discover_classify_datasets,
-    list_classify_time_files,
-    list_nextmin_timing_files,
+    discover_classify_cells,
     load_accuracy_sheets,
     load_manifest,
     mean_std,
+    nextmin_path,
     parse_nextmin_timing_file,
+    parse_processing_s,
     parse_time_file,
+    perf_path,
     summarize_argos_concordance,
 )
 
 
 SCHEME_COLORS = {
-    "Random": "#4C78A8",
-    "RandomXor": "#4C78A8",  # alias
-    "GreedyMini": "#F58518",
-    "GreedyMiniDNA": "#54A24B",
-    "ModRandom": "#E45756",
-    "ModRandomXor": "#E45756",  # alias
-    "ModGreedyMini": "#72B7B2",
-    "RandomPcg": "#B279A2",
+    "xor": "#4C78A8",
+    "xor-pcg": "#B279A2",
+    "greedymini": "#F58518",
+    "mod-minimizer-xor": "#E45756",
+    "mod-minimizer-greedymini": "#72B7B2",
 }
 
 
-def collect_repeat_series(runs, dataset="speed"):
-    """Per scheme: lists of classify wall / nextmin metrics across all seeds×repeats."""
-    metric_keys = (
-        "class_s",
-        "nextmin_s",
-        "ns_per_call",
-        "calls_per_Mbp",
-        "scan_s",
-        "lookup_s",
-        "resolve_s",
-        "lookups_per_Mbp",
-        "repeats_per_Mbp",
-        "lookup_frac_pct",
-    )
-    by_scheme = {}
+def collect_cells(runs):
+    """{(dataset, mhg): {scheme: {metric: [value per seed]}}} from the single
+    classify run of every seed; metrics missing for a run are skipped."""
+    cells = {}
     for run in runs:
-        scheme = run["scheme"]
-        if scheme not in by_scheme:
-            slot = {k: [] for k in metric_keys}
-            slot["contexts"] = []
-            by_scheme[scheme] = slot
-        slot = by_scheme[scheme]
         out = run["outdir"]
-        for cf in list_classify_time_files(out, dataset):
-            wall, _ = parse_time_file(cf)
-            if wall is not None:
-                slot["class_s"].append(wall)
-                slot["contexts"].append(run["context"])
-        for nf in list_nextmin_timing_files(out, dataset):
-            nm = parse_nextmin_timing_file(nf)
-            if not nm:
-                continue
-            for key in metric_keys:
-                if key == "class_s":
-                    continue
-                if key in nm:
-                    slot[key].append(nm[key])
-    return by_scheme
+        for ds, mhg in discover_classify_cells(out):
+            slot = cells.setdefault((ds, mhg), {}).setdefault(run["scheme"], {})
+            cf = perf_path(out, ds, mhg)
+            wall, rss = parse_time_file(cf)
+            proc = parse_processing_s(cf)
+            vals = {
+                "wall": wall,
+                "proc": proc,
+                "db_load": max(0.0, wall - proc) if (wall is not None and proc is not None) else None,
+                "rss": rss,
+            }
+            nf = nextmin_path(out, ds, mhg)
+            nm = parse_nextmin_timing_file(nf) if nf else None
+            if nm:
+                vals["nextmin_s"] = nm.get("nextmin_s")
+                vals["nextmin_ns"] = nm.get("ns_per_call")
+                vals["lookup_s"] = nm.get("lookup_s")
+                vals["lookups_pm"] = nm.get("lookups_per_Mbp")
+            for k, v in vals.items():
+                if v is not None:
+                    slot.setdefault(k, []).append(v)
+    return cells
 
 
 def _scheme_order_key(name):
@@ -104,129 +99,99 @@ def _color(scheme):
     return SCHEME_COLORS.get(scheme, "#54A24B")
 
 
-def _annotate_stats(ax, scheme, values, color, y_frac):
-    mu, sd = mean_std(values)
-    if mu is None:
-        return
-    label = "{}  n={}  mean={:.2f}".format(scheme, len(values), mu)
-    if sd is not None and sd > 0:
-        label += "±{:.2f}".format(sd)
-    ax.axvline(mu, color=color, linestyle="--", linewidth=1.2, alpha=0.9)
-    ax.text(
-        0.98,
-        y_frac,
-        label,
-        transform=ax.transAxes,
-        ha="right",
-        va="top",
-        fontsize=8,
-        color=color,
-    )
+def _grid(cells):
+    datasets = sorted(set(d for d, _m in cells), key=lambda d: (DATASET_ORDER.get(d, 9), d))
+    mhgs = sorted(set(m for _d, m in cells))
+    return datasets, mhgs
 
 
-def plot_overlay_hist(by_scheme, key, xlabel, title, out_path, bins):
+def _style(ax):
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def plot_seed_grid(cells, key, ylabel, title, out_path):
+    """Per-seed dots + mean bar per scheme; rows = minimum-hit-groups, cols = dataset."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    series = []
-    for scheme in sorted(by_scheme.keys(), key=_scheme_order_key):
-        vals = by_scheme[scheme].get(key) or []
-        if vals:
-            series.append((scheme, vals))
-    if not series:
+    if not any(s.get(key) for cell in cells.values() for s in cell.values()):
         print("skip {}: no data".format(key), file=sys.stderr)
         return False
-
-    all_vals = [v for _, vals in series for v in vals]
-    # Shared bin edges; clip extreme outliers for readability (keep points, widen slightly)
-    lo, hi = min(all_vals), max(all_vals)
-    if hi <= lo:
-        hi = lo + 1e-6
-
-    fig, ax = plt.subplots(figsize=(7.5, 4.5))
-    for i, (scheme, vals) in enumerate(series):
-        color = _color(scheme)
-        ax.hist(
-            vals,
-            bins=bins,
-            range=(lo, hi),
-            alpha=0.45,
-            color=color,
-            edgecolor="white",
-            linewidth=0.5,
-            label=scheme,
-        )
-        _annotate_stats(ax, scheme, vals, color, 0.96 - 0.08 * i)
-
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Count (classify repeats)")
-    ax.set_title(title)
-    ax.legend(frameon=False, loc="upper left")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    fig.tight_layout()
+    datasets, mhgs = _grid(cells)
+    schemes = sorted(set(s for cell in cells.values() for s in cell), key=_scheme_order_key)
+    fig, axes = plt.subplots(
+        len(mhgs), len(datasets), figsize=(3.6 * len(datasets) + 1.2, 3.0 * len(mhgs) + 1.4),
+        squeeze=False, sharex=True,
+    )
+    for r, mhg in enumerate(mhgs):
+        for c, ds in enumerate(datasets):
+            ax = axes[r][c]
+            cell = cells.get((ds, mhg), {})
+            for i, sch in enumerate(schemes):
+                vals = cell.get(sch, {}).get(key) or []
+                if not vals:
+                    continue
+                n = len(vals)
+                xs = [i + (j - (n - 1) / 2.0) * 0.08 for j in range(n)]
+                ax.scatter(xs, vals, s=14, color=_color(sch), alpha=0.8, zorder=3)
+                mu, _sd = mean_std(vals)
+                ax.plot([i - 0.3, i + 0.3], [mu, mu], color=_color(sch), linewidth=2, zorder=2)
+            ax.set_title("{}  (mhg {})".format(ds, mhg), fontsize=9)
+            ax.set_xticks(list(range(len(schemes))))
+            ax.set_xticklabels(schemes, rotation=40, ha="right", fontsize=7)
+            if c == 0:
+                ax.set_ylabel(ylabel)
+            ax.set_ylim(bottom=0)
+            _style(ax)
+    fig.suptitle(title + "  (dots = seeds, bar = mean over seeds)", fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print("wrote {}".format(out_path))
     return True
 
 
-def plot_summary_panels(by_scheme, out_path, bins):
-    """Multi-panel figure: wall, nextmin, lookup phase, density."""
+def plot_wall_breakdown(cells, out_path):
+    """Stacked bars of the mean DB-load and processing time per scheme."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    panels = [
-        ("class_s", "Classify wall time (s)", "Query wall time"),
-        ("nextmin_s", "NextMinimizer time (s)", "Rank (NextMinimizer)"),
-        ("lookup_s", "GetBatch lookup time (s)", "Hash lookup phase"),
-        ("lookups_per_Mbp", "Distinct lookups / Mbp", "Minimizer density"),
-    ]
-    have = [
-        (k, xl, t)
-        for k, xl, t in panels
-        if any(by_scheme[s].get(k) for s in by_scheme)
-    ]
-    if not have:
+    if not any(s.get("proc") for cell in cells.values() for s in cell.values()):
+        print("skip classify_wall_s: no data", file=sys.stderr)
         return False
-
-    ncols = len(have)
-    fig, axes = plt.subplots(1, ncols, figsize=(4.8 * ncols, 4.2), squeeze=False)
-    for ax, (key, xlabel, title) in zip(axes[0], have):
-        series = []
-        for scheme in sorted(by_scheme.keys(), key=_scheme_order_key):
-            vals = by_scheme[scheme].get(key) or []
-            if vals:
-                series.append((scheme, vals))
-        all_vals = [v for _, vals in series for v in vals]
-        lo, hi = min(all_vals), max(all_vals)
-        if hi <= lo:
-            hi = lo + 1e-6
-        for i, (scheme, vals) in enumerate(series):
-            color = _color(scheme)
-            ax.hist(
-                vals,
-                bins=bins,
-                range=(lo, hi),
-                alpha=0.45,
-                color=color,
-                edgecolor="white",
-                linewidth=0.5,
-                label=scheme,
-            )
-            _annotate_stats(ax, scheme, vals, color, 0.96 - 0.08 * i)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("Count")
-        ax.set_title(title)
-        ax.legend(frameon=False, loc="upper left")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    fig.tight_layout()
+    datasets, mhgs = _grid(cells)
+    schemes = sorted(set(s for cell in cells.values() for s in cell), key=_scheme_order_key)
+    fig, axes = plt.subplots(
+        len(mhgs), len(datasets), figsize=(3.6 * len(datasets) + 1.2, 3.0 * len(mhgs) + 1.4),
+        squeeze=False, sharex=True,
+    )
+    for r, mhg in enumerate(mhgs):
+        for c, ds in enumerate(datasets):
+            ax = axes[r][c]
+            cell = cells.get((ds, mhg), {})
+            for i, sch in enumerate(schemes):
+                d = mean_std(cell.get(sch, {}).get("db_load") or [])[0]
+                p = mean_std(cell.get(sch, {}).get("proc") or [])[0]
+                if p is None:
+                    continue
+                ax.bar(i, d or 0.0, color=_color(sch), alpha=0.45, edgecolor="white",
+                       label="database load" if (i == 0 and r == 0 and c == 0) else None)
+                ax.bar(i, p, bottom=d or 0.0, color=_color(sch), edgecolor="white",
+                       label="processing" if (i == 0 and r == 0 and c == 0) else None)
+            ax.set_title("{}  (mhg {})".format(ds, mhg), fontsize=9)
+            ax.set_xticks(list(range(len(schemes))))
+            ax.set_xticklabels(schemes, rotation=40, ha="right", fontsize=7)
+            if c == 0:
+                ax.set_ylabel("classify wall (s)")
+            _style(ax)
+    fig.suptitle("Classify wall = database load (light) + processing (dark); mean over seeds",
+                 fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     print("wrote {}".format(out_path))
@@ -234,7 +199,8 @@ def plot_summary_panels(by_scheme, out_path, bins):
 
 
 def plot_argos_concordance(runs, out_path):
-    """Grouped bars: Table S5 genus (a–d) per scheme (mean over seeds)."""
+    """Grouped bars: Table S5 genus (a-d) per scheme (mean over seeds), one panel per
+    minimum-hit-groups."""
     sheets = load_accuracy_sheets(runs)
     argos_rows = []
     for name, _fields, rows in sheets:
@@ -253,43 +219,28 @@ def plot_argos_concordance(runs, out_path):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    labels = [
-        "concordant",
-        "discordant",
-        "ancestor",
-        "unclassified",
-    ]
-    keys = [
-        "concordant_mean",
-        "discordant_mean",
-        "ancestor_mean",
-        "unclassified_mean",
-    ]
-    schemes = [r["scheme"] or "?" for r in summary]
-    n_sch = len(schemes)
-    x = list(range(len(labels)))
-    width = min(0.8 / max(n_sch, 1), 0.22)
-    fig, ax = plt.subplots(figsize=(8.2, 4.6))
-    for i, rec in enumerate(summary):
-        vals = [100.0 * float(rec[k] or 0.0) for k in keys]
-        offset = (i - (n_sch - 1) / 2.0) * width
-        ax.bar(
-            [xi + offset for xi in x],
-            vals,
-            width,
-            label=rec["scheme"] or "?",
-            color=_color(rec["scheme"] or ""),
-            edgecolor="white",
-            linewidth=0.4,
-        )
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel("Fragments (%)")
-    ax.set_title("FDA-ARGOS genus concordance (Table S5; no sensitivity/PPV)")
-    ax.set_ylim(0, 105)
-    ax.legend(frameon=False)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    labels = ["concordant", "discordant", "ancestor", "unclassified"]
+    keys = ["concordant_mean", "discordant_mean", "ancestor_mean", "unclassified_mean"]
+    mhgs = sorted(set(r["minimum_hit_groups"] for r in summary))
+    fig, axes = plt.subplots(1, len(mhgs), figsize=(7.2 * len(mhgs), 4.6), squeeze=False)
+    for ax, mhg in zip(axes[0], mhgs):
+        rows = [r for r in summary if r["minimum_hit_groups"] == mhg]
+        n_sch = len(rows)
+        x = list(range(len(labels)))
+        width = min(0.8 / max(n_sch, 1), 0.22)
+        for i, rec in enumerate(rows):
+            vals = [100.0 * float(rec[k] or 0.0) for k in keys]
+            offset = (i - (n_sch - 1) / 2.0) * width
+            ax.bar([xi + offset for xi in x], vals, width, label=rec["scheme"] or "?",
+                   color=_color(rec["scheme"] or ""), edgecolor="white", linewidth=0.4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel("Fragments (%)")
+        ax.set_title("FDA-ARGOS genus concordance (Table S5), minimum-hit-groups {}".format(mhg),
+                     fontsize=9)
+        ax.set_ylim(0, 105)
+        ax.legend(frameon=False, fontsize=8)
+        _style(ax)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -298,102 +249,55 @@ def plot_argos_concordance(runs, out_path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base-dir", required=True, help="Benchmark base directory")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--base-dir", required=True, help="Benchmark run root (runs/<library>)")
     ap.add_argument("--manifest", default=None)
-    ap.add_argument(
-        "--out-dir",
-        default=None,
-        help="Figure output directory (default: BASE_DIR/figures)",
-    )
-    ap.add_argument("--bins", type=int, default=20)
+    ap.add_argument("--out-dir", default=None,
+                    help="Figure output directory (default: BASE_DIR/figures)")
     args = ap.parse_args()
 
     try:
         import matplotlib  # noqa: F401
     except ImportError:
-        print(
-            "Error: matplotlib is required. Install with:\n"
-            "  pip install matplotlib\n"
-            "  # or: conda install matplotlib",
-            file=sys.stderr,
-        )
+        print("Error: matplotlib is required (pip install matplotlib / conda install matplotlib).",
+              file=sys.stderr)
         return 1
 
     base = args.base_dir
     manifest = args.manifest or os.path.join(base, ".benchmark_run_manifest")
     out_dir = args.out_dir or os.path.join(base, "figures")
-
     if not os.path.isfile(manifest):
         print("Error: manifest not found: {}".format(manifest), file=sys.stderr)
         return 1
-
     runs = load_manifest(manifest)
     if not runs:
         print("Error: empty manifest", file=sys.stderr)
         return 1
 
-    datasets = []
-    for r in runs:
-        for d in discover_classify_datasets(r["outdir"]):
-            if d not in datasets:
-                datasets.append(d)
-    if not datasets:
-        datasets = ["speed"]
-
-    os.makedirs(out_dir, exist_ok=True)
-    for ds in datasets:
-        by_scheme = collect_repeat_series(runs, dataset=ds)
-        prefix = "" if ds == "speed" else ds + "_"
-        tag = "" if ds == "speed" else " [{}]".format(ds)
-        plot_overlay_hist(
-            by_scheme,
-            "class_s",
-            "Classify wall time (s)",
-            "Query-phase wall time distribution{}".format(tag),
-            os.path.join(out_dir, "{}classify_wall_s.png".format(prefix)),
-            args.bins,
-        )
-        plot_overlay_hist(
-            by_scheme,
-            "nextmin_s",
-            "NextMinimizer time (s)",
-            "NextMinimizer (rank calculation) time distribution{}".format(tag),
-            os.path.join(out_dir, "{}nextmin_s.png".format(prefix)),
-            args.bins,
-        )
-        plot_overlay_hist(
-            by_scheme,
-            "ns_per_call",
-            "ns / NextMinimizer call",
-            "Ranking cost per window{}".format(tag),
-            os.path.join(out_dir, "{}nextmin_ns_per_call.png".format(prefix)),
-            args.bins,
-        )
-        plot_overlay_hist(
-            by_scheme,
-            "lookup_s",
-            "GetBatch lookup time (s)",
-            "Hash-lookup phase time distribution{}".format(tag),
-            os.path.join(out_dir, "{}lookup_s.png".format(prefix)),
-            args.bins,
-        )
-        plot_overlay_hist(
-            by_scheme,
-            "lookups_per_Mbp",
-            "Distinct lookups / Mbp",
-            "Minimizer density (TOK_LOOKUP / Mbp){}".format(tag),
-            os.path.join(out_dir, "{}lookups_per_Mbp.png".format(prefix)),
-            args.bins,
-        )
-        plot_summary_panels(
-            by_scheme,
-            os.path.join(out_dir, "{}classify_vs_nextmin.png".format(prefix)),
-            args.bins,
-        )
-    plot_argos_concordance(
-        runs, os.path.join(out_dir, "fda-argos_genus_concordance.png")
-    )
+    cells = collect_cells(runs)
+    if not cells:
+        print("Error: no classification_performance_<dataset>_mhg<N>.txt found", file=sys.stderr)
+        return 1
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+    plot_seed_grid(cells, "proc", "classify processing (s)",
+                   "Classify processing time (database load excluded)",
+                   os.path.join(out_dir, "classify_processing_s.png"))
+    plot_seed_grid(cells, "db_load", "database load (s)", "Database load time",
+                   os.path.join(out_dir, "db_load_s.png"))
+    plot_wall_breakdown(cells, os.path.join(out_dir, "classify_wall_s.png"))
+    plot_seed_grid(cells, "rss", "peak RSS (GB)", "Classify peak RSS",
+                   os.path.join(out_dir, "classify_max_rss_gb.png"))
+    # Phase figures only exist for ENABLE_MINIMIZER_PROF builds.
+    for key, ylabel, title, fname in (
+        ("nextmin_s", "NextMinimizer time (s)", "NextMinimizer (rank calculation) time", "nextmin_s.png"),
+        ("nextmin_ns", "ns / NextMinimizer call", "Ranking cost per window", "nextmin_ns_per_call.png"),
+        ("lookup_s", "GetBatch lookup time (s)", "Hash-lookup phase time", "lookup_s.png"),
+        ("lookups_pm", "distinct lookups / Mbp", "Minimizer density (TOK_LOOKUP / Mbp)", "lookups_per_Mbp.png"),
+    ):
+        plot_seed_grid(cells, key, ylabel, title, os.path.join(out_dir, fname))
+    plot_argos_concordance(runs, os.path.join(out_dir, "fda-argos_genus_concordance.png"))
     return 0
 
 

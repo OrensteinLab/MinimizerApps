@@ -23,9 +23,11 @@
 
 #include "hash_util.hpp"
 
+#include "../../common/minimizer-orders/greedymini_centre.h"
 #include "../../common/minimizer-orders/greedymini_rank.h"
 #include "../../common/minimizer-orders/pcg_rxs_m_xs.h"
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -188,7 +190,7 @@ struct custom_order_hasher {
         if (raw.empty()) {
             throw std::runtime_error("failed to load GreedyMini table: " + greedy_mini_filename);
         }
-        GreedyMiniTable table(raw, GmAlphabet::BINARY);
+        GreedyMiniTable table(raw);
         load_table(table);
         derive();
     }
@@ -236,9 +238,9 @@ struct custom_order_hasher {
        position m-1 are zero. */
     inline gm_planes planes_of_mmer(uint64_t x) const {
         gm_planes p;
-        p.S = gm_pext_even(x, m_even_l) ^ m_flip_l;
-        p.G = gm_pext_odd(x, m_odd_l);
-        const uint64_t T = reverse_bits64(p.S | (p.G << 32));
+        p.S = m_planes.sigma(x);
+        p.G = m_planes.gamma(x);
+        const uint64_t T = gm_centre::reverse_bits64(p.S | (p.G << 32));
         p.Sb = T >> (64 - m_l);
         p.Gb = ((T & 0xFFFFFFFFull) >> (32 - m_l)) ^ m_l_mask;
         return p;
@@ -249,14 +251,11 @@ struct custom_order_hasher {
        slid by one base: the base b (a 2-bit code of the packing) enters at the highest position
        k-1 of the word, the lowest position leaves. */
     inline uint64_t sigma_of_kmer(uint64_t lo, uint64_t hi, int k) const {
-        const uint64_t evens = 0x5555555555555555ull;
-        const uint64_t kmask = (uint64_t(1) << k) - 1;
-        uint64_t S = (gm_pext_even(lo, evens) | (gm_pext_even(hi, evens) << 32)) & kmask;
-        return m_flip_bit ? S ^ kmask : S;
+        return m_planes.sigma_wide(lo, hi, k);
     }
 
     inline uint64_t roll_sigma(uint64_t S, uint64_t b, int k) const {
-        return (S >> 1) | (((b & 1) ^ m_flip_bit) << (k - 1));
+        return gm_centre::roll_in_high(S, m_planes.base_sigma(b), k);
     }
 
     /* The primary (rank) field of the hash of the m-mer at positions i .. i+m-1 of a k-mer
@@ -264,7 +263,7 @@ struct custom_order_hasher {
        and the full hashes only on equal ranks orders the windows exactly as the hashes do.
        GreedyMini only. */
     inline uint16_t centre_rank(uint64_t S, int i) const {
-        return m_gm_ranks[(S >> (i + m_centre_shift)) & m_key_mask];
+        return m_order.rank_at(S, i);
     }
 
     inline uint64_t hash_from_planes(gm_planes const& p) const {
@@ -283,10 +282,7 @@ struct custom_order_hasher {
         (Sigma, Gamma) determine the DNA).
     */
     inline uint64_t hash_from_planes(uint64_t S, uint64_t G, uint64_t Sb, uint64_t Gb) const {
-        const uint64_t pa = (S << m_l) | (G ^ m_toggle);
-        const uint64_t pb = (Sb << m_l) | (Gb ^ m_toggle);
-        const uint64_t tb = pa < pb ? pa : pb;
-        return ((uint64_t)m_gm_ranks[(S >> m_centre_shift) & m_key_mask] << m_rank_shift) | tb;
+        return m_order.value_of_both_strands(S, G, Sb, Gb);
     }
 
     /*
@@ -296,16 +292,17 @@ struct custom_order_hasher {
         F(v) = (Sigma(v) << l) | (Gamma(v) ^ toggle), y = the middle gm_k bases of x.
     */
     uint64_t hash_reference(uint64_t value) const {
-        const int l = m_l, gk = m_gm_k, i = (l - gk) / 2;
-        const uint64_t toggle = m_seed & ((uint64_t(1) << l) - 1);
-        auto planes = [&](uint64_t v, uint64_t& sigma, uint64_t& gamma) {
-            sigma = gamma = 0;
-            for (int p = 0; p != l; ++p) {  // base p = 0 is the one in the highest bits
-                const uint64_t b = (v >> (2 * (l - 1 - p))) & 3;  // A=0,C=1,G=3,T=2
-                const uint64_t sig = (b == 1 or b == 3) ? 1 : 0;  // {C,G} vs {A,T}
-                const uint64_t gam = (b == 2 or b == 3) ? 1 : 0;  // {A,C} vs {G,T}
-                sigma = (sigma << 1) | (sig ^ (m_projection == gm_projection::AT1_CG0 ? 1 : 0));
-                gamma = (gamma << 1) | gam;
+        const int l = m_l;
+        /* per-position 0/1 planes, position 0 = the first base (the highest bits of the word);
+           the packing is A=0,C=1,G=3,T=2 */
+        auto planes = [&](uint64_t v, std::vector<int>& sigma, std::vector<int>& gamma) {
+            sigma.assign(l, 0);
+            gamma.assign(l, 0);
+            for (int p = 0; p != l; ++p) {
+                const uint64_t b = (v >> (2 * (l - 1 - p))) & 3;
+                const int sig = (b == 1 or b == 3) ? 1 : 0;  // {C,G} vs {A,T}
+                sigma[p] = sig ^ (m_projection == gm_projection::AT1_CG0 ? 1 : 0);
+                gamma[p] = (b == 2 or b == 3) ? 1 : 0;  // {A,C} vs {G,T}
             }
         };
         /* reverse complement, base by base: A <-> T (0 <-> 2), C <-> G (1 <-> 3) */
@@ -314,14 +311,12 @@ struct custom_order_hasher {
             const uint64_t b = (value >> (2 * p)) & 3;
             rc |= uint64_t(b == 0 ? 2 : b == 2 ? 0 : b == 1 ? 3 : 1) << (2 * (l - 1 - p));
         }
-        uint64_t s1, g1, s2, g2;
+        std::vector<int> s1, g1, s2, g2;
         planes(value, s1, g1);
         planes(rc, s2, g2);
-        uint64_t key = 0;
-        for (int p = i; p != i + gk; ++p) key = (key << 1) | ((s1 >> (l - 1 - p)) & 1);
-        const uint64_t f1 = (s1 << l) | (g1 ^ toggle);
-        const uint64_t f2 = (s2 << l) | (g2 ^ toggle);
-        return ((uint64_t)m_gm_ranks[key] << (2 * l)) | (f1 < f2 ? f1 : f2);
+        return gm_centre::Reference(*m_table, l, m_seed & ((uint64_t(1) << l) - 1),
+                                    /*injective=*/true)
+            .value(s1, g1, s2, g2);
     }
 
     custom_order_mode mode() const { return m_mode; }
@@ -352,31 +347,14 @@ private:
         visitor.visit(t.m_projection);
     }
 
-    /* Preconditions: (l - gm_k) even, 16 + 2l <= 63, and a mirror-symmetric
-       table (rank[key] == rank[reverse_bits(key)] for every key) -- the single table probe
-       is strand invariant only then. */
-    void validate() const {
-        if (((m_l - m_gm_k) & 1) != 0) {
-            throw std::invalid_argument(
-                "GreedyMini requires (m - gm_k) to be even (m = " + std::to_string(m_l) +
-                ", gm_k = " + std::to_string(m_gm_k) + "): the table is extended by the same "
-                "number of bases on both sides of the gm_k-mer");
-        }
+    /* Preconditions: (l - gm_k) even, 16 + 2l <= 63 and a mirror-symmetric table (the single
+       table probe is strand invariant only then); the table checks are the shared
+       gm_centre::validate_table. */
+    void validate(GreedyMiniTable const& table) const {
         if (16 + 2 * m_l > 63) {
             throw std::invalid_argument("GreedyMini: minimizer length too large to pack");
         }
-        const uint64_t n = uint64_t(1) << m_gm_k;
-        if (m_gm_ranks.size() != n) {
-            throw std::invalid_argument("GreedyMini: unexpected table size");
-        }
-        for (uint64_t key = 0; key != n; ++key) {
-            const uint64_t mirror = reverse_bits64(key) >> (64 - m_gm_k);
-            if (m_gm_ranks[key] != m_gm_ranks[mirror]) {
-                throw std::invalid_argument(
-                    "GreedyMini requires a mirror-symmetric (canonical) table: rank[" +
-                    std::to_string(key) + "] != rank[" + std::to_string(mirror) + "]");
-            }
-        }
+        gm_centre::validate_table(table, m_l, /*require_rank_pairs=*/false);
     }
 
     void load_table(GreedyMiniTable const& table) {
@@ -386,9 +364,9 @@ private:
         if (table.gm_k() > m_l) {
             throw std::invalid_argument("GreedyMini gm_k exceeds minimizer length m");
         }
+        validate(table);
         m_gm_k = table.gm_k();
         m_gm_ranks.assign(table.data(), table.data() + table.size());
-        validate();
     }
 
     /* seed toggle of the Gamma plane (1 bit per base) */
@@ -396,36 +374,23 @@ private:
 
     /* ---- derived (non-serialized) state ---- */
 
-    static inline uint64_t reverse_bits64(uint64_t v) {
-#if defined(__has_builtin)
-#if __has_builtin(__builtin_bitreverse64)
-        return __builtin_bitreverse64(v);
-#endif
-#endif
-        v = __builtin_bswap64(v);
-        v = ((v >> 4) & 0x0F0F0F0F0F0F0F0Full) | ((v & 0x0F0F0F0F0F0F0F0Full) << 4);
-        v = ((v >> 2) & 0x3333333333333333ull) | ((v & 0x3333333333333333ull) << 2);
-        v = ((v >> 1) & 0x5555555555555555ull) | ((v & 0x5555555555555555ull) << 1);
-        return v;
-    }
-
     /*
         Recompute everything hash() hoists out of the per-call path (toggle,
         masks, shifts) from the serialized members only; called after
         configure() and after a load (see visit()).
     */
     void derive() {
-        const int l = m_l, gk = m_gm_k;
+        const int l = m_l;
         m_toggle = tb_toggle();
         m_l_mask = (uint64_t(1) << l) - 1;
-        m_flip_bit = m_projection == gm_projection::AT1_CG0 ? 1 : 0;
-        m_flip_l = m_flip_bit ? m_l_mask : 0;
-        const uint64_t evens = 0x5555555555555555ull;
-        m_even_l = evens & ((uint64_t(1) << (2 * l)) - 1);
-        m_odd_l = m_even_l << 1;
-        m_key_mask = (uint64_t(1) << gk) - 1;
-        m_centre_shift = (l - gk) / 2;
-        m_rank_shift = 2 * l;
+        m_planes = gm_centre::TwoBitPlanes<false>(l, m_projection == gm_projection::AT1_CG0);
+        /* the shared order, over a table rebuilt from the serialized ranks (infinity = 0xFFFF) */
+        std::vector<uint64_t> raw(m_gm_ranks.size());
+        for (size_t i = 0; i != raw.size(); ++i) {
+            raw[i] = m_gm_ranks[i] == GreedyMiniTable::kInfRank ? raw.size() : m_gm_ranks[i];
+        }
+        m_table = std::make_shared<const GreedyMiniTable>(raw);
+        m_order = gm_centre::Order(m_table, l, m_seed, /*injective=*/true);
     }
 
     custom_order_mode m_mode = custom_order_mode::NATIVE;
@@ -437,9 +402,10 @@ private:
     std::vector<uint16_t> m_gm_ranks;  // embedded in the .sshash file; no sidecar needed
 
     /* derived by derive(); never serialized */
-    uint64_t m_flip_bit = 0, m_toggle = 0, m_l_mask = 0, m_flip_l = 0, m_key_mask = 0;
-    uint64_t m_even_l = 0, m_odd_l = 0;
-    int m_rank_shift = 0, m_centre_shift = 0;
+    uint64_t m_toggle = 0, m_l_mask = 0;
+    gm_centre::TwoBitPlanes<false> m_planes;  // sshash's encoding: Sigma = bit 0, Gamma = bit 1
+    std::shared_ptr<const GreedyMiniTable> m_table;
+    gm_centre::Order m_order;
 };
 
 using hasher_type = custom_order_hasher;

@@ -44,8 +44,19 @@ template<typename Cell>
 void dump_table(CompactHashTable<Cell> &kraken_index, const Options &opts) {
   Taxonomy taxonomy(opts.taxonomy_filename);
   IndexOptions idx_opts = {0};
-  std::ifstream idx_opt_fs(opts.options_filename);
+  std::ifstream idx_opt_fs(opts.options_filename, std::ios::binary);
+  idx_opt_fs.seekg(0, std::ios::end);
+  const size_t opts_filesize = (size_t)idx_opt_fs.tellg();
+  idx_opt_fs.seekg(0, std::ios::beg);
   idx_opt_fs.read((char *) &idx_opts, sizeof(idx_opts));
+  if (!IndexOptionsValid(idx_opts, opts_filesize) ||
+      (size_t)idx_opt_fs.gcount() < sizeof(idx_opts))
+    errx(EX_DATAERR, "%s: %s (size %zu, expected %zu; db_version %d, "
+         "expected %d; magic 0x%08x, expected 0x%08x)",
+         opts.options_filename.c_str(), IndexRebuildMessage(),
+         opts_filesize, sizeof(idx_opts),
+         idx_opts.db_version, KRAKEN2_DB_VERSION,
+         (unsigned)idx_opts.magic, (unsigned)KRAKEN2_OPTS_MAGIC);
 
   std::cout << "# Database options: "
     << (idx_opts.dna_db ? "nucleotide" : "protein") << " db, "

@@ -1,21 +1,23 @@
 /*
  * Sketching + ordering for Kraken 2 minimizers.
  *
- * SketchingScheme — how the window representative is chosen:
- *   MINIMIZER — classic leftmost min over w ℓ-mers
- *   MOD       — mod-sampling (Groot Koerkamp & Pibiri 2024)
+ * SketchingScheme — how the window representative is chosen
+ * (CLI --sketching):
+ *   MINIMIZER — "minimizer": classic leftmost min over w l-mers
+ *   MOD       — "mod-minimizer": mod-sampling (Groot Koerkamp & Pibiri 2024)
  *
- * Order — how substrings are ranked (O_ℓ for MINIMIZER, O_t for MOD):
- *   RANDOM_XOR — XOR toggle-mask
- *   GM         — GreedyMini UHS table
- *   RANDOM_PCG — PCG RXS-M-XS scramble of (canonical ^ toggle)
+ * Order — how substrings are ranked (O_l for MINIMIZER, O_t for MOD)
+ * (CLI --order):
+ *   RANDOM_XOR — "xor": XOR toggle-mask
+ *   GM         — "greedymini": GreedyMini UHS table
+ *   RANDOM_PCG — "xor-pcg": PCG RXS-M-XS scramble of (canonical ^ toggle)
+ *
+ * The numeric ids are persisted in opts.k2d; do not renumber.
  */
 
 #ifndef KRAKEN2_SKETCHING_SCHEMES_H_
 #define KRAKEN2_SKETCHING_SCHEMES_H_
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -34,46 +36,46 @@ enum class Order : uint8_t {
 };
 
 inline const char *sketching_scheme_name(SketchingScheme s) {
-  return s == SketchingScheme::MOD ? "Mod" : "Minimizer";
+  return s == SketchingScheme::MOD ? "mod-minimizer" : "minimizer";
 }
 
 inline const char *order_name(Order o) {
   switch (o) {
-    case Order::GM:         return "GreedyMini";
-    case Order::RANDOM_PCG: return "RandomPcg";
+    case Order::GM:         return "greedymini";
+    case Order::RANDOM_PCG: return "xor-pcg";
     case Order::RANDOM_XOR:
-    default:                return "RandomXor";
+    default:                return "xor";
   }
 }
 
-inline std::string to_lower_copy(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  return s;
+// Scheme label (sketching + order): xor, xor-pcg, greedymini,
+// mod-minimizer-xor, mod-minimizer-xor-pcg, mod-minimizer-greedymini.
+// (The benchmark does not use mod-minimizer-xor-pcg.)
+inline std::string scheme_label(SketchingScheme s, Order o) {
+  if (s == SketchingScheme::MOD)
+    return std::string("mod-minimizer-") + order_name(o);
+  return order_name(o);
 }
 
+// Exact lowercase names only; no aliases.
 inline SketchingScheme parse_sketching_scheme(const std::string &s) {
-  const std::string lower = to_lower_copy(s);
-  if (lower == "minimizer")
+  if (s == "minimizer")
     return SketchingScheme::MINIMIZER;
-  if (lower == "mod" || lower == "modminimizer")
+  if (s == "mod-minimizer")
     return SketchingScheme::MOD;
   throw std::invalid_argument(
-      "unknown sketching scheme '" + s + "' (choices: Minimizer, Mod)");
+      "unknown sketching '" + s + "' (choices: minimizer, mod-minimizer)");
 }
 
 inline Order parse_order(const std::string &s) {
-  const std::string lower = to_lower_copy(s);
-  if (lower == "random" || lower == "randomxor" || lower == "random_xor" ||
-      lower == "xor")
+  if (s == "xor")
     return Order::RANDOM_XOR;
-  if (lower == "greedymini" || lower == "gm")
+  if (s == "greedymini")
     return Order::GM;
-  if (lower == "randompcg" || lower == "random_pcg" || lower == "pcg")
+  if (s == "xor-pcg")
     return Order::RANDOM_PCG;
   throw std::invalid_argument(
-      "unknown order '" + s +
-      "' (choices: RandomXor, GreedyMini, RandomPcg)");
+      "unknown order '" + s + "' (choices: xor, xor-pcg, greedymini)");
 }
 
 }  // namespace kraken2

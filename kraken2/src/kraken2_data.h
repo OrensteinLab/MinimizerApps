@@ -13,13 +13,18 @@
 
 namespace kraken2 {
 
-// db_version 0 — original Kraken 2 opts.k2d (Minimizer + Random only).
-// db_version 1 — sketching_scheme, order, GreedyMini metadata in trailing fields.
-static const int KRAKEN2_DB_VERSION_ORIGINAL = 0;
-static const int KRAKEN2_DB_VERSION = 1;
+// db_version 2: opts.k2d holds the sketching scheme / order / GreedyMini
+// metadata below, and Minimizer+GreedyMini with l > gm_k ranks by the centre
+// extension (minimizer_rankers.h). Databases with any other db_version (the
+// original Kraken 2 layout, or earlier fork versions), the wrong file size or
+// a wrong magic are not supported.
+static const int KRAKEN2_DB_VERSION = 2;
+// "K2SK" little endian. Databases written by earlier fork builds carry the
+// Order in the low byte of this field (0, 1 or 2), so they never match.
+static const uint32_t KRAKEN2_OPTS_MAGIC = 0x4b32534bu;
 
 struct IndexOptions {
-  // ---- db_version 0 fields (do not reorder) ----
+  // ---- original Kraken 2 fields (do not reorder) ----
   size_t k;
   size_t l;
   uint64_t spaced_seed_mask;
@@ -30,30 +35,42 @@ struct IndexOptions {
   int db_version;  // To allow for future database structural changes
   int db_type;  // To allow for future use of other data structures
 
-  // ---- db_version >= 1 ----
-  uint8_t  sketching_scheme;
-  uint8_t  gm_alphabet;
+  // ---- fork fields ----
+  uint8_t  sketching_scheme;  // SketchingScheme
+  uint8_t  order;             // Order
   uint16_t gm_k;
-  uint32_t reserved;          // low 8 bits = Order
+  uint32_t magic;             // KRAKEN2_OPTS_MAGIC
   uint64_t gm_num_entries;
 };
+static_assert(sizeof(IndexOptions) == 80, "opts.k2d layout is 80 bytes");
+
+// True iff `opts` (read from a file of `file_size` bytes) is in the current
+// format: exact size, db_version and magic.
+inline bool IndexOptionsValid(const IndexOptions &opts, size_t file_size) {
+  return file_size == sizeof(IndexOptions) &&
+         opts.db_version == KRAKEN2_DB_VERSION &&
+         opts.magic == KRAKEN2_OPTS_MAGIC &&
+         opts.sketching_scheme <= (uint8_t)SketchingScheme::MOD &&
+         opts.order <= (uint8_t)Order::RANDOM_PCG;
+}
 
 inline void DecodeIndexSchemes(const IndexOptions &opts,
                                SketchingScheme &sketching, Order &order) {
-  if (opts.db_version >= KRAKEN2_DB_VERSION) {
-    sketching = (SketchingScheme)opts.sketching_scheme;
-    order = (Order)(opts.reserved & 0xffu);
-  } else {
-    sketching = SketchingScheme::MINIMIZER;
-    order = Order::RANDOM_XOR;
-  }
+  sketching = (SketchingScheme)opts.sketching_scheme;
+  order = (Order)opts.order;
 }
 
 inline void EncodeIndexSchemes(IndexOptions &opts, SketchingScheme sketching,
                                Order order) {
   opts.db_version = KRAKEN2_DB_VERSION;
   opts.sketching_scheme = (uint8_t)sketching;
-  opts.reserved = (uint32_t)(uint8_t)order;
+  opts.order = (uint8_t)order;
+  opts.magic = KRAKEN2_OPTS_MAGIC;
+}
+
+// Message for a database whose opts.k2d is not the current format.
+inline const char *IndexRebuildMessage() {
+  return "database was built by an older/different Kraken 2 build; rebuild it";
 }
 
 typedef uint64_t taxid_t;

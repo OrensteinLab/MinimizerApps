@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""Compare Kraken 2 minimizer-scheme benchmarks across random-order seeds.
+"""Compare Kraken 2 minimizer-scheme benchmarks across toggle-mask seeds.
 
-Manifest columns (tab-separated):
-  scheme  context  outdir  [seed]  [seed_idx]  [n_classify]
+Manifest columns (tab-separated, written by run_benchmark.sh):
+  scheme  context  outdir  seed  seed_idx
 
-Classification may be repeated per seed; timing files are
-  classification_performance_01.txt … _NN.txt
-A preceding cold run may exist as classification_performance_cold.txt
-(and nextminimizer_timing_cold.txt); those are excluded from stats.
-When multiple repeats are present, Class(s)/Mrd/min are mean±std within the seed.
-When multiple seeds are present, scheme summary is mean±std over seeds
-(using each seed's classify mean).
+Every (scheme, seed, dataset) is classified exactly once per
+--minimum-hit-groups value m in {0, 2}. Per cell the results dir holds
+  classification_performance_<dataset>_mhg<m>.txt
+      classify stderr (summary lines) followed by the GNU time -v block;
+      wall = DB load + processing, processing = the "processed in" seconds
+  <dataset>_classification_mhg<m>.txt, <dataset>_report_mhg<m>.txt
+  <dataset>_metrics_mhg<m>.tsv (strain_exclusion, fda_argos, cami, mock)
+There are no repeats: the replicates are the seeds. Per-seed classify rows
+are summarised as mean±std over seeds (n = number of seeds).
 
-NextMinimizer / phase instrumentation (when classify built with
-ENABLE_MINIMIZER_PROF=1 → -DKRAKEN2_MINIMIZER_PROF) writes:
-  nextminimizer_timing_01.txt … _NN.txt
-  (key=value: nextmin_s, scan_s, lookup_s, resolve_s,
-   lookups, repeats, lookups_per_Mbp, lookup_frac_pct,
-   uhs, non_uhs, uhs_frac_pct, non_uhs_frac_pct, …)
-  Path is set via env KRAKEN2_MINIMIZER_PROF.
-  uhs = GM Rank finite pack (toggle/tb used); non_uhs = ∞ early-out.
+NextMinimizer / phase instrumentation (classify built with
+ENABLE_MINIMIZER_PROF=1 -> -DKRAKEN2_MINIMIZER_PROF) writes, via env
+KRAKEN2_MINIMIZER_PROF, nextminimizer_timing_<dataset>_mhg<m>.txt
+(key=value: nextmin_s, scan_s, lookup_s, resolve_s, lookups, repeats,
+lookups_per_Mbp, lookup_frac_pct, uhs, non_uhs, ...). Absent for non-PROF
+builds: the profile output is then skipped.
 
 Paired metrics (MAPE, concordance, ClassConc, Jaccard, NewClass/NewUnclass)
-compare each seed to Random with the same seed_idx when available
-(using last classify outputs).
+compare each seed to `xor` with the same seed_idx, dataset and
+minimum-hit-groups.
 
 Section 4 reports exact paired Wilcoxon signed-rank tests (by seed_idx) on
-Class wall, Rank ns/call, and lookups/Mbp — no scipy required.
-Seed = toggle mask for all schemes (Random order; GreedyMini Γ / Mod tb XOR).
+Class wall, Rank ns/call, and lookups/Mbp -- no scipy required.
+Seed = toggle mask for all schemes (xor order; greedymini Γ / mod-minimizer tb XOR).
 
 Metrics follow Wood et al. Genome Biol 2019 (PMC6883579).
 """
@@ -46,7 +46,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
-from xlsxutil import load_table, write_tables, _col_letter  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
+from xlsx_util import load_table  # noqa: E402
+import export_layout  # noqa: E402
 
 
 DATASET_ORDER = {
@@ -55,7 +57,9 @@ DATASET_ORDER = {
     "labeled": 0,
     "fda-argos": 1,
     "argos": 1,
-    "speed": 2,
+    "cami": 2,
+    "mock": 3,
+    "speed": 4,
 }
 DOMAIN_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2}
 RANK_ORDER = {"genus": 0, "species": 1}
@@ -85,6 +89,19 @@ def parse_time_file(path):
     if m:
         rss_gb = int(m.group(1)) / (1024.0 * 1024.0)
     return wall_s, rss_gb
+
+
+def parse_processing_s(path):
+    """Seconds of the classify "N sequences (X Mbp) processed in S s" line (the
+    classification itself, without loading the database), or None."""
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        for line in f:
+            m = re.search(r"sequences\s+\([^)]*\)\s+processed in\s+([0-9.]+)s", line)
+            if m:
+                return float(m.group(1))
+    return None
 
 
 def parse_classify_counts(path):
@@ -449,230 +466,77 @@ def load_manifest(path):
     return runs
 
 
-def discover_classify_datasets(outdir):
-    """Dataset ids with timed classify files: 'speed' (legacy names) or labeled/argos."""
+PERF_RE = re.compile(r"^classification_performance_(.+)_mhg(\d+)\.txt$")
+
+
+def discover_classify_cells(outdir):
+    """[(dataset, minimum_hit_groups)] of the classification_performance_<ds>_mhg<m>.txt
+    files of one results dir, sorted dataset -> mhg."""
     found = []
     try:
         names = os.listdir(outdir)
     except OSError:
-        return ["speed"]
+        return found
     for name in names:
-        m = re.match(r"classification_performance_([A-Za-z][\w-]*)_\d+\.txt$", name)
-        if m:
-            found.append(m.group(1))
-        elif re.match(r"classification_performance_\d+\.txt$", name):
-            found.append("speed")
-    if not found:
-        legacy = os.path.join(outdir, "classification_performance.txt")
-        if os.path.isfile(legacy):
-            return ["speed"]
-        return ["speed"]
-    order = {
-        "strain-exclusion": 0,
-        "simulated": 0,
-        "labeled": 0,
-        "fda-argos": 1,
-        "argos": 1,
-        "speed": 2,
-    }
-    uniq = []
-    for d in found:
-        if d not in uniq:
-            uniq.append(d)
-    return sorted(uniq, key=lambda d: (order.get(d, 9), d))
+        m = PERF_RE.match(name)
+        if m and (m.group(1), int(m.group(2))) not in found:
+            found.append((m.group(1), int(m.group(2))))
+    return sorted(found, key=lambda c: (DATASET_ORDER.get(c[0], 9), c[0], c[1]))
 
 
-def list_classify_time_files(outdir, dataset="speed"):
-    """Return sorted timed classify files (repeats). Excludes *_cold.txt."""
-    files = []
-    if dataset == "speed":
-        pat = r"classification_performance_\d+\.txt$"
-    else:
-        pat = r"classification_performance_" + re.escape(dataset) + r"_\d+\.txt$"
-    try:
-        for name in sorted(os.listdir(outdir)):
-            if re.match(pat, name):
-                files.append(os.path.join(outdir, name))
-    except OSError:
-        pass
-    if files:
-        return files
-    if dataset != "speed":
-        return []
-    legacy = os.path.join(outdir, "classification_performance.txt")
-    if os.path.isfile(legacy) and not os.path.islink(legacy):
-        # Ignore cold-only legacy name
-        if os.path.basename(os.path.realpath(legacy)).endswith("_cold.txt"):
-            return []
-        return [legacy]
-    # Symlink to last repeat still counts as one file if no numbered files found
-    if os.path.isfile(legacy):
-        target = os.path.realpath(legacy)
-        if os.path.isfile(target) and not target.endswith("_cold.txt"):
-            return [target]
-    return []
+def perf_path(outdir, dataset, mhg):
+    return os.path.join(outdir, "classification_performance_{}_mhg{}.txt".format(dataset, mhg))
 
 
-def list_nextmin_timing_files(outdir, dataset="speed"):
-    """Return sorted timed NextMinimizer files. Excludes *_cold.txt."""
-    files = []
-    if dataset == "speed":
-        pat = r"nextminimizer_timing_\d+\.txt$"
-    else:
-        pat = r"nextminimizer_timing_" + re.escape(dataset) + r"_\d+\.txt$"
-    try:
-        for name in sorted(os.listdir(outdir)):
-            if re.match(pat, name):
-                files.append(os.path.join(outdir, name))
-    except OSError:
-        pass
-    if files:
-        return files
-    if dataset != "speed":
-        return list_classify_time_files(outdir, dataset)
-    legacy = os.path.join(outdir, "nextminimizer_timing.txt")
-    if os.path.isfile(legacy):
-        target = os.path.realpath(legacy)
-        if os.path.isfile(target) and not target.endswith("_cold.txt"):
-            return [target]
-    # Fall back to parsing NEXTMIN_TIMING lines from timed classification_performance_*.txt
-    return list_classify_time_files(outdir, dataset)
+def nextmin_path(outdir, dataset, mhg):
+    """nextminimizer_timing_<ds>_mhg<m>.txt (PROF builds only), else None."""
+    p = os.path.join(outdir, "nextminimizer_timing_{}_mhg{}.txt".format(dataset, mhg))
+    return p if os.path.isfile(p) else None
 
 
-def classification_paths(outdir, dataset="speed"):
-    if dataset == "speed":
-        return (
-            os.path.join(outdir, "benchmark_classification.txt"),
-            os.path.join(outdir, "benchmark_report.txt"),
-        )
+def classification_paths(outdir, dataset, mhg):
     return (
-        os.path.join(outdir, "{}_classification.txt".format(dataset)),
-        os.path.join(outdir, "{}_report.txt".format(dataset)),
+        os.path.join(outdir, "{}_classification_mhg{}.txt".format(dataset, mhg)),
+        os.path.join(outdir, "{}_report_mhg{}.txt".format(dataset, mhg)),
     )
 
 
 def resolve_build_performance_path(outdir):
-    """build_performance.txt in outdir (legacy: ../fixed/results/ fallback)."""
-    direct = os.path.join(outdir, "build_performance.txt")
-    if os.path.isfile(direct):
-        return direct
-    scheme_dir = os.path.dirname(os.path.dirname(os.path.abspath(outdir)))
-    shared = os.path.join(scheme_dir, "fixed", "results", "build_performance.txt")
-    if os.path.isfile(shared):
-        return shared
-    return direct
+    return os.path.join(outdir, "build_performance.txt")
 
 
-def collect_run_metrics(run, min_abund, ref_by_seed, dataset="speed"):
+def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
+    """Metrics of ONE classify run (seed x dataset x minimum-hit-groups): wall,
+    DB-load and processing time, RSS, classified %, optional NextMinimizer/phase
+    profile and the paired agreement with the reference scheme."""
     out = run["outdir"]
     bw, br = parse_time_file(resolve_build_performance_path(out))
 
-    class_files = list_classify_time_files(out, dataset)
-    class_walls = []
-    class_rss = []
-    speeds = []
-    cls_pcts = []
-    n_reads = n_class = None
-    for cf in class_files:
-        cw, cr = parse_time_file(cf)
-        nr, nc = parse_classify_counts(cf)
-        if nr is not None:
-            n_reads = nr
-        if nc is not None:
-            n_class = nc
-        if cw is not None:
-            class_walls.append(cw)
-            if cw > 0 and nr:
-                speeds.append((nr / 1e6) / (cw / 60.0))
-        if cr is not None:
-            class_rss.append(cr)
-        if nr and nc is not None:
-            cls_pcts.append(100.0 * nc / nr)
+    cf = perf_path(out, dataset, mhg)
+    class_s, class_gb = parse_time_file(cf)
+    proc_s = parse_processing_s(cf)
+    n_reads, n_class = parse_classify_counts(cf)
+    db_load_s = None
+    if class_s is not None and proc_s is not None:
+        # /usr/bin/time prints the wall clock to 10 ms; processing is in ms
+        db_load_s = max(0.0, class_s - proc_s)
+    speed = None
+    dur = proc_s if proc_s else class_s
+    if dur and n_reads:
+        speed = (n_reads / 1e6) / (dur / 60.0)
+    cls_pct = 100.0 * n_class / n_reads if (n_reads and n_class is not None) else None
 
-    class_s_mean, class_s_std = mean_std(class_walls)
-    class_gb_mean, class_gb_std = mean_std(class_rss)
-    speed_mean, speed_std = mean_std(speeds)
-    cls_pct_mean, cls_pct_std = mean_std(cls_pcts)
-    n_classify = len(class_walls)
-
-    nextmin_files = list_nextmin_timing_files(out, dataset)
-    nextmin_s_vals = []
-    nextmin_ns_vals = []
-    nextmin_calls_vals = []
-    nextmin_cpm_vals = []
-    nextmin_frac_vals = []
-    scan_s_vals = []
-    lookup_s_vals = []
-    resolve_s_vals = []
-    lookups_vals = []
-    repeats_vals = []
-    lookups_pm_vals = []
-    repeats_pm_vals = []
-    lookup_frac_vals = []
-    uhs_vals = []
-    non_uhs_vals = []
-    uhs_frac_vals = []
-    non_uhs_frac_vals = []
-    for i, nf in enumerate(nextmin_files):
-        nm = parse_nextmin_timing_file(nf)
-        if not nm:
-            continue
-        ns = nm.get("nextmin_s")
-        npc = nm.get("ns_per_call")
-        calls = nm.get("calls")
-        cpm = nm.get("calls_per_Mbp")
-        if ns is not None:
-            nextmin_s_vals.append(ns)
-            if i < len(class_walls) and class_walls[i] and class_walls[i] > 0:
-                nextmin_frac_vals.append(100.0 * ns / class_walls[i])
-        if npc is not None:
-            nextmin_ns_vals.append(npc)
-        if calls is not None:
-            nextmin_calls_vals.append(calls)
-        if cpm is not None:
-            nextmin_cpm_vals.append(cpm)
-        for key, bucket in (
-            ("scan_s", scan_s_vals),
-            ("lookup_s", lookup_s_vals),
-            ("resolve_s", resolve_s_vals),
-            ("lookups", lookups_vals),
-            ("repeats", repeats_vals),
-            ("lookups_per_Mbp", lookups_pm_vals),
-            ("repeats_per_Mbp", repeats_pm_vals),
-            ("lookup_frac_pct", lookup_frac_vals),
-            ("uhs", uhs_vals),
-            ("non_uhs", non_uhs_vals),
-            ("uhs_frac_pct", uhs_frac_vals),
-            ("non_uhs_frac_pct", non_uhs_frac_vals),
-        ):
-            if key in nm:
-                bucket.append(nm[key])
-
-    nextmin_s_mean, nextmin_s_std = mean_std(nextmin_s_vals)
-    nextmin_ns_mean, nextmin_ns_std = mean_std(nextmin_ns_vals)
-    nextmin_calls_mean, nextmin_calls_std = mean_std(nextmin_calls_vals)
-    nextmin_cpm_mean, nextmin_cpm_std = mean_std(nextmin_cpm_vals)
-    nextmin_frac_mean, nextmin_frac_std = mean_std(nextmin_frac_vals)
-    scan_s_mean, scan_s_std = mean_std(scan_s_vals)
-    lookup_s_mean, lookup_s_std = mean_std(lookup_s_vals)
-    resolve_s_mean, resolve_s_std = mean_std(resolve_s_vals)
-    lookups_mean, lookups_std = mean_std(lookups_vals)
-    repeats_mean, repeats_std = mean_std(repeats_vals)
-    lookups_pm_mean, lookups_pm_std = mean_std(lookups_pm_vals)
-    repeats_pm_mean, repeats_pm_std = mean_std(repeats_pm_vals)
-    lookup_frac_mean, lookup_frac_std = mean_std(lookup_frac_vals)
-    uhs_mean, uhs_std = mean_std(uhs_vals)
-    non_uhs_mean, non_uhs_std = mean_std(non_uhs_vals)
-    uhs_frac_mean, uhs_frac_std = mean_std(uhs_frac_vals)
-    non_uhs_frac_mean, non_uhs_frac_std = mean_std(non_uhs_frac_vals)
+    nm = parse_nextmin_timing_file(nextmin_path(out, dataset, mhg) or cf) or {}
+    nextmin_frac = None
+    if nm.get("nextmin_s") is not None and class_s:
+        nextmin_frac = 100.0 * nm["nextmin_s"] / class_s
 
     mape_g = mape_s = l1_g = conc = None
     class_conc = jaccard = newly_cls = newly_uncls = None
-    class_path, report_path = classification_paths(out, dataset)
+    class_path, report_path = classification_paths(out, dataset, mhg)
     ref = ref_by_seed.get(run["seed_idx"]) or ref_by_seed.get(0)
-    if ref and run["context"] != ref["context"]:
-        _, ref_report = classification_paths(ref["outdir"], dataset)
-        ref_class, _ = classification_paths(ref["outdir"], dataset)
+    if ref and ref["outdir"] != out:
+        ref_class, ref_report = classification_paths(ref["outdir"], dataset, mhg)
         ref_total, ref_rows = parse_kraken_report(ref_report)
         ref_g = abundance_at_rank(ref_rows, ref_total, "G")
         ref_s = abundance_at_rank(ref_rows, ref_total, "S")
@@ -692,52 +556,32 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset="speed"):
 
     return {
         "dataset": dataset,
+        "minimum_hit_groups": mhg,
         "build_s": bw,
         "build_gb": br,
-        "class_s": class_s_mean,
-        "class_s_std": class_s_std,
-        "class_gb": class_gb_mean,
-        "class_gb_std": class_gb_std,
-        "mrd_min": speed_mean,
-        "mrd_min_std": speed_std,
-        "cls_pct": cls_pct_mean,
-        "cls_pct_std": cls_pct_std,
-        "n_classify": n_classify,
-        "class_walls": class_walls,
-        "nextmin_s": nextmin_s_mean,
-        "nextmin_s_std": nextmin_s_std,
-        "nextmin_ns": nextmin_ns_mean,
-        "nextmin_ns_std": nextmin_ns_std,
-        "nextmin_calls": nextmin_calls_mean,
-        "nextmin_calls_std": nextmin_calls_std,
-        "nextmin_cpm": nextmin_cpm_mean,
-        "nextmin_cpm_std": nextmin_cpm_std,
-        "nextmin_frac": nextmin_frac_mean,
-        "nextmin_frac_std": nextmin_frac_std,
-        "uhs": uhs_mean,
-        "uhs_std": uhs_std,
-        "non_uhs": non_uhs_mean,
-        "non_uhs_std": non_uhs_std,
-        "uhs_frac": uhs_frac_mean,
-        "uhs_frac_std": uhs_frac_std,
-        "non_uhs_frac": non_uhs_frac_mean,
-        "non_uhs_frac_std": non_uhs_frac_std,
-        "scan_s": scan_s_mean,
-        "scan_s_std": scan_s_std,
-        "lookup_s": lookup_s_mean,
-        "lookup_s_std": lookup_s_std,
-        "resolve_s": resolve_s_mean,
-        "resolve_s_std": resolve_s_std,
-        "lookups": lookups_mean,
-        "lookups_std": lookups_std,
-        "repeats": repeats_mean,
-        "repeats_std": repeats_std,
-        "lookups_pm": lookups_pm_mean,
-        "lookups_pm_std": lookups_pm_std,
-        "repeats_pm": repeats_pm_mean,
-        "repeats_pm_std": repeats_pm_std,
-        "lookup_frac": lookup_frac_mean,
-        "lookup_frac_std": lookup_frac_std,
+        "class_s": class_s,
+        "db_load_s": db_load_s,
+        "class_proc_s": proc_s,
+        "class_gb": class_gb,
+        "mrd_min": speed,
+        "cls_pct": cls_pct,
+        "nextmin_s": nm.get("nextmin_s"),
+        "nextmin_ns": nm.get("ns_per_call"),
+        "nextmin_calls": nm.get("calls"),
+        "nextmin_cpm": nm.get("calls_per_Mbp"),
+        "nextmin_frac": nextmin_frac,
+        "uhs": nm.get("uhs"),
+        "non_uhs": nm.get("non_uhs"),
+        "uhs_frac": nm.get("uhs_frac_pct"),
+        "non_uhs_frac": nm.get("non_uhs_frac_pct"),
+        "scan_s": nm.get("scan_s"),
+        "lookup_s": nm.get("lookup_s"),
+        "resolve_s": nm.get("resolve_s"),
+        "lookups": nm.get("lookups"),
+        "repeats": nm.get("repeats"),
+        "lookups_pm": nm.get("lookups_per_Mbp"),
+        "repeats_pm": nm.get("repeats_per_Mbp"),
+        "lookup_frac": nm.get("lookup_frac_pct"),
         "mape_g": mape_g,
         "mape_s": mape_s,
         "l1_g": l1_g,
@@ -748,50 +592,6 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset="speed"):
         "newly_unclassified_pct": newly_uncls,
         "n_reads": n_reads,
     }
-
-
-SKIP_EXPORT_KEYS = frozenset({"class_walls"})
-
-PER_SEED_FIELDS = [
-    "scheme",
-    "dataset",
-    "seed_idx",
-    "context",
-    "seed",
-    "build_s",
-    "build_gb",
-    "class_s",
-    "class_s_std",
-    "class_gb",
-    "class_gb_std",
-    "mrd_min",
-    "mrd_min_std",
-    "cls_pct",
-    "cls_pct_std",
-    "n_classify",
-    "n_reads",
-    "nextmin_s",
-    "nextmin_s_std",
-    "nextmin_ns",
-    "nextmin_cpm",
-    "nextmin_frac",
-    "scan_s",
-    "lookup_s",
-    "resolve_s",
-    "lookups_pm",
-    "repeats_pm",
-    "lookup_frac",
-    "uhs_frac",
-    "non_uhs_frac",
-    "mape_g",
-    "mape_s",
-    "l1_g",
-    "concordance",
-    "classified_concordance",
-    "jaccard",
-    "newly_classified_pct",
-    "newly_unclassified_pct",
-]
 
 
 def _scheme_base(name):
@@ -859,140 +659,130 @@ def parse_density_summary(path):
     return out
 
 
-def load_density_by_scheme(run_dir):
-    for name in (
-        os.path.join("tables", "density_per_seed.csv"),
-        "density_per_seed.csv",
-        "minimizer_density.csv",
-        "minimizer_density_benchmark.txt",
-        "minimizer_density_summary.txt",
-    ):
+DENSITY_FILES = (
+    os.path.join("tables", "minimizer_density.csv"),
+    "minimizer_density.csv",
+)
+
+
+def load_density_rows(run_dir):
+    """Per-(scheme, seed) density rows ({scheme, seed_idx, l, k, w, fac_expected,
+    fac_particular, ns_per_minimizer, ...}) of the run root, from the density
+    microbenchmark CSV. Schemes missing from the CSV fall back to the
+    scheme-level summary text (one row per scheme, no seed_idx)."""
+    rows = []
+    for name in DENSITY_FILES:
+        path = os.path.join(run_dir, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                scheme = _scheme_base((row.get("scheme") or "").strip())
+                if not scheme:
+                    continue
+                rec = {"scheme": scheme}
+                for k, v in row.items():
+                    if k in ("scheme", "toggle_hex", "variant", "context") or v in (None, ""):
+                        continue
+                    try:
+                        rec[k] = int(v) if k == "seed_idx" else float(v)
+                    except ValueError:
+                        pass
+                if "fac_expected" in rec or "fac_particular" in rec:
+                    rows.append(rec)
+        if rows:
+            break
+    have = set(r["scheme"] for r in rows)
+    for name in ("minimizer_density_benchmark.txt", "minimizer_density_summary.txt"):
         parsed = parse_density_summary(os.path.join(run_dir, name))
         if parsed:
-            return parsed
-    return {}
+            for scheme, rec in parsed.items():
+                if scheme not in have:
+                    row = {"scheme": scheme}
+                    row.update(rec)
+                    rows.append(row)
+            break
+    return rows
 
 
-def pearson_r(xs, ys):
-    n = min(len(xs), len(ys))
-    if n < 2:
-        return None
-    xs = [float(x) for x in xs[:n]]
-    ys = [float(y) for y in ys[:n]]
-    mx = sum(xs) / n
-    my = sum(ys) / n
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
-    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
-    if dx == 0.0 or dy == 0.0:
-        return None
-    return num / (dx * dy)
+ACCURACY_KIND = {
+    "accuracy_strain_exclusion": "labeled",
+    "accuracy_fda_argos": "argos",
+    "accuracy_cami": "cami",
+    "accuracy_mock": "mock",
+}
 
 
-def _a1_range(col, r0, r1):
-    letter = _col_letter(col)
-    return "%s%d:%s%d" % (letter, r0, letter, r1)
+def _chart_num(v):
+    if v in ("", None):
+        return 0.0
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def timing_correl_cells(fields, rows):
-    """Excel CORREL of scheme-level density factor vs build/classify time and RSS.
+def _cell_key(scheme, dataset, mhg):
+    """by_scheme key of one (scheme, dataset, minimum-hit-groups) cell."""
+    return "{} [{}, mhg{}]".format(scheme, dataset, mhg)
 
-    Uses one row per scheme (first dataset for build; each dataset for classify).
-    """
-    if not rows or "fac_expected" not in fields:
-        return {}
-    if all(r.get("fac_expected") in ("", None) for r in rows):
-        return {}
-    col = {name: i for i, name in enumerate(fields, 1)}
-    need = (
-        "fac_expected",
-        "fac_particular",
-        "build_s_mean",
-        "build_gb_mean",
-        "class_s_mean",
-        "class_gb_mean",
-    )
-    if any(k not in col for k in need):
-        return {}
-    by_ds = []
-    seen = set()
-    for i, row in enumerate(rows, 2):
-        ds = row.get("dataset") or ""
-        if ds not in seen:
-            seen.add(ds)
-            by_ds.append((ds, i, i))
-        else:
-            by_ds[-1] = (by_ds[-1][0], by_ds[-1][1], i)
-    if not by_ds:
-        return {}
-    start_c = len(fields) + 2
-    cells = {
-        (start_c, 1): "Pearson r (n=schemes)",
-        (start_c + 1, 1): "fac_expected",
-        (start_c + 2, 1): "fac_particular",
-    }
-    first_ds, br0, br1 = by_ds[0]
-    pairs = [
-        ("build wall (s)", "build_s_mean", br0, br1),
-        ("build RSS (GB)", "build_gb_mean", br0, br1),
-    ]
-    for ds, r0, r1 in by_ds:
-        tag = " [%s]" % ds if ds else ""
-        pairs.append(("classify wall (s)%s" % tag, "class_s_mean", r0, r1))
-        pairs.append(("classify RSS (GB)%s" % tag, "class_gb_mean", r0, r1))
 
-    def vals(field, r0, r1):
-        return [
-            _chart_num(rows[r - 2].get(field))
-            for r in range(r0, r1 + 1)
-        ]
-
-    for i, (label, field, r0, r1) in enumerate(pairs, 2):
-        cells[(start_c, i)] = label
-        for j, dens in enumerate(("fac_expected", "fac_particular"), 1):
-            formula = "CORREL(%s,%s)" % (
-                _a1_range(col[dens], r0, r1),
-                _a1_range(col[field], r0, r1),
-            )
-            cached = pearson_r(vals(dens, r0, r1), vals(field, r0, r1))
-            cells[(start_c + j, i)] = {
-                "formula": formula,
-                "value": cached if cached is not None else "",
-            }
-    return cells
+def _scheme_cell(name):
+    """(dataset, mhg) of a _cell_key() name; ('speed', 0) for a bare scheme."""
+    if " [" in name and name.endswith("]"):
+        inner = name[name.index("[") + 1 : -1]
+        ds, _, m = inner.rpartition(", mhg")
+        try:
+            return ds, int(m)
+        except ValueError:
+            pass
+    return "speed", 0
 
 
 def _scheme_dataset(name):
-    if " [" in name and name.endswith("]"):
-        return name[name.index("[") + 1 : -1]
-    return "speed"
+    return _scheme_cell(name)[0]
+
+
+def _scheme_mhg(name):
+    return _scheme_cell(name)[1]
 
 
 def _scheme_sort_key(name):
     return (
         DATASET_ORDER.get(_scheme_dataset(name), 9),
+        _scheme_mhg(name),
         SCHEME_ORDER.get(_scheme_base(name), 99),
         name,
     )
 
 
-def _row_sort_key(row):
+def _int0(v):
     try:
-        seed_idx = int(row.get("seed_idx") or 0)
+        return int(v)
     except (TypeError, ValueError):
-        seed_idx = 0
+        return 0
+
+
+def _row_sort_key(row):
+    seed_idx = _int0(row.get("seed_idx"))
     return (
         DATASET_ORDER.get(row.get("dataset") or "", 9),
+        _int0(row.get("minimum_hit_groups")),
         SCHEME_ORDER.get(row.get("scheme") or "", 99),
         seed_idx,
         DOMAIN_ORDER.get(row.get("domain") or "", 9),
         RANK_ORDER.get(row.get("rank") or "", 9),
         SCOPE_ORDER.get(row.get("scope") or "", 9),
         row.get("sra_run") or "",
+        row.get("group") or "",
+        str(row.get("min_frac") if row.get("min_frac") is not None else ""),
     )
 
 
-def build_export_sheets(by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=None):
+def collect_per_seed_rows(by_scheme, metrics_by_scheme):
+    """One dict per (scheme x dataset x minimum-hit-groups x seed): identity +
+    collect_run_metrics(); the export layer pivots these into the
+    `classify_runs` sheet (export_layout.build_tables)."""
     per_seed = []
     for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
         runs = by_scheme.get(scheme, [])
@@ -1001,146 +791,17 @@ def build_export_sheets(by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=N
             row = {
                 "scheme": _scheme_base(scheme),
                 "dataset": m.get("dataset") or _scheme_dataset(scheme),
+                "minimum_hit_groups": m.get("minimum_hit_groups", _scheme_mhg(scheme)),
                 "seed_idx": run.get("seed_idx"),
                 "context": run.get("context"),
                 "seed": run.get("seed"),
             }
-            for k, v in m.items():
-                if k not in SKIP_EXPORT_KEYS:
-                    row[k] = v
+            row.update(m)
             per_seed.append(row)
-
-    summary_fields = [
-        "scheme",
-        "dataset",
-        "n_seeds",
-        "fac_expected",
-        "fac_particular",
-        "ns_per_minimizer",
-        "build_s_mean",
-        "build_s_std",
-        "build_gb_mean",
-        "build_gb_std",
-        "class_s_mean",
-        "class_s_std",
-        "class_gb_mean",
-        "class_gb_std",
-        "mrd_min_mean",
-        "mrd_min_std",
-        "cls_pct_mean",
-        "cls_pct_std",
-        "nextmin_s_mean",
-        "nextmin_s_std",
-        "nextmin_ns_mean",
-        "nextmin_ns_std",
-        "lookups_pm_mean",
-        "lookups_pm_std",
-        "lookup_frac_mean",
-        "lookup_frac_std",
-    ]
-    summary = []
-    for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-        ms = metrics_by_scheme[scheme]
-        def ms_of(key):
-            return mean_std([m[key] for m in ms])
-
-        b, bs = ms_of("build_s")
-        bg, bgs = ms_of("build_gb")
-        cs, css = ms_of("class_s")
-        cg, cgs = ms_of("class_gb")
-        sp, sps = ms_of("mrd_min")
-        cp, cps = ms_of("cls_pct")
-        nms, nmss = ms_of("nextmin_s")
-        nns, nnss = ms_of("nextmin_ns")
-        lp, lps = ms_of("lookups_pm")
-        lf, lfs = ms_of("lookup_frac")
-        dens = (dens_by_scheme or {}).get(_scheme_base(scheme), {})
-        summary.append(
-            {
-                "scheme": _scheme_base(scheme),
-                "dataset": (ms[0].get("dataset") if ms else None) or _scheme_dataset(scheme),
-                "n_seeds": len(ms),
-                "fac_expected": dens.get("fac_expected"),
-                "fac_particular": dens.get("fac_particular"),
-                "ns_per_minimizer": dens.get("ns_per_minimizer"),
-                "build_s_mean": b,
-                "build_s_std": bs,
-                "build_gb_mean": bg,
-                "build_gb_std": bgs,
-                "class_s_mean": cs,
-                "class_s_std": css,
-                "class_gb_mean": cg,
-                "class_gb_std": cgs,
-                "mrd_min_mean": sp,
-                "mrd_min_std": sps,
-                "cls_pct_mean": cp,
-                "cls_pct_std": cps,
-                "nextmin_s_mean": nms,
-                "nextmin_s_std": nmss,
-                "nextmin_ns_mean": nns,
-                "nextmin_ns_std": nnss,
-                "lookups_pm_mean": lp,
-                "lookups_pm_std": lps,
-                "lookup_frac_mean": lf,
-                "lookup_frac_std": lfs,
-            }
-        )
-
-    sheets = [
-        ("scheme_summary", summary_fields, summary),
-        ("per_seed", PER_SEED_FIELDS, per_seed),
-    ]
-    return sheets
+    return per_seed
 
 
 S1_METRICS = ("sensitivity", "ppv", "f1")
-
-XLSX_TAB = {
-    "contents": "0 contents",
-    "query_sets": "1 query sets",
-    "scheme_summary": "2 timing summary",
-    "per_seed": "3 timing per seed",
-    "accuracy_strain_exclusion_summary": "4 strain-exclusion summary",
-    "accuracy_strain_exclusion": "5 strain-exclusion per seed",
-    "accuracy_fda_argos_summary": "6 FDA-ARGOS summary",
-    "accuracy_fda_argos": "7 FDA-ARGOS per experiment",
-}
-
-SHEET_BLURB = {
-    "query_sets": (
-        "Query FASTQs: sources (genomes or SRA runs), fragments per source, "
-        "paired-end fragment count, and read length"
-    ),
-    "scheme_summary": (
-        "Mean±std classify wall / RSS / NextMinimizer over seeds; "
-        "density factor and Rank ns/minimizer are scheme-level, not per dataset"
-    ),
-    "per_seed": "One row per scheme × dataset × seed (timing)",
-    "accuracy_strain_exclusion_summary": (
-        "Mason held-out genomes: mean±std sensitivity / PPV / F1 "
-        "(scheme × domain × rank)"
-    ),
-    "accuracy_strain_exclusion": (
-        "Mason held-out genomes, per seed (TP/VP/FP/FN + sens/PPV/F1)"
-    ),
-    "accuracy_fda_argos_summary": (
-        "FDA-ARGOS genus concordance mean±std over seeds: concordant, "
-        "discordant, ancestor, unclassified"
-    ),
-    "accuracy_fda_argos": (
-        "FDA-ARGOS per SRR, plus unweighted mean and pooled fragments, per seed"
-    ),
-}
-
-SHEET_ORDER = (
-    "query_sets",
-    "scheme_summary",
-    "per_seed",
-    "accuracy_strain_exclusion_summary",
-    "accuracy_strain_exclusion",
-    "accuracy_fda_argos_summary",
-    "accuracy_fda_argos",
-)
 
 ARGOS_FOUR = (
     "concordant_frac",
@@ -1156,12 +817,14 @@ def summarize_strain_exclusion(labeled_rows):
     for row in labeled_rows:
         key = (
             row.get("scheme") or "",
+            _int0(row.get("minimum_hit_groups")),
             row.get("domain") or "all",
             row.get("rank") or "",
         )
         groups[key].append(row)
     fields = [
         "scheme",
+        "minimum_hit_groups",
         "domain",
         "rank",
         "n_seeds",
@@ -1175,13 +838,14 @@ def summarize_strain_exclusion(labeled_rows):
     out = []
     for key in sorted(
         groups,
-        key=lambda k: (SCHEME_ORDER.get(k[0], 99), k[0], k[1], k[2]),
+        key=lambda k: (k[1], SCHEME_ORDER.get(k[0], 99)) + k,
     ):
         ms = groups[key]
         rec = {
             "scheme": key[0],
-            "domain": key[1],
-            "rank": key[2],
+            "minimum_hit_groups": key[1],
+            "domain": key[2],
+            "rank": key[3],
             "n_seeds": len(ms),
         }
         for k in S1_METRICS:
@@ -1209,22 +873,23 @@ def summarize_argos_concordance(argos_rows):
     by_scheme = defaultdict(list)
     n_exp_by_scheme = defaultdict(set)
     for row in argos_rows:
-        scheme = row.get("scheme") or ""
+        scheme = (row.get("scheme") or "", _int0(row.get("minimum_hit_groups")))
         if (row.get("scope") or "") == "experiment" and row.get("sra_run"):
             n_exp_by_scheme[scheme].add(row.get("sra_run"))
         if not _argos_genus_headline(row):
             continue
         by_scheme[scheme].append(row)
-    fields = ["scheme", "n_seeds", "n_experiments"] + [
+    fields = ["scheme", "minimum_hit_groups", "n_seeds", "n_experiments"] + [
         x
         for k in ARGOS_FOUR
         for x in (k.replace("_frac", "_mean"), k.replace("_frac", "_std"))
     ]
     rows = []
-    for scheme in sorted(by_scheme, key=lambda s: (SCHEME_ORDER.get(s, 99), s)):
+    for scheme in sorted(by_scheme, key=lambda s: (s[1], SCHEME_ORDER.get(s[0], 99), s[0])):
         ms = by_scheme[scheme]
         rec = {
-            "scheme": scheme,
+            "scheme": scheme[0],
+            "minimum_hit_groups": scheme[1],
             "n_seeds": len(ms),
             "n_experiments": len(n_exp_by_scheme.get(scheme) or ()),
         }
@@ -1236,34 +901,105 @@ def summarize_argos_concordance(argos_rows):
     return fields, rows
 
 
+CAMI_METRICS = ("sensitivity", "ppv", "f1", "excluded_frac", "n_scored")
+MOCK_METRICS = (
+    "precision",
+    "recall",
+    "f1",
+    "l1",
+    "bray_curtis",
+    "classified_frac",
+    "on_target_frac",
+    "off_target_frac",
+)
+MOCK_HEADLINE_MIN_FRAC = 1e-4
+
+
+def _summarize_by(rows, key_fields, metrics):
+    """Mean±std over seeds of `metrics`, grouped by key_fields (scheme first)."""
+    groups = defaultdict(list)
+    for row in rows:
+        groups[tuple(row.get(k) if row.get(k) is not None else "" for k in key_fields)].append(row)
+    fields = list(key_fields) + ["n_seeds"] + [
+        x for m in metrics for x in (m + "_mean", m + "_std")
+    ]
+    out = []
+    for key in sorted(
+        groups,
+        key=lambda k: (_int0(k[1]), SCHEME_ORDER.get(k[0], 99)) + tuple(str(x) for x in k),
+    ):
+        ms = groups[key]
+        rec = dict(zip(key_fields, key))
+        rec["n_seeds"] = len(ms)
+        for m in metrics:
+            mu, sd = mean_std([float(r[m]) for r in ms if r.get(m) not in ("", None)])
+            rec[m + "_mean"] = mu
+            rec[m + "_std"] = sd
+        out.append(rec)
+    return fields, out
+
+
+def summarize_cami(rows):
+    """CAMI (library-aware): mean±std sens / PPV / F1 / excluded fraction per scheme × group × rank."""
+    return _summarize_by(rows, ("scheme", "minimum_hit_groups", "group", "rank"), CAMI_METRICS)
+
+
+def summarize_mock(rows):
+    """Mock profile: mean±std precision / recall / F1 / L1 / BC per scheme × scope × rank × threshold."""
+    return _summarize_by(rows, ("scheme", "minimum_hit_groups", "scope", "rank", "min_frac"), MOCK_METRICS)
+
+
+METRICS_RE = re.compile(r"^(strain_exclusion|fda_argos|cami|mock)_metrics_mhg(\d+)\.tsv$")
+
+
 def load_accuracy_sheets(runs):
-    """Concat per-seed strain_exclusion_metrics.tsv / fda_argos_metrics.tsv."""
+    """Concat the per-seed <dataset>_metrics_mhg<m>.tsv files (both hit-group
+    settings; the rows carry a minimum_hit_groups column)."""
     labeled = []
     argos = []
+    cami = []
+    mock = []
     labeled_fields = []
     argos_fields = []
+    cami_fields = []
+    mock_fields = []
+    kinds = {
+        "strain_exclusion": (labeled, "sim"),
+        "fda_argos": (argos, "argos"),
+        "cami": (cami, "cami"),
+        "mock": (mock, "mock"),
+    }
     for r in runs:
         out = r["outdir"]
-        for fname, bucket, kind in (
-            ("strain_exclusion_metrics.tsv", labeled, "sim"),
-            ("simulated_metrics.tsv", labeled, "sim"),
-            ("labeled_metrics.tsv", labeled, "sim"),
-            ("fda_argos_metrics.tsv", argos, "argos"),
-            ("argos_metrics.tsv", argos, "argos"),
-        ):
-            path = os.path.join(out, fname)
-            if not os.path.isfile(path):
+        try:
+            names = sorted(os.listdir(out))
+        except OSError:
+            continue
+        for fname in names:
+            m = METRICS_RE.match(fname)
+            if not m:
                 continue
-            fields, rows = load_table(path)
+            bucket, kind = kinds[m.group(1)]
+            file_mhg = int(m.group(2))
+            fields, rows = load_table(os.path.join(out, fname))
             extra = ["seed_idx", "seed", "context"]
             for row in rows:
+                if row.get("minimum_hit_groups") in (None, ""):
+                    row["minimum_hit_groups"] = file_mhg
                 row["seed_idx"] = r.get("seed_idx")
                 row["seed"] = r.get("seed")
                 row["context"] = r.get("context")
                 bucket.append(row)
+            if "minimum_hit_groups" not in fields:
+                fields = list(fields)
+                fields.insert(fields.index("scheme") + 1 if "scheme" in fields else 0, "minimum_hit_groups")
             merged = extra + [f for f in fields if f not in extra]
             if kind == "sim":
                 labeled_fields = merged
+            elif kind == "cami":
+                cami_fields = merged
+            elif kind == "mock":
+                mock_fields = merged
             else:
                 argos_fields = merged
     labeled.sort(key=_row_sort_key)
@@ -1281,6 +1017,18 @@ def load_accuracy_sheets(runs):
         if srows:
             sheets.append(("accuracy_fda_argos_summary", sfields, srows))
         sheets.append(("accuracy_fda_argos", argos_fields, argos))
+    cami.sort(key=_row_sort_key)
+    mock.sort(key=_row_sort_key)
+    if cami:
+        sfields, srows = summarize_cami(cami)
+        if srows:
+            sheets.append(("accuracy_cami_summary", sfields, srows))
+        sheets.append(("accuracy_cami", cami_fields, cami))
+    if mock:
+        sfields, srows = summarize_mock(mock)
+        if srows:
+            sheets.append(("accuracy_mock_summary", sfields, srows))
+        sheets.append(("accuracy_mock", mock_fields, mock))
     return sheets
 
 
@@ -1337,6 +1085,29 @@ def _truth_source_stats(path):
     return n_src, "%d–%d" % (counts[0], counts[-1])
 
 
+def _truth_taxon_stats(path):
+    """(distinct true taxids, None) for read-level truth without per-source IDs (CAMI)."""
+    taxa = set()
+    if not path or not os.path.isfile(path):
+        return 0, None
+    with open(path) as f:
+        for line in f:
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) > 1:
+                taxa.add(parts[1])
+    return len(taxa), None
+
+
+def _composition_stats(path):
+    """(expected taxa, None) for a mock composition table."""
+    if not path or not os.path.isfile(path):
+        return 0, None
+    with open(path) as f:
+        return max(0, sum(1 for line in f if line.strip()) - 1), None
+
+
 def query_sets_sheet(data_dir):
     """One row per query FASTQ directory under data/."""
     if not data_dir or not os.path.isdir(data_dir):
@@ -1351,6 +1122,16 @@ def query_sets_sheet(data_dir):
             "fda-argos",
             "SRA experiments (Table S5)",
             os.path.join(data_dir, "fda-argos"),
+        ),
+        (
+            "cami",
+            "CAMI II marine genomes (distinct true taxids)",
+            os.path.join(data_dir, "cami"),
+        ),
+        (
+            "mock",
+            "mock community strains (ZymoBIOMICS D6300)",
+            os.path.join(data_dir, "mock"),
         ),
     )
     fields = [
@@ -1371,7 +1152,12 @@ def query_sets_sheet(data_dir):
         if not os.path.isfile(r1):
             continue
         n, len_min, len_max = _fastq_n_and_len(r1)
-        n_src, per_src = _truth_source_stats(os.path.join(d, "truth.tsv"))
+        if ds == "cami":
+            n_src, per_src = _truth_taxon_stats(os.path.join(d, "truth.tsv"))
+        elif ds == "mock":
+            n_src, per_src = _composition_stats(os.path.join(d, "composition.csv"))
+        else:
+            n_src, per_src = _truth_source_stats(os.path.join(d, "truth.tsv"))
         if len_min == len_max:
             read_len = len_min
             total_bp = n * read_len * (2 if os.path.isfile(r2) else 1)
@@ -1395,378 +1181,6 @@ def query_sets_sheet(data_dir):
         return None
     return ("query_sets", fields, rows)
 
-
-def _contents_sheet(sheets):
-    fields = ["tab", "csv", "section", "description"]
-    rows = []
-    for name, _fields, _rows in sheets:
-        if name == "contents":
-            continue
-        rows.append(
-            {
-                "tab": XLSX_TAB.get(name, name)[:31],
-                "csv": name + ".csv",
-                "section": (
-                    "query sets"
-                    if name == "query_sets"
-                    else "strain-exclusion"
-                    if "strain_exclusion" in name
-                    else "FDA-ARGOS"
-                    if "fda_argos" in name
-                    else "timing"
-                ),
-                "description": SHEET_BLURB.get(name, ""),
-            }
-        )
-    return ("contents", fields, rows)
-
-
-def organize_sheets(timing_sheets, extra_sheets):
-    """Timing first, then strain-exclusion accuracy, then FDA-ARGOS concordance."""
-    by_name = {}
-    for trip in list(timing_sheets) + list(extra_sheets or []):
-        by_name[trip[0]] = trip
-    ordered = []
-    for name in SHEET_ORDER:
-        if name in by_name:
-            ordered.append(by_name.pop(name))
-    ordered.extend(by_name[k] for k in sorted(by_name))
-    return [_contents_sheet(ordered)] + ordered
-
-
-def _chart_num(v):
-    if v in ("", None):
-        return 0.0
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _ordered_schemes(rows):
-    seen = []
-    have = set()
-    for row in rows:
-        s = row.get("scheme") or ""
-        if s and s not in have:
-            have.add(s)
-            seen.append(s)
-    return sorted(seen, key=lambda s: (SCHEME_ORDER.get(s, 99), s))
-
-
-def _mean_std_series(rows, schemes, series_name, mean_key, std_key, match):
-    means, stds = [], []
-    for sch in schemes:
-        hit = None
-        for row in rows:
-            if (row.get("scheme") or "") != sch:
-                continue
-            ok = True
-            for k, v in match.items():
-                if (row.get(k) or "") != v:
-                    ok = False
-                    break
-            if ok:
-                hit = row
-                break
-        means.append(_chart_num(hit.get(mean_key) if hit else None))
-        stds.append(_chart_num(hit.get(std_key) if hit and std_key else None))
-    if not any(means) and not any(stds):
-        return None
-    return {"name": series_name, "means": means, "stds": stds}
-
-
-def _charts_by_dataset(rows, schemes, metrics):
-    """Same layout as timing: clustered columns, one series per dataset."""
-    datasets = []
-    have = set()
-    for row in rows:
-        ds = row.get("dataset") or ""
-        if ds and ds not in have:
-            have.add(ds)
-            datasets.append(ds)
-    datasets.sort(key=lambda d: DATASET_ORDER.get(d, 9))
-    charts = []
-    for title, mean_k, std_k in metrics:
-        series = []
-        for ds in datasets:
-            ser = _mean_std_series(
-                rows, schemes, ds, mean_k, std_k, {"dataset": ds}
-            )
-            if ser:
-                series.append(ser)
-        if series:
-            charts.append(
-                {"title": title, "y_title": title, "cats": schemes, "series": series}
-            )
-    return charts
-
-
-def _chart_one_series(rows, schemes, title, mean_k, std_k):
-    """Library-level metric (same across query datasets): one series, no breakdown."""
-    ser = _mean_std_series(rows, schemes, title, mean_k, std_k, {})
-    if not ser:
-        return None
-    return {"title": title, "y_title": title, "cats": schemes, "series": [ser]}
-
-
-def _class_time_by_scheme(timing_rows, dataset_names):
-    """scheme -> (class_s_mean, class_s_std) for the first matching dataset."""
-    want = set(dataset_names)
-    out = {}
-    for row in timing_rows or []:
-        ds = row.get("dataset") or ""
-        if ds not in want:
-            continue
-        sch = row.get("scheme") or ""
-        if sch in out:
-            continue
-        out[sch] = (
-            _chart_num(row.get("class_s_mean")),
-            _chart_num(row.get("class_s_std")),
-        )
-    return out
-
-
-def _scatter_metric_vs_classify(
-    rows, schemes, title, y_title, mean_k, std_k, class_times, match
-):
-    """One point per scheme: x = classify wall, y = metric. Legend = scheme."""
-    series = []
-    for sch in schemes:
-        hit = None
-        for row in rows:
-            if (row.get("scheme") or "") != sch:
-                continue
-            ok = True
-            for k, v in match.items():
-                if (row.get(k) or "") != v:
-                    ok = False
-                    break
-            if ok:
-                hit = row
-                break
-        if not hit:
-            continue
-        xs = class_times.get(sch)
-        if not xs:
-            continue
-        series.append(
-            {
-                "name": sch,
-                "x": [xs[0]],
-                "y": [_chart_num(hit.get(mean_k))],
-                "stds": [_chart_num(hit.get(std_k))],
-            }
-        )
-    if not series:
-        return None
-    return {
-        "type": "scatter",
-        "title": title,
-        "x_title": "Classify wall (s)",
-        "y_title": y_title,
-        "series": series,
-    }
-
-
-def charts_for_sheet(csv_name, rows, timing_rows=None):
-    """Column charts with mean±std error bars; x-axis = scheme.
-
-    Accuracy summary sheets also get scatter charts of each metric vs classify time.
-    """
-    if not rows:
-        return []
-    schemes = _ordered_schemes(rows)
-    if not schemes:
-        return []
-    charts = []
-    if csv_name == "scheme_summary":
-        build_wall = _chart_one_series(
-            rows, schemes, "Build wall (s)", "build_s_mean", "build_s_std"
-        )
-        build_mem = _chart_one_series(
-            rows, schemes, "Build RSS (GB)", "build_gb_mean", "build_gb_std"
-        )
-        classify = _charts_by_dataset(
-            rows,
-            schemes,
-            (
-                ("Classify wall (s)", "class_s_mean", "class_s_std"),
-                ("Classify RSS (GB)", "class_gb_mean", "class_gb_std"),
-            ),
-        )
-        fac_exp = _mean_std_series(
-            rows, schemes, "expected (random DNA)", "fac_expected", None, {}
-        )
-        fac_part = _mean_std_series(
-            rows, schemes, "particular (DB library)", "fac_particular", None, {}
-        )
-        fac_series = [s for s in (fac_exp, fac_part) if s]
-        density = []
-        if fac_series:
-            density.append(
-                {
-                    "title": "Minimizer density factor",
-                    "y_title": "Density factor",
-                    "y_min": 1.0,
-                    "y_max": 2.1,
-                    "cats": schemes,
-                    "series": fac_series,
-                }
-            )
-        lookups = _charts_by_dataset(
-            rows,
-            schemes,
-            (("Lookups / Mbp", "lookups_pm_mean", "lookups_pm_std"),),
-        )
-        nextmin = _charts_by_dataset(
-            rows,
-            schemes,
-            (("NextMinimizer (s)", "nextmin_s_mean", "nextmin_s_std"),),
-        )
-        rank = _chart_one_series(
-            rows, schemes, "Rank (ns)", "ns_per_minimizer", None
-        )
-        charts = (
-            ([build_wall] if build_wall else [])
-            + ([build_mem] if build_mem else [])
-            + classify
-            + density
-            + lookups
-            + nextmin
-            + ([rank] if rank else [])
-        )
-    elif csv_name == "accuracy_strain_exclusion_summary":
-        slices = []
-        for row in rows:
-            sl = (row.get("domain") or "", row.get("rank") or "")
-            if sl not in slices:
-                slices.append(sl)
-        slices.sort(
-            key=lambda sl: (
-                DOMAIN_ORDER.get(sl[0], 9),
-                RANK_ORDER.get(sl[1], 9),
-                sl,
-            )
-        )
-        class_times = _class_time_by_scheme(
-            timing_rows, ("strain-exclusion", "simulated", "labeled")
-        )
-        for title, mean_k, std_k in (
-            ("Sensitivity", "sensitivity_mean", "sensitivity_std"),
-            ("PPV", "ppv_mean", "ppv_std"),
-            ("F1", "f1_mean", "f1_std"),
-        ):
-            series = []
-            for domain, rank in slices:
-                label = "{} / {}".format(domain, rank) if domain else rank
-                ser = _mean_std_series(
-                    rows,
-                    schemes,
-                    label,
-                    mean_k,
-                    std_k,
-                    {"domain": domain, "rank": rank},
-                )
-                if ser:
-                    series.append(ser)
-            if series:
-                charts.append(
-                    {
-                        "title": title,
-                        "y_title": title,
-                        "cats": schemes,
-                        "series": series,
-                    }
-                )
-            spec = _scatter_metric_vs_classify(
-                rows,
-                schemes,
-                "{} vs classify time (all / genus)".format(title),
-                title,
-                mean_k,
-                std_k,
-                class_times,
-                {"domain": "all", "rank": "genus"},
-            )
-            if spec:
-                charts.append(spec)
-    elif csv_name == "accuracy_fda_argos_summary":
-        class_times = _class_time_by_scheme(
-            timing_rows, ("fda-argos", "argos")
-        )
-        for title, mean_k, std_k in (
-            ("Concordant", "concordant_mean", "concordant_std"),
-            ("Discordant", "discordant_mean", "discordant_std"),
-            ("Ancestor", "ancestor_mean", "ancestor_std"),
-            ("Unclassified", "unclassified_mean", "unclassified_std"),
-        ):
-            ser = _mean_std_series(rows, schemes, title, mean_k, std_k, {})
-            if ser:
-                charts.append(
-                    {
-                        "title": title + " (fraction of fragments)",
-                        "y_title": "Fraction",
-                        "cats": schemes,
-                        "series": [ser],
-                    }
-                )
-            spec = _scatter_metric_vs_classify(
-                rows,
-                schemes,
-                "{} vs classify time".format(title),
-                title,
-                mean_k,
-                std_k,
-                class_times,
-                {},
-            )
-            if spec:
-                charts.append(spec)
-    return charts
-
-
-def export_tables(
-    out_txt, by_scheme, metrics_by_scheme, ref_name, extra_sheets=None, dens_by_scheme=None
-):
-    out_dir = os.path.dirname(os.path.abspath(out_txt)) or "."
-    csv_dir = os.path.join(out_dir, "tables")
-    xlsx = os.path.splitext(out_txt)[0] + ".xlsx"
-    sheets = organize_sheets(
-        build_export_sheets(
-            by_scheme, metrics_by_scheme, ref_name, dens_by_scheme=dens_by_scheme
-        ),
-        extra_sheets,
-    )
-    xlsx_sheets = []
-    charts_by_tab = {}
-    extra_cells_by_tab = {}
-    timing_rows = []
-    timing_fields = []
-    for name, fields, rows in sheets:
-        if name == "scheme_summary":
-            timing_rows = rows
-            timing_fields = fields
-            break
-    correl = timing_correl_cells(timing_fields, timing_rows)
-    for name, fields, rows in sheets:
-        tab = XLSX_TAB.get(name, name)
-        xlsx_sheets.append((tab, fields, rows))
-        charts = charts_for_sheet(name, rows, timing_rows=timing_rows)
-        if charts:
-            charts_by_tab[tab] = charts
-        if name == "scheme_summary" and correl:
-            extra_cells_by_tab[tab] = correl
-    write_tables(
-        xlsx,
-        csv_dir,
-        sheets,
-        xlsx_sheets=xlsx_sheets,
-        charts_by_name=charts_by_tab,
-        extra_cells_by_name=extra_cells_by_tab,
-    )
-    return xlsx, csv_dir
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -1794,18 +1208,28 @@ def main():
         by_scheme[r["scheme"]].append(r)
 
     orig_runs = runs
-    datasets = []
+    cells = []
     for r in runs:
-        for d in discover_classify_datasets(r["outdir"]):
-            if d not in datasets:
-                datasets.append(d)
-    if not datasets:
-        datasets = ["speed"]
-    use_ds_keys = not (len(datasets) == 1 and datasets[0] == "speed")
+        for c in discover_classify_cells(r["outdir"]):
+            if c not in cells:
+                cells.append(c)
+    cells.sort(key=lambda c: (DATASET_ORDER.get(c[0], 9), c[0], c[1]))
+    if not cells:
+        print(
+            "Error: no classification_performance_<dataset>_mhg<N>.txt under the results "
+            "dirs of {} (this tree was not produced by the current run_benchmark.sh)".format(
+                manifest
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    datasets = []
+    for d, _m in cells:
+        if d not in datasets:
+            datasets.append(d)
+    mhgs = sorted(set(m for _d, m in cells))
 
     ref_name = REF_SCHEME if REF_SCHEME in by_scheme else None
-    if ref_name is None and "RandomXor" in by_scheme:
-        ref_name = "RandomXor"  # older RandomXor-labeled manifests
     ref_runs = by_scheme.get(ref_name, []) if ref_name else []
     ref_by_seed = {}
     for r in ref_runs:
@@ -1813,45 +1237,27 @@ def main():
     if not ref_by_seed and runs:
         ref_by_seed[0] = runs[0]
 
-    if use_ds_keys:
-        flat = defaultdict(list)
-        for ds in datasets:
-            for scheme, rs in list(by_scheme.items()):
-                tagged = []
-                for r in rs:
-                    rr = dict(r)
-                    rr["context"] = "{} [{}]".format(r["context"], ds)
-                    tagged.append(rr)
-                flat["{} [{}]".format(scheme, ds)] = tagged
-        by_scheme = flat
+    # one cell per scheme x dataset x minimum-hit-groups
+    flat = defaultdict(list)
+    for ds, mhg in cells:
+        for scheme, rs in list(by_scheme.items()):
+            tagged = []
+            for r in rs:
+                if (ds, mhg) not in discover_classify_cells(r["outdir"]):
+                    continue
+                rr = dict(r)
+                rr["context"] = "{} [{}, mhg{}]".format(r["context"], ds, mhg)
+                tagged.append(rr)
+            if tagged:
+                flat[_cell_key(scheme, ds, mhg)] = tagged
+    by_scheme = flat
 
-    # Column widths: never trim run/scheme names (GM DNA contexts are >30 chars).
-    ctx_lens = [len(r["context"]) for r in orig_runs]
-    if use_ds_keys:
-        extra = max(len(d) for d in datasets) + 3
-        ctx_lens = [n + extra for n in ctx_lens]
+    # Column widths: never trim run/scheme names.
+    ctx_lens = [len(r["context"]) + max(len(d) for d in datasets) + 10 for r in orig_runs]
     run_w = max([len("Run")] + ctx_lens)
     scheme_w = max([len("Scheme")] + [len(s) for s in by_scheme.keys()])
 
     n_seeds = max(len(v) for v in by_scheme.values())
-    n_classify_reps = 1
-    for r in runs:
-        nfile = os.path.join(r["outdir"], "n_classify_repeats.txt")
-        if os.path.isfile(nfile):
-            try:
-                with open(nfile) as f:
-                    n_classify_reps = max(n_classify_reps, int(f.read().strip()))
-            except (ValueError, OSError):
-                pass
-        else:
-            n_classify_reps = max(
-                n_classify_reps,
-                max(
-                    len(list_classify_time_files(r["outdir"], d))
-                    for d in discover_classify_datasets(r["outdir"])
-                )
-                or 0,
-            )
 
     lines = []
 
@@ -1863,76 +1269,42 @@ def main():
     emit("Kraken 2 minimizer-scheme benchmark — statistical summary")
     emit("Metrics: Wood et al. Genome Biol 2019 (PMC6883579)")
     emit(
-        "Seeds: n={}  |  classify repeats/seed: n={}  |  datasets: {}  |  mean±sample-std".format(
-            n_seeds, n_classify_reps, ",".join(datasets)
+        "Seeds: n={}  |  one classify per seed x dataset x minimum-hit-groups  |  "
+        "datasets: {}  |  minimum-hit-groups: {}  |  mean±sample-std over seeds".format(
+            n_seeds, ",".join(datasets), ",".join(str(m) for m in mhgs)
         )
     )
     emit("=" * 78)
 
-    # Per-seed detail (classify columns are mean±std over repeats)
+    # Per-seed detail (one classify run per row)
     emit("")
-    emit("1. PER-SEED PERFORMANCE  (Class* = mean±std over {} classify repeats)".format(
-        n_classify_reps
-    ))
+    emit("1. PER-SEED PERFORMANCE  (one classify run per row; Wall = DBLoad + Proc)")
     emit(
-        "{:<{rw}} {:>8} {:>7} {:>14} {:>14} {:>14} {:>10}".format(
-            "Run", "Build(s)", "BldGB", "Class(s)", "ClsGB", "Mrd/min", "Class%",
+        "{:<{rw}} {:>8} {:>7} {:>9} {:>9} {:>9} {:>7} {:>9} {:>8}".format(
+            "Run", "Build(s)", "BldGB", "Wall(s)", "DBLoad(s)", "Proc(s)", "ClsGB",
+            "Mrd/min", "Class%",
             rw=run_w,
         )
     )
-    emit("-" * (run_w + 68))
+    emit("-" * (run_w + 76))
 
     metrics_by_scheme = defaultdict(list)
     for scheme in sorted(by_scheme.keys(), key=_scheme_sort_key):
-        ds = _scheme_dataset(scheme) if use_ds_keys else "speed"
+        ds, mhg = _scheme_cell(scheme)
         for r in by_scheme[scheme]:
-            m = collect_run_metrics(r, args.min_abund, ref_by_seed, dataset=ds)
+            m = collect_run_metrics(r, args.min_abund, ref_by_seed, ds, mhg)
             metrics_by_scheme[scheme].append(m)
             emit(
-                "{:<{rw}} {:>8} {:>7} {:>14} {:>14} {:>14} {:>10}".format(
+                "{:<{rw}} {:>8} {:>7} {:>9} {:>9} {:>9} {:>7} {:>9} {:>8}".format(
                     r["context"],
                     fmt(m["build_s"]),
                     fmt(m["build_gb"]),
-                    fmt_ms(m["class_s"], m["class_s_std"]),
-                    fmt_ms(m["class_gb"], m["class_gb_std"]),
-                    fmt_ms(m["mrd_min"], m["mrd_min_std"]),
-                    fmt_ms(m["cls_pct"], m["cls_pct_std"]),
-                    rw=run_w,
-                )
-            )
-
-    # Classify repeat detail (optional compact percentiles if many repeats)
-    emit("")
-    emit("1b. CLASSIFY REPEAT DISTRIBUTION (per seed, wall seconds)")
-    emit(
-        "{:<{rw}} {:>5} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}".format(
-            "Run", "n", "mean", "std", "min", "p50", "p90", "max",
-            rw=run_w,
-        )
-    )
-    emit("-" * (run_w + 55))
-    for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-        for r, m in zip(by_scheme[scheme], metrics_by_scheme[scheme]):
-            walls = sorted(m.get("class_walls") or [])
-            if not walls:
-                emit(
-                    "{:<{rw}} {:>5} {:>8}".format(
-                        r["context"], 0, "—", rw=run_w
-                    )
-                )
-                continue
-            p50 = walls[(len(walls) - 1) // 2]
-            p90 = walls[int(round(0.9 * (len(walls) - 1)))]
-            emit(
-                "{:<{rw}} {:>5} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}".format(
-                    r["context"],
-                    len(walls),
                     fmt(m["class_s"]),
-                    fmt(m["class_s_std"]),
-                    fmt(walls[0]),
-                    fmt(p50),
-                    fmt(p90),
-                    fmt(walls[-1]),
+                    fmt(m["db_load_s"]),
+                    fmt(m["class_proc_s"]),
+                    fmt(m["class_gb"]),
+                    fmt(m["mrd_min"]),
+                    fmt(m["cls_pct"]),
                     rw=run_w,
                 )
             )
@@ -1944,7 +1316,7 @@ def main():
     if has_nextmin:
         emit("")
         emit(
-            "1c. NextMinimizer TIMING  (rank calc; mean±std over classify repeats; "
+            "1c. NextMinimizer TIMING  (rank calc, one classify run per row; "
             "uhs = toggle/tb path used, non_uhs = ∞ early-out)"
         )
         if has_uhs:
@@ -1961,14 +1333,14 @@ def main():
                     emit(
                         "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12} {:>12} {:>12} {:>8}".format(
                             r["context"],
-                            fmt_ms(m["nextmin_s"], m["nextmin_s_std"], nd=3),
-                            fmt_ms(m["nextmin_ns"], m["nextmin_ns_std"], nd=2),
-                            fmt_ms(m["nextmin_calls"], m["nextmin_calls_std"], nd=0),
-                            fmt_ms(m["nextmin_cpm"], m["nextmin_cpm_std"], nd=1),
-                            fmt_ms(m["nextmin_frac"], m["nextmin_frac_std"], nd=1),
-                            fmt_ms(m["uhs"], m["uhs_std"], nd=0),
-                            fmt_ms(m["non_uhs"], m["non_uhs_std"], nd=0),
-                            fmt_ms(m["uhs_frac"], m["uhs_frac_std"], nd=2),
+                            fmt(m["nextmin_s"], 3),
+                            fmt(m["nextmin_ns"], 2),
+                            fmt(m["nextmin_calls"], 0),
+                            fmt(m["nextmin_cpm"], 1),
+                            fmt(m["nextmin_frac"], 1),
+                            fmt(m["uhs"], 0),
+                            fmt(m["non_uhs"], 0),
+                            fmt(m["uhs_frac"], 2),
                             rw=run_w,
                         )
                     )
@@ -1985,11 +1357,11 @@ def main():
                     emit(
                         "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12}".format(
                             r["context"],
-                            fmt_ms(m["nextmin_s"], m["nextmin_s_std"], nd=3),
-                            fmt_ms(m["nextmin_ns"], m["nextmin_ns_std"], nd=2),
-                            fmt_ms(m["nextmin_calls"], m["nextmin_calls_std"], nd=0),
-                            fmt_ms(m["nextmin_cpm"], m["nextmin_cpm_std"], nd=1),
-                            fmt_ms(m["nextmin_frac"], m["nextmin_frac_std"], nd=1),
+                            fmt(m["nextmin_s"], 3),
+                            fmt(m["nextmin_ns"], 2),
+                            fmt(m["nextmin_calls"], 0),
+                            fmt(m["nextmin_cpm"], 1),
+                            fmt(m["nextmin_frac"], 1),
                             rw=run_w,
                         )
                     )
@@ -2013,26 +1385,27 @@ def main():
                 emit(
                     "{:<{rw}} {:>10} {:>10} {:>10} {:>12} {:>12} {:>10}".format(
                         r["context"],
-                        fmt_ms(m["scan_s"], m["scan_s_std"], nd=3),
-                        fmt_ms(m["lookup_s"], m["lookup_s_std"], nd=3),
-                        fmt_ms(m["resolve_s"], m["resolve_s_std"], nd=3),
-                        fmt_ms(m["lookups_pm"], m["lookups_pm_std"], nd=1),
-                        fmt_ms(m["repeats_pm"], m["repeats_pm_std"], nd=1),
-                        fmt_ms(m["lookup_frac"], m["lookup_frac_std"], nd=2),
+                        fmt(m["scan_s"], 3),
+                        fmt(m["lookup_s"], 3),
+                        fmt(m["resolve_s"], 3),
+                        fmt(m["lookups_pm"], 1),
+                        fmt(m["repeats_pm"], 1),
+                        fmt(m["lookup_frac"], 2),
                         rw=run_w,
                     )
                 )
 
-    # Statistical summary across seeds (of per-seed classify means)
+    # Statistical summary across seeds
     emit("")
-    emit("2. SCHEME SUMMARY  (mean±std over seeds; Class uses per-seed means of repeats)")
+    emit("2. SCHEME SUMMARY  (mean±std over seeds, per dataset and minimum-hit-groups)")
     emit(
-        "{:<{sw}} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10}".format(
-            "Scheme", "Build(s)", "BldGB", "Class(s)", "ClsGB", "Mrd/min", "Class%",
+        "{:<{sw}} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10}".format(
+            "Scheme", "Build(s)", "BldGB", "Wall(s)", "DBLoad(s)", "Proc(s)", "ClsGB",
+            "Mrd/min", "Class%",
             sw=scheme_w,
         )
     )
-    emit("-" * (scheme_w + 72))
+    emit("-" * (scheme_w + 98))
 
     for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
         ms = metrics_by_scheme[scheme]
@@ -2044,15 +1417,19 @@ def main():
         b_s, b_ss = ms_of("build_s")
         b_g, b_gs = ms_of("build_gb")
         c_s, c_ss = ms_of("class_s")
+        d_s, d_ss = ms_of("db_load_s")
+        p_s, p_ss = ms_of("class_proc_s")
         c_g, c_gs = ms_of("class_gb")
         sp, sps = ms_of("mrd_min")
         cp, cps = ms_of("cls_pct")
         emit(
-            "{:<{sw}} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10}{}".format(
+            "{:<{sw}} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>10}{}".format(
                 scheme,
                 fmt_ms(b_s, b_ss),
                 fmt_ms(b_g, b_gs),
                 fmt_ms(c_s, c_ss),
+                fmt_ms(d_s, d_ss),
+                fmt_ms(p_s, p_ss),
                 fmt_ms(c_g, c_gs),
                 fmt_ms(sp, sps),
                 fmt_ms(cp, cps),
@@ -2251,23 +1628,23 @@ def main():
     schemes_sorted = sorted(
         metrics_by_scheme.keys(), key=_scheme_sort_key
     )
-    wilcoxon_metrics = [("Class(s)", "class_s")]
+    wilcoxon_metrics = [("Wall(s)", "class_s"), ("Proc(s)", "class_proc_s")]
     if has_nextmin:
         wilcoxon_metrics.append(("ns/call", "nextmin_ns"))
     if has_phase:
         wilcoxon_metrics.append(("lookups/Mbp", "lookups_pm"))
 
-    # Build comparisons: each scheme vs Random on the same dataset, then
-    # pairwise non-ref schemes (same dataset only).
+    # Build comparisons: each scheme vs the reference on the same dataset and
+    # minimum-hit-groups, then pairwise non-ref schemes (same cell only).
     ref_base = _scheme_base(ref_name or REF_SCHEME)
     wilcoxon_pairs = []
     for scheme in schemes_sorted:
         if _scheme_base(scheme) == ref_base:
             continue
-        ds = _scheme_dataset(scheme)
+        cell = _scheme_cell(scheme)
         ref_k = None
         for k in schemes_sorted:
-            if _scheme_base(k) == ref_base and _scheme_dataset(k) == ds:
+            if _scheme_base(k) == ref_base and _scheme_cell(k) == cell:
                 ref_k = k
                 break
         if ref_k:
@@ -2278,14 +1655,14 @@ def main():
         for sb in schemes_sorted[i + 1 :]:
             if _scheme_base(sb) == ref_base:
                 continue
-            if _scheme_dataset(sa) != _scheme_dataset(sb):
+            if _scheme_cell(sa) != _scheme_cell(sb):
                 continue
             wilcoxon_pairs.append((sa, sb))
 
     if wilcoxon_pairs and wilcoxon_metrics and n_seeds >= 2:
         emit("")
         emit(
-            "4. PAIRED WILCOXON SIGNED-RANK  (by seed_idx; exact for n≤20 non-zero pairs)"
+            "4. PAIRED WILCOXON SIGNED-RANK  (by seed_idx, within one dataset and minimum-hit-groups; exact for n≤20 non-zero pairs)"
         )
         emit(
             "    H1 one-sided A<B: A is smaller (faster Class / cheaper Rank / denser)"
@@ -2374,13 +1751,17 @@ def main():
     emit("Notes:")
     emit(
         "  • Seed = toggle mask (k2 --toggle-mask → build_db -T) for all schemes "
-        "(Random order; GreedyMini Γ / Mod tb XOR tie-breaks)."
+        "(xor order; greedymini Γ / mod-minimizer tb XOR tie-breaks)."
     )
     emit(
-        "  • n={} seeds/scheme; each seed: 1 cold classify (excluded) + {} timed "
-        "(Class mean±std within seed).".format(n_seeds, n_classify_reps)
+        "  • n={} seeds/scheme; each (seed, dataset, minimum-hit-groups) cell is classified "
+        "once: the replicates are the seeds (±std is across seeds). Wall = DB load + "
+        "processing; Proc = the classify \"processed in\" time.".format(n_seeds)
     )
-    emit("  • MAPE / concordance use the last classification outputs per seed.")
+    emit(
+        "  • minimum-hit-groups 0 reproduces the Kraken 2 paper setting; 2 is the k2 default."
+    )
+    emit("  • MAPE / concordance compare to the reference scheme of the same seed, dataset and minimum-hit-groups.")
     emit("  • Lower MAPE / higher concordance ⇒ closer to {} under that seed.".format(
         ref_name or "reference"))
     emit(
@@ -2389,14 +1770,13 @@ def main():
         "NewClass%/NewUnclass% = ref U→C / C→U as % of all reads."
     )
     emit(
-        "  • Wilcoxon (section 4) pairs schemes by seed_idx on per-seed classify means."
+        "  • Wilcoxon (section 4) pairs schemes by seed_idx on the per-seed classify wall."
     )
     if has_nextmin:
         emit(
             "  • NextMinimizer / phase timing requires classify built with "
             "ENABLE_MINIMIZER_PROF=1 (-DKRAKEN2_MINIMIZER_PROF); files: "
-            "nextminimizer_timing_XX.txt via env KRAKEN2_MINIMIZER_PROF "
-            "(cold: *_cold.txt, excluded)."
+            "nextminimizer_timing_<dataset>_mhg<N>.txt via env KRAKEN2_MINIMIZER_PROF."
         )
         emit(
             "  • Phases: scan (minimizer+tokens), lookup (GetBatch), "
@@ -2409,10 +1789,9 @@ def main():
     emit("")
     acc_sheets = load_accuracy_sheets(orig_runs)
     qs = query_sets_sheet(resolve_data_dir(base))
-    extra_sheets = ([qs] if qs else []) + list(acc_sheets or [])
     if acc_sheets:
         emit("")
-        emit("5. ACCURACY vs LABELS  (Wood et al. 2019; last timed classify per seed)")
+        emit("5. ACCURACY vs LABELS  (Wood et al. 2019; both minimum-hit-groups settings)")
         emit(
             "  Strain-exclusion: genus/species sensitivity, PPV, F1 "
             "(simulated truth)."
@@ -2421,14 +1800,25 @@ def main():
             "  FDA-ARGOS: genus concordance only — (a) concordant (b) discordant "
             "(c) ancestor (d) unclassified; no sensitivity/PPV."
         )
+        emit(
+            "  CAMI: sens/PPV/F1 over reads whose true taxon is in the library "
+            "(excluded = no reference; reported, not scored)."
+        )
+        emit(
+            "  Mock: taxon precision/recall, L1 and Bray-Curtis vs the expected "
+            "composition (profile level; no per-read truth)."
+        )
         for name, fields, rows in acc_sheets:
             emit("")
             emit("  {} (n={})".format(name, len(rows)))
             if name == "accuracy_strain_exclusion":
-                emit("    (per-seed detail in tables/accuracy_strain_exclusion.csv)")
+                emit("    (mean/std over seeds in tables/kraken2_accuracy_strain_exclusion.csv)")
                 continue
             if name == "accuracy_fda_argos":
-                emit("    (per-SRR detail in tables/accuracy_fda_argos.csv)")
+                emit("    (per-SRR scope rows in tables/kraken2_accuracy_fda_argos.csv)")
+                continue
+            if name in ("accuracy_cami", "accuracy_mock"):
+                emit("    (mean/std over seeds in tables/kraken2_{}.csv)".format(name))
                 continue
             if name == "accuracy_strain_exclusion_summary":
                 show = [c for c in fields]
@@ -2436,11 +1826,21 @@ def main():
             elif name == "accuracy_fda_argos_summary":
                 show = [c for c in fields]
                 display = rows
+            elif name == "accuracy_cami_summary":
+                show = [c for c in fields if not c.endswith("_std")]
+                display = [r for r in rows if r.get("group") in ("all", "bacteria", "archaea")]
+            elif name == "accuracy_mock_summary":
+                show = [c for c in fields if not c.endswith("_std")]
+                display = [
+                    r for r in rows
+                    if _chart_num(r.get("min_frac")) == MOCK_HEADLINE_MIN_FRAC
+                ]
             else:
                 show = [
                     c
                     for c in (
                         "scheme",
+                        "minimum_hit_groups",
                         "dataset",
                         "domain",
                         "rank",
@@ -2455,32 +1855,62 @@ def main():
             if not show:
                 continue
 
-            def _cell(v):
+            def _cell(v, w=14):
                 if isinstance(v, float):
                     v = "{:.6g}".format(v)
-                return "{:<14}".format("" if v is None else v)[:14]
+                return "{:<{w}}".format("" if v is None else v, w=w)[:w]
 
-            emit("    " + "  ".join(_cell(c) for c in show))
+            def _w(c):
+                return 26 if c == "scheme" else 14
+
+            emit("    " + "  ".join(_cell(c, _w(c)) for c in show))
             for row in display:
-                emit("    " + "  ".join(_cell(row.get(c, "")) for c in show))
+                emit("    " + "  ".join(_cell(row.get(c, ""), _w(c)) for c in show))
 
     emit("Output directories:")
     for r in runs:
         seed = r["seed"] or "?"
         emit("  {} (seed {}) -> {}".format(r["context"], seed, r["outdir"]))
 
-    xlsx_path = csv_dir = None
+    xlsx_path = csv_dir = results_xlsx = None
     try:
-        dens_by_scheme = load_density_by_scheme(base)
-        xlsx_path, csv_dir = export_tables(
-            out_path,
-            by_scheme,
-            metrics_by_scheme,
-            ref_name,
-            extra_sheets=extra_sheets,
-            dens_by_scheme=dens_by_scheme,
+        library = os.path.basename(os.path.normpath(base))
+        acc_rows = {}
+        for name, _fields, rows in acc_sheets or []:
+            kind = ACCURACY_KIND.get(name)
+            if kind:
+                acc_rows[kind] = rows
+        qs_sheet = qs[2] if qs else []
+        xlsx_path, csv_dir, _tables = export_layout.export_library(
+            base,
+            os.path.splitext(out_path)[0] + ".xlsx",
+            library,
+            collect_per_seed_rows(by_scheme, metrics_by_scheme),
+            acc_rows,
+            load_density_rows(base),
+            qs_sheet,
         )
+        pc = _tables.get("paper_check")
+        if pc:
+            emit("")
+            emit("6. PAPER CHECK  (xor, minimum-hit-groups 0, strain_exclusion vs Wood et al. 2019; "
+                 "tolerance {} absolute)".format(export_layout.PAPER_TOLERANCE))
+            emit("  {:<10} {:<11} {:<8} {:<26} {:>9} {:>9} {:>9}  {}".format(
+                "table", "domain", "rank", "metric", "ours", "published", "diff", "within"))
+            for r in pc[1]:
+                emit("  {:<10} {:<11} {:<8} {:<26} {:>9} {:>9} {:>9}  {}".format(
+                    r["table"], r.get("domain") or "-", r["rank"], r["metric"],
+                    fmt(r.get("ours"), 4), fmt(r.get("published"), 4),
+                    fmt(r.get("difference"), 4), r.get("within_tolerance") or "-"))
+        base_dir = export_layout.resolve_base_dir(base)
+        if base_dir:
+            merged = export_layout.export_results(base_dir)
+            if merged:
+                results_xlsx = merged[0]
     except Exception as e:
+        import traceback
+
+        traceback.print_exc()
         emit("")
         emit("Could not write CSV/XLSX tables: {}".format(e))
 
@@ -2491,7 +1921,9 @@ def main():
         emit("Wrote {}".format(out_path))
         if xlsx_path:
             emit("Wrote {}".format(xlsx_path))
-            emit("Wrote CSVs under {}".format(csv_dir))
+            emit("Wrote CSVs (kraken2_<sheet>.csv) under {}".format(csv_dir))
+        if results_xlsx:
+            emit("Wrote {} (all libraries)".format(results_xlsx))
     except OSError as e:
         fallback = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),

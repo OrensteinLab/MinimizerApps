@@ -99,25 +99,19 @@ echo "Estimating required capacity (step 2)..."
 
 step_time=$(get_current_time)
 KRAKEN2_SCHEME_FLAGS=""
-if [ -n "${KRAKEN2_SKETCHING_SCHEME:-}" ] && [ "${KRAKEN2_SKETCHING_SCHEME}" != "Minimizer" ]
+# Defaults (minimizer, xor) are not passed; anything else (including an
+# invalid value, which the binaries reject) is forwarded.
+if [ -n "${KRAKEN2_SKETCHING:-}" ] && [ "${KRAKEN2_SKETCHING}" != "minimizer" ]
 then
-  KRAKEN2_SCHEME_FLAGS="-s ${KRAKEN2_SKETCHING_SCHEME}"
+  KRAKEN2_SCHEME_FLAGS="-s ${KRAKEN2_SKETCHING}"
 fi
-# Default order is RandomXor (legacy alias: Random); only pass -O when non-default.
-_order="${KRAKEN2_ORDER:-RandomXor}"
-if [ -n "${KRAKEN2_ORDER:-}" ] && \
-   [ "${KRAKEN2_ORDER}" != "RandomXor" ] && [ "${KRAKEN2_ORDER}" != "Random" ]
+if [ -n "${KRAKEN2_ORDER:-}" ] && [ "${KRAKEN2_ORDER}" != "xor" ]
 then
   KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -O ${KRAKEN2_ORDER}"
 fi
-if [ "${_order}" = "GreedyMini" ] && [ -n "${KRAKEN2_GREEDY_MINI_FILE:-}" ]
+if [ "${KRAKEN2_ORDER:-xor}" = "greedymini" ] && [ -n "${KRAKEN2_GREEDYMINI_FILE:-}" ]
 then
-  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -G $KRAKEN2_GREEDY_MINI_FILE"
-fi
-if [ "${_order}" = "GreedyMini" ] && \
-   [ -n "${KRAKEN2_GM_ALPHABET:-}" ] && [ "${KRAKEN2_GM_ALPHABET}" != "binary" ]
-then
-  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -a $KRAKEN2_GM_ALPHABET"
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -G $KRAKEN2_GREEDYMINI_FILE"
 fi
 
 estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG $KRAKEN2_SCHEME_FLAGS)

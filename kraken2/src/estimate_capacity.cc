@@ -4,6 +4,7 @@
  * This file is part of the Kraken 2 taxonomic sequence classification system.
  */
 
+#include <getopt.h>
 #include "kraken2_headers.h"
 #include "kv_store.h"
 #include "mmscanner.h"
@@ -43,7 +44,6 @@ struct Options {
   SketchingScheme sketching_scheme;
   Order order;
   std::string greedy_mini_filename;
-  GmAlphabet gm_alphabet;
   std::shared_ptr<const GreedyMiniTable> gm_table;
 };
 
@@ -66,20 +66,19 @@ int main(int argc, char **argv) {
   opts.block_size = DEFAULT_BLOCK_SIZE;
   opts.sketching_scheme = SketchingScheme::MINIMIZER;
   opts.order = Order::RANDOM_XOR;
-  opts.gm_alphabet = GmAlphabet::BINARY;
   ParseCommandLine(argc, argv, opts);
 
   if (opts.order == Order::GM) {
     if (opts.greedy_mini_filename.empty())
-      errx(EX_USAGE, "must supply -G <file> when using GreedyMini order");
+      errx(EX_USAGE, "--greedymini-file is required when --order greedymini");
     try {
       opts.gm_table = MinimizerScanner::shared_gm_table(
-          opts.greedy_mini_filename, opts.gm_alphabet);
+          opts.greedy_mini_filename);
     } catch (const std::exception &ex) {
-      errx(EX_DATAERR, "GreedyMini table load failed: %s", ex.what());
+      errx(EX_DATAERR, "greedymini table load failed: %s", ex.what());
     }
     if (!opts.gm_table || opts.gm_table->empty())
-      errx(EX_NOINPUT, "failed to load GreedyMini file: %s",
+      errx(EX_NOINPUT, "failed to load greedymini file: %s",
            opts.greedy_mini_filename.c_str());
   }
   omp_set_num_threads(opts.threads);
@@ -127,7 +126,13 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:XG:a:s:O:")) != -1) {
+  static const struct option long_options[] = {
+    {"sketching", required_argument, nullptr, 's'},
+    {"order", required_argument, nullptr, 'O'},
+    {"greedymini-file", required_argument, nullptr, 'G'},
+    {nullptr, 0, nullptr, 0}};
+  while ((opt = getopt_long(argc, argv, "?hk:l:n:S:T:B:p:XG:s:O:",
+                            long_options, nullptr)) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -193,13 +198,6 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
       case 'G':
         opts.greedy_mini_filename = optarg;
         break;
-      case 'a':
-        try {
-          opts.gm_alphabet = parse_gm_alphabet(optarg);
-        } catch (const std::exception &ex) {
-          errx(EX_USAGE, "%s", ex.what());
-        }
-        break;
     }
   }
 
@@ -228,10 +226,10 @@ void usage(int exit_code) {
        << "  -T BITSTRING  Minimizer ordering toggle mask" << endl
        << "  -B INT        Read block size" << endl
        << "  -p INT        Number of threads" << endl
-       << "  -s STRING     Sketching: Minimizer (default), Mod" << endl
-       << "  -O STRING     Order: RandomXor (default), GreedyMini, RandomPcg" << endl
-       << "  -G FILENAME   GreedyMini rank file (.gm); required for GreedyMini order" << endl
-       << "  -a STRING     GreedyMini alphabet: binary (default), dna" << endl;
+       << "  -s STRING     Sketching (--sketching): minimizer (default), mod-minimizer" << endl
+       << "  -O STRING     Order (--order): xor (default), xor-pcg, greedymini" << endl
+       << "  -G FILENAME   GreedyMini rank file (--greedymini-file, .gm);" << endl
+       << "                required for --order greedymini" << endl;
   exit(exit_code);
 }
 

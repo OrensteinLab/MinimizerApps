@@ -1,0 +1,11 @@
+table,row,domain,rank,metric,value,n_experiments,source
+S1,Kraken 2,prokaryote,genus,sensitivity,0.9396,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column prok_genus_sensitivity (tables/table_s1.csv)"
+S1,Kraken 2,prokaryote,genus,ppv,0.9932,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column prok_genus_ppv (tables/table_s1.csv)"
+S1,Kraken 2,prokaryote,genus,f1,0.9657,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column prok_genus_f1 (tables/table_s1.csv)"
+S1,Kraken 2,virus,genus,sensitivity,0.6125,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column viral_genus_sensitivity (tables/table_s1.csv)"
+S1,Kraken 2,virus,genus,ppv,0.9792,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column viral_genus_ppv (tables/table_s1.csv)"
+S1,Kraken 2,virus,genus,f1,0.7536,,"Wood et al. 2019, Table S1, row Kraken 2 (nucleotide), column viral_genus_f1 (tables/table_s1.csv)"
+S5,Kraken 2,,genus,concordant,0.805804,25,"Wood et al. 2019, Table S5, Kraken 2 genus concordant: unweighted mean of the 25 per-experiment rows (tables/table_s5_kraken2_expected.csv, column genus_concordant)"
+S5,Kraken 2,,genus,discordant,0.055304,25,"Wood et al. 2019, Table S5, Kraken 2 genus discordant: unweighted mean of the 25 per-experiment rows (tables/table_s5_kraken2_expected.csv, column genus_discordant)"
+S5,Kraken 2,,genus,ancestor,0.036480,25,"Wood et al. 2019, Table S5, Kraken 2 genus ancestor: unweighted mean of the 25 per-experiment rows (tables/table_s5_kraken2_expected.csv, column genus_ancestor)"
+S5,Kraken 2,,genus,unclassified,0.102412,25,"Wood et al. 2019, Table S5, Kraken 2 genus unclassified: unweighted mean of the 25 per-experiment rows (tables/table_s5_kraken2_expected.csv, column genus_unclassified)"

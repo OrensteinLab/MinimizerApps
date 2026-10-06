@@ -7,20 +7,14 @@
 
 _bench_iface_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BENCH_SCHEME_CHOICES="Random | GreedyMini | GreedyMiniDNA | ModRandom | ModGreedyMini | RandomPcg"
+BENCH_SCHEME_CHOICES="xor | xor-pcg | greedymini | mod-minimizer-xor | mod-minimizer-greedymini"
 
 bench_iface_init() {
     local gm_dir="${CODEBASE}/../orders/GreedyMini"
     BASE_DIR="${KRAKEN2_BENCHMARK_DIR:-${_bench_iface_dir}/benchmark_data}"
     GM_FILE="${GM_FILE:-${gm_dir}/w5_k15_canonical.gm}"
-    # No bundled default for GreedyMiniDNA: kraken2's gm_k values are too large
-    # for a practical 4^gm_k DNA table, and the one table that used to be
-    # bundled here (w5_k7_improved_w5_dna.gm) turned out to be non-canonical
-    # (retired to ~/unused-orders/kraken2/; see orders/README.md). The scheme
-    # itself still works with an explicit -G pointing at a canonical DNA table.
-    GM_DNA_FILE="${GM_DNA_FILE:-}"
     MOD_GM_FILE="${MOD_GM_FILE:-${gm_dir}/w5_k6_canonical.gm}"
-    DEFAULT_SCHEMES=("Random" "GreedyMini" "ModRandom" "ModGreedyMini" "RandomPcg")
+    DEFAULT_SCHEMES=("xor" "xor-pcg" "greedymini" "mod-minimizer-xor" "mod-minimizer-greedymini")
     SCHEME_FILTER_SET=0
     USE_SAMPLE=0
     USE_SMOKE_SAMPLE=0
@@ -41,12 +35,12 @@ bench_common_options_help() {
   -d DATA_SRC   (ignored; kept for compat)
   -S SCHEME...  Run only these schemes (space-separated; repeatable):
                   ${BENCH_SCHEME_CHOICES}
-                Examples: -S Random ModRandom
-                          -S "Random ModRandom RandomPcg"
-                          -S Random -S RandomPcg
-  -g GM_FILE    GreedyMini binary ℓ-mer rank file (.gm) for GreedyMini
-  -G GM_DNA     GreedyMini DNA alphabet rank file (.gm) for GreedyMiniDNA
-  -M MOD_GM     binary w5_k6_canonical.gm for ModGreedyMini (or env MOD_GM_FILE)
+                Examples: -S xor mod-minimizer-xor
+                          -S "xor xor-pcg greedymini"
+                          -S xor -S xor-pcg
+  -g GM_FILE    binary w5_k15 table (.gm) for greedymini (or env GM_FILE)
+  -M MOD_GM     binary w5_k6 table (.gm) for mod-minimizer-greedymini
+                (or env MOD_GM_FILE)
   -m            NCBI ~10% subsample (db/standard_p10) → runs/standard_p10/
   -z            NCBI ~0.5% subsample (db/standard_p0.5) → runs/standard_p0.5/
   -N            NCBI 100% (db/standard) → runs/standard/ (same as omitting -m/-z)
@@ -70,12 +64,7 @@ bench_append_schemes() {
     for name in "${names[@]}"; do
         [[ -z "${name}" ]] && continue
         case "${name}" in
-            RandomXor) name="Random" ;;
-            ModRandomXor) name="ModRandom" ;;
-            RandomPCG|randompcg|random_pcg) name="RandomPcg" ;;
-        esac
-        case "${name}" in
-            Random|GreedyMini|GreedyMiniDNA|ModRandom|ModGreedyMini|RandomPcg) ;;
+            xor|xor-pcg|greedymini|mod-minimizer-xor|mod-minimizer-greedymini) ;;
             *)
                 echo "Error: Unknown scheme '${name}'." >&2
                 bench_scheme_help_line >&2
@@ -92,7 +81,6 @@ bench_handle_common_opt() {
         o) BASE_DIR="${OPTARG}" ;;
         d) : ;; # compat no-op
         g) GM_FILE="${OPTARG}" ;;
-        G) GM_DNA_FILE="${OPTARG}" ;;
         M) MOD_GM_FILE="${OPTARG}" ;;
         m) USE_SAMPLE=1; SIZE_EXPLICIT=1; USE_FULL_NCBI=0 ;;
         z) USE_SMOKE_SAMPLE=1; SIZE_EXPLICIT=1; USE_FULL_NCBI=0 ;;
@@ -261,44 +249,39 @@ bench_run_root() {
     bench_run_root_for "${LIB_ID}"
 }
 
-# SCHEME, SCHEME_BASE, SCHEME_ARGS, SCHEME_NEEDS_GM for one -S name.
+# SCHEME (label), SCHEME_BASE (run directory name), SCHEME_ARGS, SCHEME_NEEDS_GM
+# for one -S name. Labels are exact (no aliases).
 bench_configure_scheme() {
     local scheme="$1"
     case "${scheme}" in
-        Random|RandomXor)
-            SCHEME="Random"
-            SCHEME_BASE="Random"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order RandomXor"
+        xor)
+            SCHEME="xor"
+            SCHEME_BASE="xor"
+            SCHEME_ARGS="--sketching minimizer --order xor"
             SCHEME_NEEDS_GM=0
             ;;
-        RandomPcg|RandomPCG)
-            SCHEME="RandomPcg"
-            SCHEME_BASE="RandomPcg"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order RandomPcg"
+        xor-pcg)
+            SCHEME="xor-pcg"
+            SCHEME_BASE="xor-pcg"
+            SCHEME_ARGS="--sketching minimizer --order xor-pcg"
             SCHEME_NEEDS_GM=0
             ;;
-        GreedyMini)
-            SCHEME="GreedyMini"
-            SCHEME_BASE="GreedyMini_$(basename "${GM_FILE}" .gm)"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file ${GM_FILE} --gm-alphabet binary"
+        greedymini)
+            SCHEME="greedymini"
+            SCHEME_BASE="greedymini_$(basename "${GM_FILE}" .gm)"
+            SCHEME_ARGS="--sketching minimizer --order greedymini --greedymini-file ${GM_FILE}"
             SCHEME_NEEDS_GM=1
             ;;
-        GreedyMiniDNA)
-            SCHEME="GreedyMiniDNA"
-            SCHEME_BASE="GreedyMini_$(basename "${GM_DNA_FILE}" .gm)"
-            SCHEME_ARGS="--sketching-scheme Minimizer --order GreedyMini --greedy-mini-file ${GM_DNA_FILE} --gm-alphabet dna"
-            SCHEME_NEEDS_GM=1
-            ;;
-        ModRandom|ModRandomXor)
-            SCHEME="ModRandom"
-            SCHEME_BASE="ModRandom"
-            SCHEME_ARGS="--sketching-scheme Mod --order RandomXor"
+        mod-minimizer-xor)
+            SCHEME="mod-minimizer-xor"
+            SCHEME_BASE="mod-minimizer-xor"
+            SCHEME_ARGS="--sketching mod-minimizer --order xor"
             SCHEME_NEEDS_GM=0
             ;;
-        ModGreedyMini)
-            SCHEME="ModGreedyMini"
-            SCHEME_BASE="ModGreedyMini_$(basename "${MOD_GM_FILE}" .gm)"
-            SCHEME_ARGS="--sketching-scheme Mod --order GreedyMini --greedy-mini-file ${MOD_GM_FILE} --gm-alphabet binary"
+        mod-minimizer-greedymini)
+            SCHEME="mod-minimizer-greedymini"
+            SCHEME_BASE="mod-minimizer-greedymini_$(basename "${MOD_GM_FILE}" .gm)"
+            SCHEME_ARGS="--sketching mod-minimizer --order greedymini --greedymini-file ${MOD_GM_FILE}"
             SCHEME_NEEDS_GM=1
             ;;
         *)
@@ -309,17 +292,15 @@ bench_configure_scheme() {
     esac
 }
 
-# Sets NEED_GM / NEED_GM_DNA / NEED_MOD_GM from DEFAULT_SCHEMES.
+# Sets NEED_GM / NEED_MOD_GM from DEFAULT_SCHEMES.
 bench_scheme_gm_needs() {
     NEED_GM=0
-    NEED_GM_DNA=0
     NEED_MOD_GM=0
     local scheme
     for scheme in "${DEFAULT_SCHEMES[@]}"; do
         case "${scheme}" in
-            GreedyMini) NEED_GM=1 ;;
-            GreedyMiniDNA) NEED_GM_DNA=1 ;;
-            ModGreedyMini) NEED_MOD_GM=1 ;;
+            greedymini) NEED_GM=1 ;;
+            mod-minimizer-greedymini) NEED_MOD_GM=1 ;;
         esac
     done
 }
@@ -342,15 +323,11 @@ bench_require_gm_files() {
     bench_ensure_gm_file "${GM_FILE}"
     bench_ensure_gm_file "${MOD_GM_FILE}"
     if [[ "${NEED_GM}" -eq 1 && ! -f "${GM_FILE}" ]]; then
-        echo "Error: GreedyMini requires -g / GM_FILE (.gm): ${GM_FILE}" >&2
-        exit 1
-    fi
-    if [[ "${NEED_GM_DNA}" -eq 1 && ! -f "${GM_DNA_FILE}" ]]; then
-        echo "Error: GreedyMiniDNA requires -G / GM_DNA_FILE (.gm): ${GM_DNA_FILE}" >&2
+        echo "Error: greedymini requires -g / GM_FILE (.gm): ${GM_FILE}" >&2
         exit 1
     fi
     if [[ "${NEED_MOD_GM}" -eq 1 && ! -f "${MOD_GM_FILE}" ]]; then
-        echo "Error: ModGreedyMini requires -M / MOD_GM_FILE (.gm): ${MOD_GM_FILE}" >&2
+        echo "Error: mod-minimizer-greedymini requires -M / MOD_GM_FILE (.gm): ${MOD_GM_FILE}" >&2
         exit 1
     fi
 }

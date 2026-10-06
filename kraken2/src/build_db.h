@@ -35,7 +35,6 @@ struct Options {
   SketchingScheme sketching_scheme;
   Order order;
   string greedy_mini_filename;
-  GmAlphabet gm_alphabet;
   std::shared_ptr<const GreedyMiniTable> gm_table;
 };
 
