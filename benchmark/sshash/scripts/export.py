@@ -6,14 +6,14 @@ Writes under ``--results-dir`` (default ``$SSHASH_RESULTS_DIR`` or
 
 - ``sshash_runs.csv``       -- one row per run (metrics + telemetry)
 - ``sshash_summary.csv``    -- one row per dataset x order (mean/std across seeds)
-- ``sshash_vs_reference.csv`` -- informational: measured vs published k-mer counts
 - ``sshash_density_expected_orders.csv`` -- cached expected-density Monte Carlo
   results (independent of any run; see scripts/expected_density.py)
 - ``sshash_buckets.csv``    -- bucket/binning stats (mean/std across seeds) per
   dataset x order: bucket count, average/max bucket size, skew-index share,
   and the bucket-related space breakdown (see scripts/export.py:parse_bucket_stats)
 - ``sshash_results.xlsx``   -- ``index``, ``orders``, ``datasets``, ``summary``,
-  ``buckets``, ``runs``, ``vs_reference``. The ``orders`` sheet carries each
+  ``buckets``, ``space_breakdown``, ``runs``, ``bucket_histogram``,
+  ``super_kmer_histogram``. The ``orders`` sheet carries each
   order's description/CLI plus its density -- particular (measured, per
   dataset x order) and expected (theoretical, per order) -- side by side.
 
@@ -817,36 +817,6 @@ def attach_native_ratios(rows: list[dict]) -> None:
                 r[rname] = round(mean / base_mean, 4)
 
 
-REFERENCE_KMERS = {
-    # Approximate distinct-31-mer counts from the Zenodo 17582116 record's own
-    # published table (informational only -- not order-specific, just a sanity
-    # cross-check that our eulertigs-derived num_kmers is in the right ballpark).
-    "cod": 502_500_000,
-    "kestrel": 1_150_000_000,
-    "human": 2_510_000_000,
-}
-
-
-def vs_reference_rows(rows: list[dict]) -> list[dict]:
-    out: list[dict] = []
-    by_dataset: dict[str, dict] = {}
-    for r in rows:
-        by_dataset.setdefault(r["dataset"], r)  # first row's num_kmers stands for the dataset
-    for dataset, ref_kmers in REFERENCE_KMERS.items():
-        r = by_dataset.get(dataset)
-        measured = r.get("num_kmers") if r else None
-        ratio = round(measured / ref_kmers, 4) if measured and ref_kmers else None
-        out.append(
-            {
-                "dataset": dataset,
-                "published_num_kmers_approx": ref_kmers,
-                "measured_num_kmers": measured,
-                "measured_vs_published_ratio": ratio,
-            }
-        )
-    return out
-
-
 # ---------------------------------------------------------------------------
 # CSV
 # ---------------------------------------------------------------------------
@@ -873,15 +843,6 @@ def summary_field_order() -> list[str]:
             continue  # shown in the buckets sheet (bucket_field_order), not repeated here
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
-
-
-def vs_reference_field_order() -> list[str]:
-    return [
-        "dataset",
-        "published_num_kmers_approx",
-        "measured_num_kmers",
-        "measured_vs_published_ratio",
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1026,8 +987,6 @@ def sheet_categories(raw_name: str, fields: Sequence[str]) -> list[str] | None:
         return ["reference"] * len(fields)
     if raw_name == "datasets":
         return ["dataset reference"] * len(fields)
-    if raw_name == "vs_reference":
-        return ["reference"] * len(fields)
     return None
 
 
@@ -1338,7 +1297,7 @@ CHART_ORDER_ORDER = (
     "native", "xor-hash", "xor-pcg-hash",
     "greedymini-k13", "greedymini-k15", "greedymini-k13-at1", "greedymini-k15-at1",
 )
-CHART_DATASET_ORDER = ("cod", "kestrel", "human")
+CHART_DATASET_ORDER = ("cod", "kestrel", "human", "ncbi-virus", "se", "hprc")
 CHART_COLORS = {
     "native": "7F7F7F", "xor-hash": "ED7D31", "xor-pcg-hash": "FFC000",
     "greedymini-k13": "70AD47", "greedymini-k15": "4472C4",
@@ -1575,7 +1534,6 @@ def index_rows() -> list[dict]:
         row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, elapsed_millisec from sshash's own JSON)"),
         row("summary", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
         row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
-        row("vs_reference", "published_num_kmers_approx", "Zenodo 17582116's own published distinct-31-mer count (informational only, not order-specific)"),
         row("summary/runs/orders", "w", "window size k - m + 1 (=11 for k=31,m=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
         row("summary/runs/orders", "density_factor", "particular (measured): (num_minimizer_positions/num_kmers) * (w+1) -- see scripts/density.py"),
         row("orders", "expected_density_factor_mean/std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
@@ -1643,7 +1601,7 @@ def order_info(order: str) -> dict:
     }
 
 
-DATASET_ORDER_PREFERENCE = ("cod", "kestrel", "human")
+DATASET_ORDER_PREFERENCE = ("cod", "kestrel", "human", "ncbi-virus", "se", "hprc")
 
 
 def _dataset_sort_key(dataset: str) -> tuple:
@@ -1891,7 +1849,6 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     )
     summary = summary_rows(rows)
     attach_native_ratios(summary)
-    vs_ref = vs_reference_rows(rows)
 
     m_val = next((r.get("m") for r in summary if r.get("m") is not None), None)
     w_val = next((r.get("w") for r in summary if r.get("w") is not None), None)
@@ -1907,7 +1864,6 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
 
     write_csv(out_root / "sshash_runs.csv", rows, list(RUN_FIELDS))
     write_csv(out_root / "sshash_summary.csv", summary, summary_field_order())
-    write_csv(out_root / "sshash_vs_reference.csv", vs_ref, vs_reference_field_order())
     write_csv(out_root / "sshash_buckets.csv", buckets, bucket_field_order())
     write_csv(out_root / "sshash_space_breakdown.csv", space, space_field_order())
     write_csv(out_root / "sshash_bucket_histogram.csv", bucket_hist, BUCKET_HISTOGRAM_FIELDS)
@@ -1922,7 +1878,6 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         ("buckets", bucket_field_order(), buckets),
         ("space_breakdown", space_field_order(), space),
         ("runs", list(RUN_FIELDS), rows),
-        ("vs_reference", vs_reference_field_order(), vs_ref),
         ("bucket_histogram", BUCKET_HISTOGRAM_FIELDS, bucket_hist),
         ("super_kmer_histogram", SUPER_KMER_HISTOGRAM_FIELDS, super_kmer_hist),
     ]

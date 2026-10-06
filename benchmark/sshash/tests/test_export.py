@@ -87,7 +87,6 @@ from scripts.export import (
     summary_field_order,
     summary_rows,
     validate_orders_equivalence,
-    vs_reference_rows,
     write_csv,
     write_xlsx,
     _dataset_last_row_indices,
@@ -197,13 +196,20 @@ def test_summary_rows_and_ratios() -> None:
     print("ok  summary_rows + attach_native_ratios: ratios computed vs native baseline")
 
 
-def test_vs_reference_rows() -> None:
-    rows = [_row("cod", "native", 0, num_kmers=502_500_000)]
-    out = vs_reference_rows(rows)
-    cod = next(r for r in out if r["dataset"] == "cod")
-    assert cod["measured_num_kmers"] == 502_500_000
-    assert abs(cod["measured_vs_published_ratio"] - 1.0) < 0.01
-    print("ok  vs_reference_rows: informational ratio computed")
+def test_datasets_csv_rows_are_complete() -> None:
+    """Every real dataset row (not the in-repo smoke sample) has what `download` needs: an eulertigs
+    file with size, md5 and URL, and a read file with a URL or an ENA accession."""
+    import csv
+
+    path = Path(__file__).resolve().parents[1] / "data" / "datasets.csv"
+    rows = list(csv.DictReader(path.open()))
+    real = [r for r in rows if not r["local_path"]]
+    assert {"cod", "kestrel", "human", "ncbi-virus", "se", "hprc"} <= {r["dataset"] for r in real}
+    for r in real:
+        assert r["eulertigs_filename"] and r["eulertigs_url"].startswith("https://"), r["dataset"]
+        assert int(r["eulertigs_size"]) > 0 and len(r["eulertigs_md5"]) == 32, r["dataset"]
+        assert r["query_filename"] and len(r["query_md5"]) == 32 and int(r["query_size"]) > 0, r["dataset"]
+    print("ok  datasets.csv rows are complete")
 
 
 def test_write_csv_and_xlsx_roundtrip() -> None:
@@ -297,7 +303,7 @@ def main() -> int:
     test_validate_orders_equivalence_catches_kmer_mismatch()
     test_validate_orders_equivalence_catches_query_mismatch()
     test_summary_rows_and_ratios()
-    test_vs_reference_rows()
+    test_datasets_csv_rows_are_complete()
     test_write_csv_and_xlsx_roundtrip()
     test_dataset_last_row_indices()
     test_vertical_merge_plan_stops_at_dataset_boundary()
