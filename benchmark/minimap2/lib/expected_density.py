@@ -16,7 +16,7 @@ at all in minimap2 (mm_hash64 takes none), so it's computed once and
 repeated n_seeds times as a formality for a uniform table shape.
 
 Feeds the `orders` xlsx sheet's expected_density_factor_mean/std columns
-(see lib/export.py); cached to minimap2_density_expected_orders.csv since
+(see lib/export.py); cached to minimap2_density_expected_k<k>_w<w>_t<t>_<hpc|nohpc>.csv since
 it's independent of any actual benchmark run (a pure function of k/w/t +
 the seed list) and each simulation costs real Monte Carlo time.
 mod-minimizer costs O(k-t+1) more per window than the 4 base orders (it
@@ -36,11 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 from density import (  # noqa: E402
     canonical_mmer,
     density_factor,
-    dna_reverse_complement,
-    gm_acgt_to_atcg,
-    gm_extract_dna_key_atcg,
-    mod_sampling_runs,
-    pcg_rxs_m_xs64,
+    gm_k_from_table,
+    greedymini_centre_hash,
+    mod_sampling_density,
     read_gm_ranks,
     sliding_runs,
     xor_hash,
@@ -87,31 +85,21 @@ def mm_hash64(key: int, mask: int) -> int:
     return key
 
 
-def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, key_flip: int = 0) -> int:
-    """Direct port of order.cpp's greedymini_rank(): dual-orientation UHS
-    rank probe (gm_k == l always -- minimap2 disallows Extend-k, checked
-    at load time) packed above a PCG-scrambled tiebreak, exactly as
-    minimap2 computes and stores it. `seed` is unused (greedymini's ranks
-    come from its table, not a seed) -- kept only for hash_fn signature
-    parity with xor_hash/xor_pcg_hash. key_flip = 2^gm_k - 1 for
-    --gm-projection at1-cg0 (every Sigma bit complemented), else 0."""
-    gm_k = l
-    atcg = gm_acgt_to_atcg(lmer)
-    best = gm_ranks[gm_extract_dna_key_atcg(atcg, l, gm_k) ^ key_flip]
-    rc = dna_reverse_complement(lmer, l)
-    if rc != lmer:
-        atcg_rc = gm_acgt_to_atcg(rc)
-        p_rc = gm_ranks[gm_extract_dna_key_atcg(atcg_rc, l, gm_k) ^ key_flip]
-        if p_rc < best:
-            best = p_rc
-    tiebreak = pcg_rxs_m_xs64(lmer) & 0xFFFFFFFFFFFF
-    return (best << 48) | tiebreak
+def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, flip: bool = False) -> int:
+    """order.cpp's RankState<MM_ORDER_GREEDYMINI>: the shared GreedyMini centre extension
+    of the gm_k table to length l (l = gm_k + 2i), injective packing --
+    benchmark/common/density.py greedymini_centre_hash, checked against the
+    compiled order by minimap2/validate_greedymini.py. `seed` is unused
+    (greedymini's ranks come from its table) -- kept only for hash_fn
+    signature parity with xor_hash/xor_pcg_hash. `flip` = --gm-projection
+    at1-cg0."""
+    return greedymini_centre_hash(lmer, l, gm_ranks, gm_k_from_table(gm_ranks), flip)
 
 
 def _hash_fn(base_order: str, length: int, gm_ranks: list[int] | None):
     """Return f(value, seed) -> rank for `base_order`, given an already-
     canonicalized `length`-mer -- used directly as k-mer keys for the 4
-    base orders, or as t-mer keys (O_t) for mod-minimizer's mod_sampling_runs."""
+    base orders, or as t-mer keys (O_t) for mod-minimizer's mod_sampling_density."""
     if base_order == "native":
         mask = (1 << (2 * length)) - 1
         return lambda value, seed: mm_hash64(value, mask)
@@ -121,7 +109,7 @@ def _hash_fn(base_order: str, length: int, gm_ranks: list[int] | None):
         return xor_pcg_hash
     if base_order in ("greedymini", "greedymini-at1"):
         assert gm_ranks is not None
-        flip = (1 << length) - 1 if base_order == "greedymini-at1" else 0
+        flip = base_order == "greedymini-at1"
         return lambda value, seed: greedymini_hash(value, length, gm_ranks, seed, flip)
     raise ValueError(f"unknown base order: {base_order}")
 
@@ -154,16 +142,11 @@ def expected_density_factor(
     base_order = _BASE_ORDER[order]
 
     if order in MOD_ORDERS:
+        # strand-symmetric mod-sampling: distinct selected positions (not a
+        # forward scheme, so no super-k-mer boundary count)
         assert t is not None
-        hash_fn = _hash_fn(base_order, t, gm_ranks)
-        # mod_sampling_runs's own (k, m) naming is (outer window span in
-        # bases, final sampled length); minimap2's own (w, k) mod-minimizer
-        # samples k-mers (m_param = k) over a window of w consecutive
-        # k-mers (k_param = w + k - 1, so that its internally-derived
-        # `w = k_param - m_param + 1` comes back out to minimap2's own w).
-        k_param = w + k - 1
-        n_win, n_super = mod_sampling_runs(dna_stream, k_param, k, t, hash_fn, seed, canonical=True)
-        return density_factor(n_super, n_win, w)
+        n_kmers, n_sel = mod_sampling_density(dna_stream, k, w, t, _hash_fn(base_order, t, gm_ranks), seed)
+        return density_factor(n_sel, n_kmers, w)
 
     # classic scheme: one hash per canonicalized k-mer position, plain
     # sliding-window argmin (see sliding_runs).
@@ -231,12 +214,12 @@ def compute_all_orders(
 EXPECTED_ORDERS_FIELDS = ("order", "t", "k", "w", "n_seeds", "density_factor_avg", "density_factor_std")
 
 
-def expected_orders_csv_path(results: Path) -> Path:
-    return results / "minimap2_density_expected_orders.csv"
+def expected_orders_csv_path(results: Path, k: int, w: int, t: int, is_hpc: bool) -> Path:
+    return results / f"minimap2_density_expected_k{k}_w{w}_t{t}_{'hpc' if is_hpc else 'nohpc'}.csv"
 
 
-def load_expected_orders(results: Path) -> dict[str, dict]:
-    path = expected_orders_csv_path(results)
+def load_expected_orders(results: Path, k: int, w: int, t: int, is_hpc: bool) -> dict[str, dict]:
+    path = expected_orders_csv_path(results, k, w, t, is_hpc)
     if not path.is_file():
         return {}
     return {row["order"]: row for row in csv.DictReader(path.open()) if row.get("order")}
@@ -255,16 +238,15 @@ def ensure_expected_orders(
     mod_t: int = 5,
     is_hpc: bool = True,
 ) -> dict[str, dict]:
-    """is_hpc must match whatever the actual benchmark runs use (lib/run.sh
-    always passes -x map-pb, which enables -H/HPC k-mers -- see that
-    file's own comment) for 'particular' (measured) and 'expected'
-    (this function) density_factor to be a fair comparison; not tracked
-    in the cache key below since this harness has no non-HPC mode today."""
-    path = expected_orders_csv_path(results)
+    """is_hpc must match the dataset's preset (lib/constants.sh:
+    dataset_preset; map-pb enables -H/HPC k-mers, map-ont does not) for
+    'particular' (measured) and 'expected' (this function) density_factor
+    to be a fair comparison: map-pb datasets use the HPC value, map-ont ones
+    the non-HPC one; each is cached in its own file."""
+    path = expected_orders_csv_path(results, k, w, mod_t, is_hpc)
     if not force and path.is_file():
-        cached = load_expected_orders(results)
-        if (cached and set(cached) == set(ORDERS)
-                and all(int(r.get("k") or 0) == k and int(r.get("w") or 0) == w for r in cached.values())):
+        cached = load_expected_orders(results, k, w, mod_t, is_hpc)
+        if cached and set(cached) == set(ORDERS):
             return cached
     rows = compute_all_orders(k, w, seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases, mod_t=mod_t, is_hpc=is_hpc)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,9 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         "on i.i.d. random DNA; mean/std over the benchmark's predefined seeds). Feeds the "
         "`orders` xlsx sheet's expected_density_factor_mean/std columns."
     )
-    ap.add_argument("--k", type=int, default=15)
+    ap.add_argument("--k", type=int, default=19, help="19 = map-pb's k; 15 for map-ont")
     ap.add_argument("--w", type=int, default=10)
-    ap.add_argument("--mod-t", type=int, default=5)
+    ap.add_argument("--mod-t", type=int, default=None, help="default 4 + (k-4) %% w")
+    ap.add_argument("--no-hpc", action="store_true", help="raw k-mers (map-ont) instead of HPC (map-pb)")
     ap.add_argument("--results-dir", required=True)
     ap.add_argument("--gm-file", default=None)
     ap.add_argument("--n-bases", type=int, default=DEFAULT_N_BASES)
@@ -298,7 +281,9 @@ def main(argv: list[str] | None = None) -> int:
     rows = ensure_expected_orders(
         Path(args.results_dir), args.k, args.w, seeds,
         gm_file=Path(args.gm_file) if args.gm_file else None,
-        force=args.force, n_bases=args.n_bases, mod_n_bases=args.mod_n_bases, mod_t=args.mod_t,
+        force=args.force, n_bases=args.n_bases, mod_n_bases=args.mod_n_bases,
+        mod_t=args.mod_t if args.mod_t is not None else 4 + (args.k - 4) % args.w,
+        is_hpc=not args.no_hpc,
     )
     for order, row in rows.items():
         print(order, row)

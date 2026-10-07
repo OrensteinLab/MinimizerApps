@@ -4,8 +4,8 @@
 # CLI-flag-mapping table across all four apps).
 
 # greedymini-at1 is greedymini with the flipped AT/CG projection
-# (--gm-projection at1-cg0, as in sshash); the only mod-minimizer order is
-# mod-minimizer-xor (O_t = xor).
+# (--gm-projection at1-cg0, as in sshash); mod-minimizer-xor is the
+# strand-symmetric mod-minimizer with xor as O_t (minimap2/order.cpp).
 ALL_ORDERS="native,xor,xor-pcg-hash,greedymini,greedymini-at1,mod-minimizer-xor"
 DEFAULT_ORDERS="$ALL_ORDERS"
 

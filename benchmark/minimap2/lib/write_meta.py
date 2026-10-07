@@ -50,11 +50,12 @@ def main(argv=None) -> int:
     ap.add_argument("--dataset", default="smoke")
     ap.add_argument("--mid-occ-cap", default="", help="-f value passed at map time (empty = minimap2's own per-index default)")
     ap.add_argument("--mid-occ", default="", help="effective mid_occ minimap2 reported in its map log")
+    ap.add_argument("--preset", default="map-pb", help="minimap2 -x preset used for build and map")
     ap.add_argument("--build-time", type=Path, required=True)
     ap.add_argument("--map-time", type=Path, required=True)
     ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d (informational only -- NOT the density_factor numerator, see below)")
     ap.add_argument("--avg-occurrences", type=float, default=None, help="'average occurrences' from minimap2 -d's stat line (distinct minimizers undercount total selected positions whenever a minimizer repeats -- see mm_idx_stat in index.c)")
-    ap.add_argument("--avg-spacing", type=float, default=None, help="'average spacing' from minimap2 -d's stat line: genome_len / total_occurrences; gives meta.json's raw-bp-scale density_factor (export.py rescales it to minimap2's HPC-k-mer scale via lib/hpc_kmers.py)")
+    ap.add_argument("--avg-spacing", type=float, default=None, help="'average spacing' from minimap2 -d's stat line: genome_len / total_occurrences; gives meta.json's raw-bp-scale density_factor (export.py rescales it to minimap2's sketched-k-mer scale via lib/sketch_kmers.py)")
     ap.add_argument("--accuracy", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
@@ -69,6 +70,7 @@ def main(argv=None) -> int:
         "mod_t": args.mod_t or None,
         "mid_occ_cap": int(args.mid_occ_cap) if args.mid_occ_cap else None,
         "mid_occ": int(args.mid_occ) if args.mid_occ else None,
+        "preset": args.preset,
         "build": parse_time_v(args.build_time),
         "map": parse_time_v(args.map_time),
         "distinct_minimizers": args.density,

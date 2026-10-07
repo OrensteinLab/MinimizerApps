@@ -19,6 +19,7 @@ fi
 if [ -n "$_CONDA_ENV_DIR" ] && [ -x "$_CONDA_ENV_DIR/bin/python3" ]; then
   PYTHON="${PYTHON:-$_CONDA_ENV_DIR/bin/python3}"
   PBSIM="${PBSIM:-$_CONDA_ENV_DIR/bin/pbsim}"
+  PBSIM1="${PBSIM1:-$_CONDA_ENV_DIR/opt/pbsim1/bin/pbsim}"   # PBSIM 1.0.3 (setup.sh)
   SAMTOOLS="${SAMTOOLS:-$_CONDA_ENV_DIR/bin/samtools}"
 elif command -v /usr/bin/python3.11 >/dev/null 2>&1; then
   PYTHON="${PYTHON:-/usr/bin/python3.11}"
@@ -27,14 +28,38 @@ else
 fi
 MINIMAP2_BIN="${MINIMAP2_BIN:-$REPO_ROOT/minimap2/minimap2}"
 
-K=${K:-15}
+# k defaults to the dataset preset's own (preset_default_k), as the Winnowmap
+# paper ran minimap2 with `-cx map-pb` / `-cx map-ont`; K=... overrides it.
+# mod-minimizer's t defaults to the paper's r=4 formula t = 4 + (k-4) % w
+# (k=19,w=10 -> 9; k=15 -> 5); MOD_T=... overrides it.
+K=${K:-}
 W=${W:-10}
-MOD_T=${MOD_T:-5}
+MOD_T=${MOD_T:-}
 # Map-time repeat-filter cap (minimap2 -f INT, absolute). Empty = minimap2's
 # own per-index default (a quantile of that index's own occurrence counts, so
 # it drifts with the order); set e.g. MID_OCC=1244 (native's own value on
 # chm13_chrX) to hold it fixed across orders as a control.
 MID_OCC=${MID_OCC:-}
+
+# minimap2 preset for the current dataset: $PRESET if set, else the one-word
+# data/<dataset>/preset file (e.g. map-ont for ONT reads), else map-pb (PacBio
+# CLR, which also turns on HPC k-mers). Used for both build and map.
+dataset_preset() {
+  local f="$MINIMAP2_DATA_DIR/$DATASET/preset"
+  if [ -n "${PRESET:-}" ]; then echo "$PRESET"
+  elif [ -f "$f" ]; then tr -d '[:space:]' < "$f"
+  else echo map-pb
+  fi
+}
+
+# minimap2's own k for a preset (minimap2/options.c mm_set_opt: map-pb and
+# the other HPC PacBio presets k=19, map-ont/default k=15).
+preset_default_k() {
+  case "$1" in
+    map-pb|map10k|ava-pb) echo 19 ;;
+    *) echo 15 ;;
+  esac
+}
 DATASET=${DATASET:-smoke}
 GM_DIR=${GM_DIR:-"$REPO_ROOT/orders/GreedyMini"}
 N_SEEDS=${N_SEEDS:-1}

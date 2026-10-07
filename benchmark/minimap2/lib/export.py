@@ -37,26 +37,25 @@ summary: one row per (dataset, k, w, order) -- mean/std of every numeric
 metric across seeds (n_seeds=1 for native/greedymini, which don't vary with
 seed; see lib/orders.sh's order_is_seed_dependent).
 
-orders: one row per order (not per dataset x order) -- w/t/description/cli
-and expected (theoretical) density_factor don't vary by dataset, plus each
-dataset's particular (measured) density_factor pivoted into its own column
-pair. expected_density.py computes the theoretical value via Monte Carlo
-simulation on i.i.d. random DNA (mirroring sshash's own scripts/
-expected_density.py), reusing benchmark/common/density.py's shared
-primitives -- the same ones order.cpp's own C++ is built on -- rather than
-re-deriving minimap2's order formulas a third time; cached to
-minimap2_density_expected_orders.csv since it's a pure function of k/w/t
-(independent of any actual run).
+orders: one row per order; per dataset, the expected (theoretical) and the
+particular (measured) density_factor side by side. expected_density.py
+computes the theoretical value via Monte Carlo simulation on i.i.d. random
+DNA for that dataset's k, w, mod-minimizer t and HPC setting (k and t differ
+by preset: map-pb k=19 t=9, map-ont k=15 t=5), reusing
+benchmark/common/density.py's shared primitives -- the same ones order.cpp's
+own C++ is built on; cached per (k, w, t, HPC) since it is independent of any
+actual run.
 
-density_factor is on minimap2's own sketching scale: lib/run.sh always passes
-`-x map-pb`, i.e. HPC, so minimap2 picks minimizers over homopolymer-
-compressed k-mers. density_factor = total occurrences * (w+1) / n_hpc_kmers,
-where n_hpc_kmers counts the compressed k-mers minimap2 actually sketches
-(lib/hpc_kmers.py) -- same scale as the Monte Carlo expected value, which
-also compresses first. write_meta.py's meta.json density_factor instead
-divides by the *raw* length (minimap2 -d's "average spacing"), understating
-it by the genome's compression ratio (~0.70 on human) and any N gaps; that's
-kept as density_factor_raw_bp in the runs sheet only.
+density_factor is on minimap2's own sketching scale: density_factor = total
+occurrences * (w+1) / n_sketch_kmers, where n_sketch_kmers counts the k-mers
+minimap2 actually sketches (lib/sketch_kmers.py) -- homopolymer-compressed
+ones for an HPC preset (map-pb, the default; see each dataset's preset in
+lib/constants.sh:dataset_preset), raw ones otherwise (map-ont). That's the
+same scale as the dataset's Monte Carlo expected value (orders sheet:
+{dataset}_expected_*). write_meta.py's meta.json density_factor
+instead divides by the *raw* length (minimap2 -d's "average spacing"),
+understating HPC density by the genome's compression ratio (~0.70 on human)
+and any N gaps; that's kept as density_factor_raw_bp in the runs sheet only.
 """
 from __future__ import annotations
 
@@ -73,7 +72,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 from xlsx_util import col_letter, root_rels_xml, write_csv, xml_escape  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hpc_kmers import hpc_kmers  # noqa: E402
+from sketch_kmers import sketch_kmers  # noqa: E402
+
+# minimap2 presets that turn on HPC (-H) k-mers (minimap2/options.c).
+HPC_PRESETS = frozenset({"map-pb", "map10k", "ava-pb"})
+
+
+def dataset_preset(dataset_dir: Path, runs: list[dict]) -> str:
+    """The preset the dataset's runs recorded in meta.json (lib/run.sh), else
+    lib/constants.sh:dataset_preset's rule: the data/<dataset>/preset file,
+    else map-pb."""
+    recorded = {r["preset"] for r in runs if r.get("dataset") == dataset_dir.name and r.get("preset")}
+    if len(recorded) > 1:
+        raise SystemExit(f"error: {dataset_dir.name} has runs with different presets: {sorted(recorded)}")
+    if recorded:
+        return recorded.pop()
+    f = dataset_dir / "preset"
+    return f.read_text().strip() if f.is_file() else "map-pb"
 
 # Grouped so each row-1 category band is one contiguous span:
 # id/params -> density -> total -> build -> map -> accuracy.
@@ -81,7 +96,7 @@ RUN_FIELDS = [
     "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "n_reads", "n_reads_in_repeat",
     "density_factor", "density_factor_raw_bp", "distinct_minimizers", "avg_occurrences",
     "total_wall_time_sec",
-    "build_wall_time_sec", "build_peak_rss_gb",
+    "build_wall_time_sec", "build_peak_rss_gb", "index_size_mb",
     "mid_occ", "map_wall_time_sec", "map_peak_rss_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
@@ -98,29 +113,33 @@ DEFAULT_MID_OCC_CAP = "default"
 KB_PER_GB = 1024 * 1024  # binary GB, matching how peak_rss_kb itself is binary (ru_maxrss-derived)
 
 SUMMARY_METRICS = (
-    "density_factor", "avg_occurrences",
+    "density_factor", "distinct_minimizers", "avg_occurrences",
     "total_wall_time_sec",
-    "build_wall_time_sec", "build_peak_rss_gb",
+    "build_wall_time_sec", "build_peak_rss_gb", "index_size_mb",
     "map_wall_time_sec", "map_peak_rss_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
 )
 
-# summary's correlation grid (below the table): Pearson r across each
-# dataset's orders (one point per order = its mean over seeds), via Excel's
-# own CORREL so the sheet stays live if values are edited.
-CORR_X = ("density_factor", "avg_occurrences")
-CORR_HIGHLIGHT_ABOVE = 0.8  # grid cells with r > this get a green fill
-CORR_Y = ("total_wall_time_sec", "build_wall_time_sec", "build_peak_rss_gb", "map_wall_time_sec", "map_peak_rss_gb")
+# Rows right under the summary table (sshash's layout): for every
+# `{metric}_ratio` column, its Pearson correlation (Excel's built-in CORREL, so
+# it stays live and traceable) with these driver ratios, over all summary rows.
+# avg_occurrences (occurrences per key) is a driver here because it sets
+# minimap2's default repeat cutoff (mid_occ) and so the chaining work.
+CORRELATION_DRIVERS = (
+    ("correlation with density", "density_factor_ratio"),
+    ("correlation with distinct minimizers", "distinct_minimizers_ratio"),
+    ("correlation with occurrences per key", "avg_occurrences_ratio"),
+)
 
 # A ratio < 1 (this order's mean below native's) means "better than native"
 # for these -- fewer/faster/smaller/less-mis-mapped.
 LOWER_IS_BETTER = frozenset({
-    "density_factor", "avg_occurrences",
+    "density_factor", "distinct_minimizers", "avg_occurrences",
     "frac_incorrectly_mapped",
     "total_wall_time_sec",
-    "build_wall_time_sec", "build_peak_rss_gb",
+    "build_wall_time_sec", "build_peak_rss_gb", "index_size_mb",
     "map_wall_time_sec", "map_peak_rss_gb",
 })
 # A ratio > 1 means "better than native" for these -- more correctly mapped,
@@ -141,12 +160,6 @@ ORDER_SORT = [
     "mod-minimizer-xor",
 ]
 
-# t-mer length for mod-minimizer's inner order O_t; fixed at 5 throughout
-# this benchmark (see orders/README.md's r=4 formula: t=r+(k-r)%w=5 for
-# k=15,w=10) -- not tracked per-row in summary_rows, so kept here instead of
-# threading mod_t through that function just for the 'orders' sheet's sake.
-_ORDER_T = {"mod-minimizer-xor": 5}
-
 ORDER_DESCRIPTIONS = {
     "native": {
         "description": "minimap2's own unmodified baseline order (mm_hash64-based)",
@@ -161,7 +174,7 @@ ORDER_DESCRIPTIONS = {
         "cli": "--minimizer-order xor-pcg-hash --order-seed SEED",
     },
     "greedymini": {
-        "description": "Ranks k-mers by the precomputed GreedyMini w10_k15 rank table (binary alphabet, dual-orientation projection, no Extend-k)",
+        "description": "Ranks k-mers by the precomputed GreedyMini w10_k15 table (binary AT/CG projection), centre-extended to k (k = 15 + 2i: the table ranks the middle 15 bases, then Sigma and Gamma of the whole k-mer break ties; greedymini_centre.h, as in kraken2/sshash)",
         "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/w10_k15_canonical.gm",
     },
     "greedymini-at1": {
@@ -169,12 +182,12 @@ ORDER_DESCRIPTIONS = {
         "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/w10_k15_canonical.gm --gm-projection at1-cg0",
     },
     "mod-minimizer-xor": {
-        "description": "Mod-minimizer (WABI 2024): ranks t-mers by xor, samples the k-mer at the winning t-mer's position mod w",
-        "cli": "--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t 5",
+        "description": "Strand-symmetric mod-minimizer (mod-sampling, WABI 2024, with a per-window preferred strand; this repo, not published): ranks t-mers by xor; the strand with more G/T is preferred, forward-preferred windows sample the k-mer at the leftmost minimal t-mer's position mod w, reverse-preferred ones by the mirror rule (rightmost minimal t-mer, offset counted from the right), so a sequence and its reverse complement select the same loci",
+        "cli": "--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
     },
 }
 
-DATASET_ORDER_PREFERENCE = ("chm13_chrX", "grch38_wg")
+DATASET_ORDER_PREFERENCE = ("chm13_chrX", "grch38_wg", "chm13_rel3_ont")
 
 
 def _dataset_sort_key(dataset: str) -> tuple:
@@ -198,8 +211,9 @@ def _num(v, cast=float):
 
 
 DATASET_DESCRIPTIONS = {
-    "chm13_chrX": "Real T2T CHM13 chrX v0.7 (Winnowmap's own D1: simulated PacBio reads, centromeric-repeat comparison)",
-    "grch38_wg": "Real GRCh38 no-alt-analysis-set whole genome (Winnowmap's own D2: simulated PacBio reads); repeat region = a verified UCSC genomicSuperDups chr9 segmental duplication pair",
+    "chm13_chrX": "Winnowmap D1: T2T CHM13 chrX v0.7 with PBSIM 1.0.3 PacBio CLR reads (10% error, 15 kb mean, 100-25,000 bp, 5x), -x map-pb; repeat set = the DXZ1 centromeric array (the paper's Table 3)",
+    "grch38_wg": "Winnowmap D2: GRCh38 with ALT contigs (UCSC hg38, 455 sequences) with the same PBSIM 1.0.3 reads at 0.5x, reads containing 'NN' dropped (paftools pbsim2fq), -x map-pb; repeat set = a UCSC genomicSuperDups chr9 segmental duplication pair (our addition)",
+    "chm13_rel3_ont": "Winnowmap D3: 1,000 real CHM13 rel3 ultra-long ONT reads (uniform random sample, >= 1 kbp) mapped to GRCh38 with ALT contigs (D2's genome) with -x map-ont; no ground truth: unmapped %, time, memory and density only, as in the paper",
 }
 
 # 'smoke' is a fast-iteration/CI dataset (lib/make_dataset.py), not a source
@@ -235,10 +249,11 @@ def flatten(meta: dict) -> dict:
         # run.sh passes --mod-t to every run, but it only means anything for
         # the mod-minimizer orders -- blank elsewhere rather than a misleading 5.
         "mod_t": meta.get("mod_t") if str(meta.get("order") or "").startswith("mod-minimizer-") else None,
+        "preset": meta.get("preset"),  # absent in runs from before presets were recorded
         "distinct_minimizers": meta.get("distinct_minimizers"),
         "avg_occurrences": meta.get("avg_occurrences"),
-        # raw-bp scale as written by write_meta.py; attach_hpc_density()
-        # overwrites density_factor with the HPC-k-mer scale
+        # raw-bp scale as written by write_meta.py; attach_sketch_density()
+        # overwrites density_factor with the sketched-k-mer scale
         "density_factor": meta.get("density_factor"),
         "density_factor_raw_bp": meta.get("density_factor"),
         "total_wall_time_sec": _total_time(build.get("wall_time_sec"), mapp.get("wall_time_sec")),
@@ -258,29 +273,31 @@ def flatten(meta: dict) -> dict:
     }
 
 
-def load_runs(results_dir: Path) -> list[dict]:
+def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]:
     rows = []
     for meta_path in sorted((results_dir / "runs").glob("**/meta.json")):
         meta = json.loads(meta_path.read_text())
         row = flatten(meta)
-        if row.get("dataset") in EXCLUDED_DATASETS:
+        if row.get("dataset") in EXCLUDED_DATASETS or (datasets and row.get("dataset") not in datasets):
             continue
         if row["mid_occ"] is None:
             row["mid_occ"] = _map_log_mid_occ(meta_path.parent / "map.log")
+        mmi = meta_path.parent / "index.mmi"
+        row["index_size_mb"] = round(mmi.stat().st_size / 1e6, 1) if mmi.is_file() else None
         rows.append(row)
     return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r["order"] or ""), int(r.get("seed_idx") or 0)))
 
 
-def attach_hpc_density(runs: list[dict], hpc: dict[str, int]) -> None:
-    """density_factor on the HPC-k-mer scale (see the module docstring):
+def attach_sketch_density(runs: list[dict], n_kmers: dict[str, int]) -> None:
+    """density_factor on the sketched-k-mer scale (see the module docstring):
     total occurrences = distinct_minimizers * avg_occurrences, both straight
-    from minimap2 -d's own mm_idx_stat line. Datasets whose n_hpc_kmers is
+    from minimap2 -d's own mm_idx_stat line. Datasets whose n_sketch_kmers is
     unknown keep the raw-bp value."""
     for r in runs:
-        n_hpc = hpc.get(r.get("dataset"))
+        n_sk = n_kmers.get(r.get("dataset"))
         distinct, avg_occ, w = _num(r.get("distinct_minimizers")), _num(r.get("avg_occurrences")), _num(r.get("w"), int)
-        if n_hpc and distinct and avg_occ and w:
-            r["density_factor"] = round(distinct * avg_occ * (w + 1) / n_hpc, 6)
+        if n_sk and distinct and avg_occ and w:
+            r["density_factor"] = round(distinct * avg_occ * (w + 1) / n_sk, 6)
 
 
 def _map_log_mid_occ(map_log: Path) -> int | None:
@@ -413,9 +430,34 @@ def _repeat_bp(path: Path) -> tuple[int, int] | None:
     return n, total
 
 
-def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str], k: int) -> list[dict]:
+def dataset_params(runs: list[dict]) -> dict[str, tuple[int, int, int | None]]:
+    """{dataset: (k, w, t)} from the runs (k/w differ by preset; t is the
+    mod-minimizer t recorded by its runs)."""
+    out: dict[str, tuple[int, int, int | None]] = {}
+    for r in runs:
+        ds, k, w = r.get("dataset"), _num(r.get("k"), int), _num(r.get("w"), int)
+        if not ds or k is None or w is None:
+            continue
+        t = _num(r.get("mod_t"), int)
+        prev = out.get(ds)
+        if prev and (prev[0], prev[1]) != (k, w):
+            raise SystemExit(f"error: {ds} has runs with different k/w: {prev[:2]} vs {(k, w)}")
+        out[ds] = (k, w, t if t is not None else (prev[2] if prev else None))
+    return out
+
+
+def _count_fasta_reads(path: Path) -> int | None:
+    if not path.is_file():
+        return None
+    with path.open("rb") as f:
+        return sum(1 for line in f if line.startswith(b">"))
+
+
+def dataset_rows(data_dir: Path, samtools: str | None, runs: list[dict]) -> list[dict]:
+    params = dataset_params(runs)
     out = []
-    for name in sorted(dataset_names):
+    for name in sorted(params, key=_dataset_sort_key):
+        k, w, t = params[name]
         d = data_dir / name
         genome = d / "genome.fa"
         row = {
@@ -423,8 +465,12 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str], 
             "description": DATASET_DESCRIPTIONS.get(name, ""),
             "n_contigs": None,
             "genome_len_bp": None,
-            "hpc_len_bp": None,
-            "n_hpc_kmers": None,
+            "preset": dataset_preset(d, runs),
+            "k": k,
+            "w": w,
+            "mod_t": t,
+            "sketch_len_bp": None,
+            "n_sketch_kmers": None,
             "n_reads": None,
             "n_repeat_regions": None,
             "repeat_bp": None,
@@ -435,11 +481,13 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str], 
             row["n_contigs"] = len(lines)
             row["genome_len_bp"] = sum(int(line.split("\t")[1]) for line in lines if line.strip())
         if genome.is_file():
-            hpc = hpc_kmers(genome, k)
-            row["hpc_len_bp"], row["n_hpc_kmers"] = hpc["hpc_bp"], hpc["n_hpc_kmers"]
+            sk = sketch_kmers(genome, k, hpc=row["preset"] in HPC_PRESETS)
+            row["sketch_len_bp"], row["n_sketch_kmers"] = sk["sketch_bp"], sk["n_sketch_kmers"]
         n_reads = _count_lines(d / "truth.tsv")
         if n_reads is not None:
             row["n_reads"] = max(0, n_reads - 1)  # minus header
+        else:  # real reads, no truth (the paper's D3)
+            row["n_reads"] = _count_fasta_reads(d / "reads.fa")
         rep = _repeat_bp(d / "repeats.bed")
         if rep:
             row["n_repeat_regions"], row["repeat_bp"] = rep
@@ -449,22 +497,21 @@ def dataset_rows(data_dir: Path, samtools: str | None, dataset_names: set[str], 
 
 def dataset_field_order() -> list[str]:
     return [
-        "dataset", "description", "n_contigs", "genome_len_bp", "hpc_len_bp", "n_hpc_kmers",
+        "dataset", "description", "preset", "k", "w", "mod_t", "n_contigs", "genome_len_bp", "sketch_len_bp", "n_sketch_kmers",
         "n_reads", "n_repeat_regions", "repeat_bp",
     ]
 
 
 # ---------------------------------------------------------------------------
-# orders -- one row per order (not per dataset x order): w/t/description/cli
-# and expected (theoretical) density don't vary by dataset, so repeating
-# them per dataset would be pure duplication (see expected_density.py's own
-# docstring). Each dataset's particular (measured, mean/std over seeds)
-# density_factor is pivoted into its own pair of columns instead -- same
-# shape as sshash's own scripts/export.py:orders_rows.
+# orders -- one row per order; per dataset, the expected (theoretical, for that
+# dataset's k, t and HPC setting -- see expected_density.py) and particular
+# (measured, mean/std over seeds) density_factor side by side. Same shape as
+# sshash's own scripts/export.py:orders_rows.
 # ---------------------------------------------------------------------------
 
 
-def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) -> list[dict]:
+def orders_rows(summary: list[dict], expected: dict[str, dict[str, dict]] | None = None) -> list[dict]:
+    """expected: {dataset: {order: expected_density row}}."""
     expected = expected or {}
     datasets = summary_datasets(summary)
     by_order: dict[str, dict[str, dict]] = {}
@@ -479,20 +526,11 @@ def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) ->
         if not per_dataset:
             continue
         info = ORDER_DESCRIPTIONS.get(order, {"description": "", "cli": ""})
-        exp = expected.get(order, {})
-        w_val = next((r.get("w") for r in per_dataset.values() if r.get("w") is not None), None)
-        k_val = next((r.get("k") for r in per_dataset.values() if r.get("k") is not None), None)
-        row = {
-            "order": order,
-            "description": info["description"],
-            "cli": info["cli"],
-            "k": k_val,
-            "w": w_val,
-            "t": _ORDER_T.get(order),
-            "expected_density_factor_mean": _num(exp.get("density_factor_avg")),
-            "expected_density_factor_std": _num(exp.get("density_factor_std")),
-        }
+        row = {"order": order, "description": info["description"], "cli": info["cli"]}
         for ds in datasets:
+            exp = expected.get(ds, {}).get(order, {})
+            row[f"{ds}_expected_density_factor_mean"] = _num(exp.get("density_factor_avg"))
+            row[f"{ds}_expected_density_factor_std"] = _num(exp.get("density_factor_std"))
             r = per_dataset.get(ds)
             row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
             row[f"{ds}_particular_density_factor_std"] = r.get("density_factor_std") if r else None
@@ -501,9 +539,10 @@ def orders_rows(summary: list[dict], expected: dict[str, dict] | None = None) ->
 
 
 def orders_field_order(summary: list[dict]) -> list[str]:
-    fields = ["order", "description", "cli", "k", "w", "t", "expected_density_factor_mean", "expected_density_factor_std"]
+    fields = ["order", "description", "cli"]
     for ds in summary_datasets(summary):
-        fields.extend((f"{ds}_particular_density_factor_mean", f"{ds}_particular_density_factor_std"))
+        fields.extend((f"{ds}_expected_density_factor_mean", f"{ds}_expected_density_factor_std",
+                       f"{ds}_particular_density_factor_mean", f"{ds}_particular_density_factor_std"))
     return fields
 
 
@@ -520,7 +559,7 @@ _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
     "density_factor_raw_bp": "density",
     "total_wall_time_sec": "total",
-    "build_wall_time_sec": "build", "build_peak_rss_gb": "build",
+    "build_wall_time_sec": "build", "build_peak_rss_gb": "build", "index_size_mb": "build",
     "map_wall_time_sec": "map", "map_peak_rss_gb": "map", "mid_occ": "map",
     "frac_mapped": "accuracy", "frac_correct": "accuracy",
     "frac_correct_in_repeat": "accuracy", "frac_incorrectly_mapped": "accuracy",
@@ -541,13 +580,11 @@ def _field_category(field: str) -> str:
 
 
 def _orders_field_category(field: str) -> str:
-    if field in ("order", "description", "cli", "k", "w", "t"):
+    if field in ("order", "description", "cli"):
         return "order"
-    if field.startswith("expected_density_factor"):
-        return "expected (theoretical)"
-    marker = "_particular_density_factor_"
-    if marker in field:
-        return field.split(marker, 1)[0]
+    for marker in ("_expected_density_factor_", "_particular_density_factor_"):
+        if marker in field:
+            return field.split(marker, 1)[0]
     return ""
 
 
@@ -565,47 +602,49 @@ def overview_rows() -> list[dict]:
 
     return [
         # --- id / params
-        row("all", "dataset", "chm13_chrX = Winnowmap's D1 (CHM13 chrX v0.7), grch38_wg = Winnowmap's D2 (GRCh38 whole genome); both with PBSIM2-simulated PacBio reads (see datasets sheet)"),
-        row("all", "k / w", "minimizer k-mer length and window size (k=15, w=10 -- minimap2's own map-pb/map-ont default window); HPC (homopolymer-compressed) k-mers on via -x map-pb"),
+        row("all", "dataset", "the Winnowmap paper's datasets (Jain et al. 2020): chm13_chrX = D1 (CHM13 chrX v0.7) and grch38_wg = D2 (GRCh38 whole genome), PacBio CLR reads simulated with PBSIM 1.0.3 as in the paper (10% error, 15 kb mean, lengths 100-25,000), mapped with -x map-pb; chm13_rel3_ont = D3, 1,000 real CHM13 rel3 ultra-long ONT reads (random sample, >= 1 kbp) mapped to GRCh38 with -x map-ont, no ground truth (see datasets sheet)"),
+        row("all", "k / w", "minimizer k-mer length and window size: each preset's own default, as the paper ran minimap2 (map-pb k=19, map-ont k=15; w=10); HPC (homopolymer-compressed) k-mers on for map-pb, off for map-ont (datasets sheet: preset, k, w)"),
         row("summary/runs", "mid_occ_cap", "map-time repeat-filter condition: 'default' = minimap2 picks mid_occ itself per index; a number = fixed with -f <N> for every order (set to native's own default value, so all orders filter repeats by the same rule). Each (dataset, mid_occ_cap) is its own block: own native baseline, divider, correlation rows"),
         row("all", "order", "minimizer order: native (minimap2's own hash) | xor | xor-pcg-hash | greedymini | greedymini-at1 (flipped AT/CG projection) | mod-minimizer-xor -- see orders sheet"),
-        row("runs", "mod_t", "t-mer length of mod-minimizer's inner order (5); blank for non-mod orders, merged across each order's seeds"),
+        row("runs", "mod_t", "t-mer length of mod-minimizer's inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); blank for non-mod orders, merged across each order's seeds"),
         row("runs", "seed / seed_idx", "order seed (XOR key) and its index in config.yaml's shared seed list; native and greedymini(-at1) are seed-independent, so run once (seed_idx 0)"),
         row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini/greedymini-at1, 5 otherwise)"),
-        row("summary/runs", "n_reads / n_reads_in_repeat", "simulated reads in the dataset / of those, reads whose true origin overlaps repeats.bed (D1: centromeric DXZ1 array; D2: a chr9 segmental duplication pair)"),
+        row("summary/runs", "n_reads / n_reads_in_repeat", "reads in the dataset / of those, simulated reads whose true origin overlaps repeats.bed (chm13_chrX: the DXZ1 centromeric array, the paper's Table 3; grch38_wg: a chr9 segmental duplication pair, our addition; chm13_rel3_ont: none)"),
         # --- density
-        row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_hpc_kmers. -x map-pb turns on HPC, so minimap2 picks minimizers over homopolymer-compressed k-mers -- same scale as expected_density_factor; 1 = theoretical minimum, ~2 = random order"),
-        row("runs", "density_factor_raw_bp", "same occurrences over the raw genome length instead ((w+1) / minimap2 -d's 'average spacing'): understates density by the genome's HPC compression ratio (hpc_len_bp / genome_len_bp, ~0.70 on human) and N gaps -- informational only"),
+        row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the orders sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),
+        row("runs", "density_factor_raw_bp", "same occurrences over the raw genome length instead ((w+1) / minimap2 -d's 'average spacing'): understates density by the genome's HPC compression ratio (sketch_len_bp / genome_len_bp under map-pb, ~0.70 on human) and N gaps -- informational only"),
         row("runs", "distinct_minimizers", "distinct minimizer keys in the index (informational; undercounts selected positions whenever a minimizer repeats, so not used for density)"),
         row("summary/runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density orders are higher here"),
         # --- total / build / map
         row("summary/runs", "total_wall_time_sec", "build_wall_time_sec + map_wall_time_sec: end-to-end cost of one run"),
-        row("summary/runs", "build_wall_time_sec / build_peak_rss_gb", "index build (minimap2 -d -x map-pb -k 15 -w 10 -t 16): wall time and peak memory (GB = 1024^3 bytes), from /usr/bin/time -v"),
+        row("summary/runs", "build_wall_time_sec / build_peak_rss_gb", "index build (minimap2 -d -x <preset> -k <k> -w 10 -t 16): wall time and peak memory (GB = 1024^3 bytes), from /usr/bin/time -v"),
         row("summary/runs", "mid_occ (summary: mid_occ_mean)", "effective repeat-filter threshold minimap2 used when mapping (its own '[M::mm_mapopt_update] mid_occ = N' log line): any minimizer occurring > mid_occ times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below"),
-        row("summary/runs", "map_wall_time_sec / map_peak_rss_gb", "mapping (minimap2 -x map-pb -c -t 16 [-f cap]): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
+        row("summary/runs", "map_wall_time_sec / map_peak_rss_gb", "mapping (minimap2 -x <preset> -c -t 16 [-f cap], as the paper's -cx map-pb / -cx map-ont): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
         # --- accuracy
-        row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads"),
+        row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads (1 - frac_mapped = the paper's 'unmapped reads'); the only accuracy metric for chm13_rel3_ont (real reads, no truth), as in the paper"),
         row("summary/runs", "frac_correct", "reads whose primary alignment is on the true contig and overlaps the true interval by >= 10% of their union / n_reads -- the Winnowmap / minimap2 papers' own criterion"),
-        row("summary/runs", "frac_incorrectly_mapped", "mapped but not correct (frac_correct criterion) / n_reads"),
+        row("summary/runs", "frac_incorrectly_mapped", "mapped but not correct (frac_correct criterion) / n_reads -- the paper's 'incorrectly mapped reads'; simulated datasets only"),
         row("summary/runs", "frac_correct_in_repeat", "frac_correct restricted to the n_reads_in_repeat reads (the Winnowmap paper's headline comparison)"),
         row("summary/runs", "frac_correct_strict50[_in_repeat]", "stricter variant: overlap >= 50% of the true span (overall / in-repeat)"),
         row("summary/runs", "mean_identity", "mean of 1 - de (gap-compressed per-base divergence from PAF's de:f: tag, dv:f: fallback) over primary alignments"),
         # --- summary aggregates
         row("summary", "{metric}_mean / {metric}_std", "mean / sample standard deviation over the row's n_seeds runs (std = 0 when n_seeds = 1)"),
         row("summary", "{metric}_ratio", "this order's mean / native's mean in the same (dataset, mid_occ_cap) block (native = 1, white). Colored green = better than native, red = worse; direction is per metric -- lower is better for density/avg_occurrences/time/memory/frac_incorrectly_mapped, higher is better for frac_mapped/frac_correct*/mean_identity"),
-        row("summary", "correlation grid (below the table)", f"per (dataset, mid_occ_cap) block: Pearson r via Excel CORREL over that block's 6 order means, rows = density_factor_mean / avg_occurrences_mean, columns = total / build / map time and memory means; cells with r > {CORR_HIGHLIGHT_ABOVE} are green. Only 6 points per r -- a trend indicator, not a significance test"),
+        row("summary", "correlation with density / distinct minimizers / occurrences per key", "three rows right under the table (sshash's layout): for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio / avg_occurrences_ratio over all summary rows (ratios are order / native within a (dataset, mid_occ_cap) block, so rows are comparable); blank for a constant column. No colour scale"),
+        row("summary/runs", "index_size_mb", "size of the built index (.mmi, MB = 10^6 bytes): 16 B per distinct key (hash table) + 8 B per occurrence of a repeated key (position array) + the 4-bit packed genome"),
         # --- orders / datasets
         row("orders", "description / cli", "what the order does and the minimap2 flags that select it"),
-        row("orders", "t", "mod-minimizer t-mer length (blank for non-mod orders)"),
-        row("orders", "expected_density_factor_mean/std", "theoretical density_factor: Monte Carlo on i.i.d. random DNA (HPC-modeled), mean/std over the 5 seeds -- see lib/expected_density.py"),
+        row("orders", "{dataset}_expected_density_factor_mean/std", "theoretical density_factor for that dataset's k, w, t and HPC setting: Monte Carlo on i.i.d. random DNA (homopolymer-compressed first for map-pb), mean/std over the 5 seeds -- see lib/expected_density.py"),
         row("orders", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap)"),
-        row("datasets", "n_contigs / genome_len_bp / n_reads / n_repeat_regions / repeat_bp", "read off disk: genome.fa.fai, truth.tsv, repeats.bed"),
-        row("datasets", "hpc_len_bp / n_hpc_kmers", "genome length after homopolymer compression (N gaps excluded) / compressed k-mers minimap2 sketches (per N-free segment: hpc length - k + 1) -- lib/hpc_kmers.py, cached next to genome.fa"),
+        row("datasets", "n_contigs / genome_len_bp / n_reads / n_repeat_regions / repeat_bp", "read off disk: genome.fa.fai, truth.tsv (reads.fa when there is no truth), repeats.bed"),
+        row("datasets", "k / w / mod_t", "the dataset's k (its preset's default), w and mod-minimizer t, as used by every run on it"),
+        row("datasets", "preset", "minimap2 -x preset for build and map (data/<dataset>/preset; default map-pb): map-pb = PacBio CLR with HPC k-mers, map-ont = ONT without"),
+        row("datasets", "sketch_len_bp / n_sketch_kmers", "genome length minimap2 sketches (N gaps excluded; homopolymer-compressed under an HPC preset) / k-mers it sketches (per N-free segment: length - k + 1) -- lib/sketch_kmers.py, cached next to genome.fa"),
         # --- mid_occ algorithm
         row("mid_occ (algorithm)", "what it filters", "at map time each read minimizer is looked up in the index; each hit becomes a chaining anchor. A minimizer with more than mid_occ reference occurrences is dropped (seed.c mm_collect_matches), and one repeated > mid_occ times within the read itself and > 1% of its minimizers is dropped too (mm_seed_mz_flt). Bases covered by dropped minimizers count as rep_len, which lowers MAPQ"),
-        row("mid_occ (algorithm)", "rescue", "if mid_occ < max_max_occ (4095, -U), inside each run of dropped minimizers the lowest-occurrence ones are kept, ~1 per 500 bp of read (--occ-dist, mm_seed_select); never above 4095. Active on D1 (mid_occ ~1244-1440); off on D2 (mid_occ ~9465-15000 > 4095: a hard cutoff)"),
+        row("mid_occ (algorithm)", "rescue", "if mid_occ < max_max_occ (4095, -U), inside each run of dropped minimizers the lowest-occurrence ones are kept, ~1 per 500 bp of read (--occ-dist, mm_seed_select); never above 4095. So the rescue is active when a dataset's mid_occ is below 4095 and the filter is a hard cutoff above it (see the mid_occ column)"),
         row("mid_occ (algorithm)", "default value", "without -f, mid_occ = occurrence count at the top 0.02% (-f 2e-4) of the index's distinct minimizers, clamped to [10, 1e6] (index.c mm_idx_cal_max_occ) -- so it's computed per index, per order"),
-        row("mid_occ (algorithm)", "why it drifts with the order", "a lower-density order has fewer distinct minimizers, each occurring more often (higher avg_occurrences), so the same 0.02% quantile lands higher (D1: native 1244 vs greedymini 1417; D2: 9465 vs 13305). More repetitive hits then pass, adding chaining work without changing where reads map; fixing -f to native's value (mid_occ_cap) removes this confound"),
+        row("mid_occ (algorithm)", "why it drifts with the order", "a lower-density order has fewer distinct minimizers, each occurring more often (higher avg_occurrences), so the same 0.02% quantile lands higher (compare mid_occ across orders in the default-cap block). More repetitive hits then pass, adding chaining work without changing where reads map; fixing -f to native's value (mid_occ_cap) removes this confound"),
     ]
 
 
@@ -786,85 +825,57 @@ def _color_scale_xml(fields: list[str], rows: list[dict]) -> str:
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float | None:
-    if len(xs) < 2:
+    """Pearson correlation; None when undefined (fewer than 3 points or a constant series)."""
+    n = len(xs)
+    if n < 3:
         return None
-    mx, my = statistics.mean(xs), statistics.mean(ys)
-    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    mx, my = sum(xs) / n, sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
     syy = sum((y - my) ** 2 for y in ys)
-    if sxx == 0 or syy == 0:
+    if sxx <= 1e-18 or syy <= 1e-18:
         return None
-    return sxy / (sxx * syy) ** 0.5
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    return round(max(-1.0, min(1.0, sxy / (sxx * syy) ** 0.5)), 3)
 
 
-def _correlation_block(fields: list[str], rows: list[dict], start_row: int) -> tuple[list[str], list[str], str]:
-    """summary's correlation grid, placed below the data table: per dataset,
-    one row per CORR_X metric, one column per CORR_Y metric, each cell an
-    Excel CORREL over that dataset's own row range (one point per order).
-    The Python-computed Pearson r is stored as the formula's cached value so
-    readers that don't recalculate still show it. Returns (row xml, merge
-    refs, conditional-formatting xml)."""
-    col = {name: i for i, name in enumerate(fields)}
-    xs = [f"{m}_mean" for m in CORR_X if f"{m}_mean" in col]
-    ys = [f"{m}_mean" for m in CORR_Y if f"{m}_mean" in col]
-    if not xs or not ys or not rows:
-        return [], [], ""
-
-    blocks: list[tuple[tuple, int, int]] = []  # ((dataset, cap), first idx, last idx)
-    for i, row in enumerate(rows):
-        if blocks and blocks[-1][0] == _block(row):
-            blocks[-1] = (blocks[-1][0], blocks[-1][1], i)
-        else:
-            blocks.append((_block(row), i, i))
-
-    out: list[str] = []
-    merges: list[str] = []
-    r = start_row
-    title = "correlation: Pearson r (CORREL) across each dataset's orders, one point per order's mean"
-    out.append(f'<row r="{r}">{_cell(title, 0, r, style=2)}</row>')
-    r += 1
-    header = [_cell("dataset", 0, r, style=2), _cell("mid_occ_cap", 1, r, style=2), _cell("x \\ y", 2, r, style=2)]
-    header += [_cell(y, 3 + j, r, style=2) for j, y in enumerate(ys)]
-    out.append(f'<row r="{r}">{"".join(header)}</row>')
-    r += 1
-    grid_first = r
-    for (dataset, cap), i1, i2 in blocks:
-        r1, r2 = DATA_START_ROW + i1, DATA_START_ROW + i2
-        for xi, x in enumerate(xs):
-            last = xi == len(xs) - 1
-            base, num = (1, 4) if last else (0, 3)
-            cells = [
-                _cell(dataset if xi == 0 else None, 0, r, style=base),
-                _cell(cap if xi == 0 else None, 1, r, style=base),
-                _cell(x, 2, r, style=base),
-            ]
-            xl = col_letter(col[x] + 1)
-            xv = [_num(rows[i].get(x)) for i in range(i1, i2 + 1)]
-            for j, y in enumerate(ys):
-                yl = col_letter(col[y] + 1)
-                yv = [_num(rows[i].get(y)) for i in range(i1, i2 + 1)]
-                pairs = [(a, b) for a, b in zip(xv, yv) if a is not None and b is not None]
-                rho = _pearson([a for a, _ in pairs], [b for _, b in pairs])
-                ref = f"{col_letter(4 + j)}{r}"
-                cached = f"<v>{round(rho, 6)}</v>" if rho is not None else ""
-                cells.append(f'<c r="{ref}" s="{num}"><f>CORREL({xl}{r1}:{xl}{r2},{yl}{r1}:{yl}{r2})</f>{cached}</c>')
-            out.append(f'<row r="{r}">{"".join(cells)}</row>')
-            r += 1
-        if len(xs) > 1:
-            merges.append(f"A{r - len(xs)}:A{r - 1}")
-            merges.append(f"B{r - len(xs)}:B{r - 1}")
-    sqref = f"D{grid_first}:{col_letter(3 + len(ys))}{r - 1}"
-    # No color scale here -- just flag strong positive correlation (dxfId 0 =
-    # the green fill in _xlsx_styles_xml's <dxfs>).
-    cf = (
-        f'<conditionalFormatting sqref="{sqref}">'
-        f'<cfRule type="cellIs" dxfId="0" priority="{len(fields) + 1}" operator="greaterThan">'
-        f"<formula>{CORR_HIGHLIGHT_ABOVE}</formula></cfRule></conditionalFormatting>"
-    )
-    return out, merges, cf
+def correlation_rows(fields: list[str], summary: list[dict]) -> list[dict]:
+    """sshash's layout (benchmark/sshash/scripts/export.py correlation_rows):
+    rows right under the summary table, one per CORRELATION_DRIVERS entry,
+    with -- per `{metric}_ratio` column -- the CORREL formula over all summary
+    rows (ratios are order / native within a (dataset, cap) block, so rows of
+    different datasets and caps are comparable) and its cached value."""
+    n = len(summary)
+    if not n:
+        return []
+    first, last = DATA_START_ROW, DATA_START_ROW + n - 1
+    out = []
+    for label, driver in CORRELATION_DRIVERS:
+        if driver not in fields:
+            continue
+        dl = col_letter(fields.index(driver) + 1)
+        cells: dict[int, tuple[str, float | None]] = {}
+        for c, f in enumerate(fields):
+            if not f.endswith("_ratio"):
+                continue
+            cl = col_letter(c + 1)
+            pairs = [(_num(r.get(driver)), _num(r.get(f))) for r in summary]
+            pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
+            value = _pearson([a for a, _ in pairs], [b for _, b in pairs])
+            # a constant column has no correlation: Excel's CORREL gives #DIV/0!, shown blank
+            formula = f'IFERROR(CORREL(${dl}${first}:${dl}${last},{cl}${first}:{cl}${last}),"")'
+            cells[c] = (formula, value)
+        out.append({"label": label, "cells": cells})
+    return out
 
 
-def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
+def _formula_cell(formula: str, value, col: int, row: int) -> str:
+    ref = f"{col_letter(col + 1)}{row}"
+    if value is None:
+        return f'<c r="{ref}" t="str"><f>{xml_escape(formula)}</f><v></v></c>'
+    return f'<c r="{ref}"><f>{xml_escape(formula)}</f><v>{value}</v></c>'
+
+
+def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict], footer: list[dict] | None = None) -> str:
     xml = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
@@ -916,11 +927,15 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
                 value = None if skipped else row.get(h)
                 cells.append(_cell(value, c, r_i, style=style))
             xml.append(f'<row r="{r_i}">{"".join(cells)}</row>')
-    corr_cf = ""
-    if raw_name == "summary" and fields and rows:
-        corr_rows, corr_merges, corr_cf = _correlation_block(fields, rows, DATA_START_ROW + len(rows) + 1)
-        xml.extend(corr_rows)
-        merge_refs.extend(corr_merges)
+    if fields and rows and footer:
+        # rows right under the table (see correlation_rows)
+        r_f = DATA_START_ROW + len(rows)
+        for entry in footer:
+            cells = [_cell(entry["label"], 0, r_f, style=2)]
+            for c, (formula, value) in sorted(entry["cells"].items()):
+                cells.append(_formula_cell(formula, value, c, r_f))
+            xml.append(f'<row r="{r_f}">{"".join(cells)}</row>')
+            r_f += 1
     xml.append("</sheetData>")
     if merge_refs:
         xml.append(_xlsx_merges_xml(merge_refs))
@@ -928,8 +943,6 @@ def _sheet_xml(raw_name: str, fields: list[str], rows: list[dict]) -> str:
         cs = _color_scale_xml(fields, rows)
         if cs:
             xml.append(cs)
-    if corr_cf:
-        xml.append(corr_cf)
     xml.append("</worksheet>")
     return "\n".join(xml)
 
@@ -953,27 +966,24 @@ def _xlsx_styles_xml() -> str:
         '<border><left/><right/><top/><bottom style="medium"><color auto="1"/></bottom><diagonal/></border>'
         "</borders>"
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        '<cellXfs count="5">'
+        '<cellXfs count="3">'
         '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
         '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'
         '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
-        # 3/4: correlation grid cells, "0.00" (built-in numFmt 2), plain / divider
-        '<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-        '<xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
         "</cellXfs>"
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
-        # dxf 0: green fill, for the correlation grid's r > CORR_HIGHLIGHT_ABOVE rule
-        '<dxfs count="1"><dxf><font><color rgb="FF006100"/></font>'
-        '<fill><patternFill><bgColor rgb="FFC6EFCE"/></patternFill></fill></dxf></dxfs>'
         "</styleSheet>"
     )
 
 
-def write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[dict]]]) -> None:
+def write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[dict]]],
+               footers: dict[str, list[dict]] | None = None) -> None:
+    """footers: {sheet name: correlation_rows(...)} written right under that
+    sheet's table."""
     names, payloads = [], []
     for raw_name, fields, rows in sheets:
         names.append(raw_name[:31])
-        payloads.append(_sheet_xml(raw_name, fields, rows))
+        payloads.append(_sheet_xml(raw_name, fields, rows, (footers or {}).get(raw_name)))
 
     sheet_refs, rels, overrides = [], [], [
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
@@ -1049,10 +1059,11 @@ def main(argv=None) -> int:
     ap.add_argument("--results-dir", type=Path, required=True)
     ap.add_argument("--data-dir", type=Path, default=None, help="dataset root, for the 'datasets' sheet (default: $MINIMAP2_DATA_DIR or --results-dir/../data)")
     ap.add_argument("--samtools", default=None, help="samtools binary, for genome.fa.fai (falls back to $SAMTOOLS or 'samtools' on PATH)")
+    ap.add_argument("--datasets", default=None, help="comma-separated datasets to export (default: all)")
     ap.add_argument("--gm-file", type=Path, default=None, help="GreedyMini table, for the 'orders' sheet's expected density (default: orders/GreedyMini/w10_k15_canonical.gm)")
     args = ap.parse_args(argv)
 
-    runs = load_runs(args.results_dir)
+    runs = load_runs(args.results_dir, set(args.datasets.split(",")) if args.datasets else None)
     if not runs:
         print(f"error: no completed runs in {args.results_dir / 'runs'}", file=sys.stderr)
         return 1
@@ -1060,25 +1071,24 @@ def main(argv=None) -> int:
     import os
     data_dir = args.data_dir or Path(os.environ.get("MINIMAP2_DATA_DIR", args.results_dir.parent / "data"))
     samtools = args.samtools or os.environ.get("SAMTOOLS") or "samtools"
-    dataset_names = {r["dataset"] for r in runs if r.get("dataset")}
-    k_val = next((r.get("k") for r in runs if r.get("k") is not None), 15)
-    datasets = dataset_rows(data_dir, samtools, dataset_names, int(k_val))
-    attach_hpc_density(runs, {d["dataset"]: d["n_hpc_kmers"] for d in datasets})
+    datasets = dataset_rows(data_dir, samtools, runs)
+    attach_sketch_density(runs, {d["dataset"]: d["n_sketch_kmers"] for d in datasets})
     summary = summary_rows(runs)
     attach_native_ratios(summary)
 
     minimap2_bench_dir = Path(__file__).resolve().parents[1]
     repo_root = Path(__file__).resolve().parents[3]
     gm_file = args.gm_file or (repo_root / "orders" / "GreedyMini" / "w10_k15_canonical.gm")
-    w_val = next((r.get("w") for r in runs if r.get("w") is not None), 10)
-    mod_t_val = next((r.get("mod_t") for r in runs if r.get("mod_t")), 5)
     seeds = _load_seeds(minimap2_bench_dir)
 
     import expected_density
-    expected = expected_density.ensure_expected_orders(
-        args.results_dir, int(k_val), int(w_val), seeds,
-        gm_file=gm_file, mod_t=int(mod_t_val),
-    )
+    expected: dict[str, dict[str, dict]] = {}
+    for d in datasets:
+        k, w = int(d["k"]), int(d["w"])
+        t = int(d["mod_t"]) if d.get("mod_t") is not None else 4 + (k - 4) % w
+        expected[d["dataset"]] = expected_density.ensure_expected_orders(
+            args.results_dir, k, w, seeds, gm_file=gm_file, mod_t=t, is_hpc=d["preset"] in HPC_PRESETS,
+        )
     orders = orders_rows(summary, expected)
 
     write_csv(args.results_dir / "minimap2_overview.csv", OVERVIEW_FIELDS, overview_rows())
@@ -1088,13 +1098,14 @@ def main(argv=None) -> int:
     write_csv(args.results_dir / "minimap2_orders.csv", orders_field_order(summary), orders)
     print(f"wrote {len(datasets)} dataset row(s), {len(summary)} summary row(s), {len(runs)} run row(s), {len(orders)} order row(s) under {args.results_dir}")
 
+    # sheet order as sshash's export: legend, orders, datasets, summary, runs
     write_xlsx(args.results_dir / "minimap2_results.xlsx", [
         ("overview", OVERVIEW_FIELDS, overview_rows()),
+        ("orders", orders_field_order(summary), orders),
         ("datasets", dataset_field_order(), datasets),
         ("summary", summary_field_order(), summary),
-        ("orders", orders_field_order(summary), orders),
         ("runs", RUN_FIELDS, runs),
-    ])
+    ], footers={"summary": correlation_rows(summary_field_order(), summary)})
     return 0
 
 

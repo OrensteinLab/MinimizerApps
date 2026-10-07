@@ -16,10 +16,10 @@ Per (dataset, order) run, from `minimap2 -d` (index build) and a plain
 mapping pass:
 
 - **Minimizer density**: `density_factor = total_occurrences * (w+1) /
-  n_hpc_kmers`, on minimap2's own sketching scale: `-x map-pb` turns on HPC,
-  so minimizers are picked over homopolymer-compressed k-mers, and
-  `n_hpc_kmers` counts exactly those (`lib/hpc_kmers.py`: compressed length
-  minus k-1 per N-free segment). minimap2 `-d`'s own "average spacing"
+  n_sketch_kmers`, on minimap2's own sketching scale: `n_sketch_kmers`
+  counts the k-mers minimap2 sketches (`lib/sketch_kmers.py`: length minus
+  k-1 per N-free segment), homopolymer-compressed under an HPC preset
+  (`-x map-pb`) and raw otherwise (`-x map-ont`). minimap2 `-d`'s own "average spacing"
   divides by the *raw* length instead, understating density by the genome's
   compression ratio (~0.70 on human) plus N gaps -- kept only as the runs
   sheet's `density_factor_raw_bp`. total_occurrences (distinct minimizers x
@@ -50,7 +50,8 @@ mapping pass:
   plus mean per-base identity from PAF's `dv:f:`/`de:f:` tag. A stricter
   50%-of-true-span threshold is also reported (`frac_correct_strict50`) for
   continuity with this harness's own earlier (pre-literature-alignment)
-  numbers.
+  numbers. Real reads (D3) have no truth: only the mapped fraction (the
+  paper's "unmapped reads") and identity, as in the paper.
 
 ## Datasets
 
@@ -61,15 +62,48 @@ known ground truth (`truth.tsv`), 30% deliberately sampled from inside the
 repeat. Good for fast iteration and CI-scale sanity checks; too small and
 too artificial for real accuracy conclusions.
 
-**`chm13_chrX`**: the real dataset, matching Winnowmap's own D1 (Jain et al.
-2020: simulated PacBio reads against T2T CHM13 chrX). To regenerate:
+The three benchmark datasets are the Winnowmap paper's (Jain et al. 2020,
+Table 1), built and evaluated the way the paper describes:
+
+| Dataset | Genome | Reads | Preset (k) | Evaluation |
+|---|---|---|---|---|
+| `chm13_chrX` (D1) | T2T CHM13 chrX v0.7, 154.3 Mbp | PBSIM 1.0.3 CLR, 10% error, 15 kb mean (100-25,000 bp), 5x: 51,459 reads, N50 15,170 (paper: 51,424, N50 15,184) | `map-pb` (19) | unmapped / incorrectly mapped (truth); centromere = DXZ1 array chrX:57,828,561-60,934,693 (the paper's Table 3), 1,090 reads |
+| `grch38_wg` (D2) | GRCh38 with ALT contigs (UCSC hg38.fa: 455 sequences, 3.21 Gbp, of which 261 ALT contigs / 109.5 Mb) | same simulation, 0.5x, reads containing "NN" dropped (paftools `pbsim2fq`'s rule): ~101.4k reads (paper: 101,571) | `map-pb` (19) | as D1; plus a chr9 segmental-duplication repeat set (our addition, not in the paper) |
+| `chm13_rel3_ont` (D3) | same GRCh38 with ALT contigs (symlink to D2's) | 1,000 real CHM13 rel3 ultra-long ONT reads, uniform random sample of reads >= 1 kbp with mean quality >= 7 (the ONT pass threshold; our addition: the paper states no quality filter, and 31% of rel3 reads >= 1 kbp are below Q7, almost all unmappable) | `map-ont` (15) | no truth: unmapped %, time, memory, density only (as in the paper) |
+
+k is each preset's own default, as the paper ran minimap2 with `-cx map-pb`
+/ `-cx map-ont` (`lib/constants.sh:preset_default_k`; `K=` overrides); every
+order uses that k (GreedyMini's k15 table is centre-extended to k=19), and
+mod-minimizer's t = 4 + (k-4) % w (9 at k=19, 5 at k=15). Each dataset's
+preset is a one-word `data/<dataset>/preset` file (absent = `map-pb`;
+`$PRESET` overrides it), recorded in every run's `meta.json`.
+
+To regenerate (`$E` = the `minimap2_bench` conda env; `setup.sh` builds PBSIM
+1.0.3 into `$E/opt/pbsim1`):
 
 ```bash
+P1=$E/opt/pbsim1
+# D1
 mkdir -p "$MINIMAP2_DATA_DIR/chm13_chrX" && cd "$MINIMAP2_DATA_DIR/chm13_chrX"
 curl -sL -o genome.fa.gz https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/chm13.chrX_v0.7.fasta.gz
 gunzip genome.fa.gz  # verify md5 89b3dd61db66177dd830527b920956fa first
-printf 'chrX_v0.7\t57828561\t60934693\tcentromere_dxz1_array\n' > repeats.bed  # Winnowmap Table 3's own coordinates
-cd - && ./minimap2_bench.sh pbsim-reads P6C4.model 5   # PacBio model, 5x depth (matches Winnowmap's D1)
+printf 'chrX_v0.7\t57828561\t60934693\tcentromere_dxz1_array\n' > repeats.bed  # the paper's Table 3 coordinates
+cd - && $E/bin/python3 lib/pbsim_reads.py --simulator pbsim1 --dataset-dir "$MINIMAP2_DATA_DIR/chm13_chrX" \
+    --pbsim-bin $P1/bin/pbsim --model $P1/data/model_qc_clr \
+    --depth 5 --length-mean 15000 --accuracy-mean 0.90 --seed 1
+
+# D2: UCSC hg38.fa.gz (GRCh38 with ALT contigs; md5 from the same directory's md5sum.txt) as
+#   genome.fa (+ the chr9 segdup pair as repeats.bed), then the same command with
+#   --dataset-dir .../grch38_wg --depth 0.5
+#   curl -sL https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+
+# D3: random 1,000 reads >= 1 kbp, mean Q >= 7, of the 355 GB rel3 FASTQ (md5 92026d97a898c2f5b65074048a1caabf),
+#   streamed once (a parallel ranged download into parts is much faster than one connection)
+mkdir -p "$MINIMAP2_DATA_DIR/chm13_rel3_ont" && cd "$MINIMAP2_DATA_DIR/chm13_rel3_ont"
+ln -s ../grch38_wg/genome.fa ../grch38_wg/genome.fa.fai . && echo map-ont > preset
+curl -sL https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/nanopore/rel3/rel3.fastq.gz \
+  | tee >(md5sum > rel3.fastq.gz.md5) | pigz -dc \
+  | python3 "$OLDPWD/lib/sample_reads.py" --n 1000 --min-len 1000 --min-mean-q 7 --seed 1 --out-dir .
 ```
 
 Any other dataset works the same way: point `minimap2_bench.sh run`/`sweep`
@@ -79,11 +113,10 @@ only, no real download) to fill in `reads.fa`/`truth.tsv`.
 
 `make_dataset.py`'s own read simulation is a lightweight, dependency-free
 stand-in for a real long-read simulator. `environment.yml`/`setup.sh` set up
-a conda env (`minimap2_bench`) with `pbsim2` (a real ONT/PacBio error-model
-simulator); once set up, `./minimap2_bench.sh pbsim-reads` replaces
-`reads.fa`/`truth.tsv` with pbsim2's own simulated reads (still sampled from
-the same genome+repeat, ground truth parsed straight from pbsim2's own
-`.maf` output) -- `lib/pbsim_reads.py`'s docstring has the details.
+a conda env (`minimap2_bench`) with `pbsim2` and build PBSIM 1.0.3 (the
+paper's simulator); `lib/pbsim_reads.py` drives either (`--simulator`) and
+parses ground truth from the simulator's `.maf` output -- its docstring has
+the details.
 
 ## `.env` setup
 
@@ -104,20 +137,23 @@ never clobbered by `.env`.
 
 | Path | Role |
 |---|---|
-| `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export`, `list` |
+| `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export [--datasets a,b]`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
-| `lib/constants.sh` | Defaults (`k=15 w=10 mod_t=5`, `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
+| `lib/constants.sh` | Defaults (k = the dataset preset's own via `preset_default_k`, `w=10`, mod_t = 4 + (k-4) % w; `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
 | `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`, `greedymini-at1`) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
-| `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring |
+| `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring (mapped fraction only for real reads) |
+| `lib/pbsim_reads.py` | Simulated reads + truth for a dataset (PBSIM 1.0.3 or PBSIM2) |
+| `lib/sample_reads.py` | Uniform reservoir sample of N reads >= L bp (optionally mean quality >= Q) from a FASTQ stream (the paper's D3) |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
-| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{overview,datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 5 sheets; `overview` = per-column legend, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus a per-block `CORREL` grid below `summary`'s table (density_factor/avg_occurrences vs. total/build/map time and memory, r > 0.8 highlighted); `smoke` excluded throughout) |
-| `lib/hpc_kmers.py` | Counts the HPC k-mers minimap2 sketches per genome (density_factor's denominator), cached as `genome.fa.hpc_k<k>.json` |
-| `lib/expected_density.py` | Theoretical expected `density_factor` per order (Monte Carlo on i.i.d. random DNA); feeds `orders` sheet's `expected_density_factor_mean/std`, cached to `minimap2_density_expected_orders.csv` |
+| `lib/export.py` | Aggregates every `runs/**/meta.json` into one CSV per sheet (`minimap2_{overview,datasets,summary,orders,runs}.csv`) plus `minimap2_results.xlsx` (same 5 sheets; `overview` = per-column legend, with a category-band header, dataset dividers/merges, and `summary`'s `{metric}_ratio` vs. native with green/white/red conditional coloring, plus, as in sshash's export, correlation rows right under `summary`'s table (Excel `CORREL` of every `{metric}_ratio` column with the density, distinct-minimizer and occurrences-per-key ratios); `smoke` excluded throughout) |
+| `lib/sketch_kmers.py` | Counts the k-mers minimap2 sketches per genome, HPC or raw (density_factor's denominator), cached as `genome.fa.{hpc,raw}_k<k>.json` |
+| `lib/expected_density.py` | Theoretical expected `density_factor` per order (Monte Carlo on i.i.d. random DNA) for a dataset's k, w, t and HPC setting; feeds the `orders` sheet's `{dataset}_expected_density_factor_mean/std`, cached as `minimap2_density_expected_k<k>_w<w>_t<t>_{hpc,nohpc}.csv` |
 | `experiments/sweep_orders.yaml` | Documents the default sweep's shape (see that file's own header for why it isn't wired through the shared YAML engine yet) |
 | `tests/test_order_sanity.py` | Offline pytest: every order builds/maps, densities are non-degenerate, mapped-read sets agree across orders |
-| `environment.yml`, `setup.sh` | Conda env for `pbsim2`/`samtools` (see "Default dataset" above) |
+| `environment.yml`, `setup.sh` | Conda env for `pbsim2`/`samtools`, plus PBSIM 1.0.3 built from source |
+| `analysis/` | Scheme analysis: paired per-read accuracy tests, per-read seed/anchor/time stats, timing replicates, statistics (`accuracy_paired.py`, `seed_stats.py`, `run_seed_experiments.sh`, `stats.py`) |
 
 ## Usage
 
@@ -141,24 +177,19 @@ MID_OCC=1244 ./minimap2_bench.sh sweep    # same sweep, map-time repeat cap fixe
 **mod-minimizer is only relevant when `w < k`**: it improves on a classic
 minimizer's density bound specifically in the regime where the sampled
 substring `k` is large *relative to* the window `w`. This harness's default
-sweep (`k=15, w=10`) is in that regime; don't expect the same benefit (or
+sweep (`k=19` or `k=15`, `w=10`) is in that regime; don't expect the same benefit (or
 run it at all) for `w >= k`.
 
-**mod-minimizer's reverse-complement asymmetry (unfixed)**: the scheme's
-"reduce the winning t-mer's position mod w" rule is provably not
-reverse-complement symmetric (the two t-mer offsets under strand reversal
-sum to a fixed constant, but reducing each mod `w` independently doesn't
-generally land on mirrored l-mer slots). Measured directly (build an index
-from a 3kb real-genome sequence, query with its own reverse complement):
-mod-minimizer-xor shared only 4 of 140 minimizer keys between the two
-strands, versus ~90%+ for xor/native/greedymini, which use per-locus
-canonical parsing and don't have this issue. sshash's (since removed)
-mod-minimizer worked around this with a dual-probe/"regular parsing"
-fallback -- **not ported to minimap2**. It has little visible effect at `w=10` (there's
-enough redundant minimizer coverage that mapping still mostly succeeds); a
-sparser, still-in-regime setting (larger `k`, same `w`) could expose it
-more. **Treat every mod-minimizer-\* result as provisional** until that
-fallback is ported.
+**mod-minimizer-xor is strand-symmetric**: plain mod-sampling ("reduce the
+winning t-mer's position mod w") is not reverse-complement symmetric, so
+minimap2's mod-minimizer-xor uses a canonical variant (this repo, not a
+published scheme): each window prefers the strand with more G/T bases (tie:
+the lexicographically smaller strand); forward-preferred windows use the
+mod-sampling rule, reverse-preferred ones its mirror (rightmost minimal t-mer,
+offset counted from the window's right end). A read and its reverse
+complement then select the same loci, as for the per-locus canonical orders.
+`analysis/canonical_mod.py` compares it with plain mod-sampling and with
+simd-minimizers' canonical minimizer (density, strand agreement).
 
 `minimap2/order.cpp`'s `sketch_mod_minimizer` uses kraken2's single
 monotone deque over all live t-mers; `minimap2/validate_mod_minimizer.py`

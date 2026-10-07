@@ -18,6 +18,11 @@ Reports both overall and repeat-region-only (the papers' own headline
 comparison -- Winnowmap's Table 3 restricts to reads sampled from the
 centromeric repeat array) plus mean per-base identity (from PAF's de:f:/dv:f:
 tag, when mapped).
+
+Real reads have no truth.tsv (the Winnowmap paper's D3: "we measured indexing
+time, mapping time, peak memory use, fraction of unmapped reads and minimizer
+sampling density"): with --reads instead of --truth only n_reads, n_mapped,
+frac_mapped and mean_identity are reported.
 """
 from __future__ import annotations
 
@@ -82,12 +87,34 @@ def overlap_len(a_start: int, a_end: int, b_start: int, b_end: int) -> int:
     return max(0, min(a_end, b_end) - max(a_start, b_start))
 
 
+def score_without_truth(args) -> int:
+    with args.reads.open() as f:
+        n_total = sum(1 for line in f if line.startswith(">"))
+    aligned = parse_paf_primary(args.paf)
+    identities = [1.0 - a["de"] for a in aligned.values() if a["de"] is not None]
+    result = {
+        "n_reads": n_total,
+        "n_mapped": len(aligned),
+        "frac_mapped": round(len(aligned) / n_total, 4) if n_total else None,
+        "mean_identity": round(sum(identities) / len(identities), 4) if identities else None,
+    }
+    print(json.dumps(result, indent=2))
+    if args.json_out:
+        args.json_out.write_text(json.dumps(result, indent=2) + "\n")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--paf", required=True, type=Path)
-    ap.add_argument("--truth", required=True, type=Path)
+    ap.add_argument("--truth", type=Path, help="truth.tsv; omit for real reads (then --reads)")
+    ap.add_argument("--reads", type=Path, help="reads FASTA, to count reads when there is no truth")
     ap.add_argument("--json-out", type=Path)
     args = ap.parse_args(argv)
+    if args.truth is None or not args.truth.is_file():
+        if args.reads is None:
+            ap.error("--reads is required when --truth is absent")
+        return score_without_truth(args)
 
     truth = load_truth(args.truth)
     aligned = parse_paf_primary(args.paf)
@@ -104,13 +131,10 @@ def main(argv=None) -> int:
         n_mapped += 1
         if a["de"] is not None:
             identities.append(1.0 - a["de"])
-        # A read whose primary alignment lands on a *different* contig than
-        # its true origin is wrong regardless of coordinate overlap -- e.g.
-        # grch38_wg has 195 sequences, so two contigs can easily share a
-        # coordinate range. Single-contig datasets (smoke, chm13_chrX) never
-        # hit this (there's only one contig to land on), which is exactly
-        # why it went unnoticed until a real multi-contig genome was added.
-        same_contig = a["tname"] == t["contig"]
+        # Correct requires the true contig and strand, then the overlap test --
+        # paftools.js mapeval's is_correct (the paper's evaluation), which
+        # compares contig and strand before the coordinates.
+        same_contig = a["tname"] == t["contig"] and a["strand"] == t["strand"]
         ov = overlap_len(a["tstart"], a["tend"], t["start"], t["end"]) if same_contig else 0
         true_span = t["end"] - t["start"]
         aligned_span = a["tend"] - a["tstart"]
