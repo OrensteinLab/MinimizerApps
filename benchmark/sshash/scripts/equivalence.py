@@ -149,8 +149,10 @@ def sample_negative_kmers(
 
 
 def build_reference_index(
-    sshash_bin: str, fasta_path: Path, k: int, m: int, threads: int, out_path: Path
+    sshash_bin: str, fasta_path: Path, k: int, m: int, threads: int, out_path: Path, tmp_dir: Path
 ) -> None:
+    """Native-order reference build. `tmp_dir` is sshash's external-memory directory (-d; its default
+    is the cwd): it must be on a disk with room for the largest dataset (hprc: several GB)."""
     cmd = [
         sshash_bin,
         "build",
@@ -164,6 +166,8 @@ def build_reference_index(
         "native",
         "-t",
         str(threads),
+        "-d",
+        str(tmp_dir),
         "-o",
         str(out_path),
     ]
@@ -194,10 +198,11 @@ def ensure_query_sets(
         return pos_path, neg_path
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    tmp_root = Path(tempfile.mkdtemp(prefix="sshash_refidx_"))
+    # next to the dataset (not in /tmp): the reference index and sshash's temporary files are large
+    tmp_root = Path(tempfile.mkdtemp(prefix="sshash_refidx_", dir=out_dir))
     try:
         ref_index = tmp_root / "reference_native.sshash"
-        build_reference_index(sshash_bin, fasta_path, k, m, threads, ref_index)
+        build_reference_index(sshash_bin, fasta_path, k, m, threads, ref_index, tmp_root)
         positives = sample_positive_kmers(fasta_path, k, n_pos, seed)
         negatives = sample_negative_kmers(
             sshash_bin, ref_index, set(positives), k, n_neg, seed, tmp_root

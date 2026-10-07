@@ -21,6 +21,10 @@ A sheet is a dict:
   widths      {field: column width in characters} (default: from content)
   wrap_fields fields with wrapped text (long prose columns)
   freeze_cols number of leading columns to freeze (default 0)
+  footer_rows rows written right under the data: [{"label": text (column A),
+                "cells": [(field, formula, cached value or None), ...]}]; the
+                formula (no leading "=") is a live Excel formula and the cached
+                value is stored next to it for viewers that do not recalculate
 
 Numbers are written as numbers, None / "" / NaN / inf as blank cells. Python
 3.6 compatible.
@@ -55,11 +59,15 @@ CATEGORY_FILLS = {
     "classify": "FFE2EFDA",
     "density": "FFFFF2CC",
     "profile": "FFFCE4D6",
+    "minimizers": "FFFFE599",
+    "space": "FFD9EAD3",
     "accuracy: simulated reads, read-level truth (strain-exclusion; cami: library-aware)": "FFE2EFDA",
     "accuracy: cami (library-aware)": "FFD0E0E3",
     "accuracy: fda-argos (real, genus concordance)": "FFE4DFEC",
-    "accuracy: mock (real, known composition)": "FFEAD1DC",
     "slice": "FFE7E6E6",
+    "accuracy: read counts (TP / VP / FP / FN)": "FFF2F2F2",
+    "accuracy: excluded reads (true taxon not in the library)": "FFFFF2CC",
+    "accuracy: calls on excluded reads (cami only)": "FFFCE4D6",
     "accuracy detail": "FFE2EFDA",
     "vs reference": "FFEDEDED",
     "accuracy": "FFE4DFEC",
@@ -192,6 +200,17 @@ def _cell(value, col, row, style=0):
         return '<c r="%s"%s><v>%s</v></c>' % (ref, s_attr, repr(value))
     return '<c r="%s"%s t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>' % (
         ref, s_attr, xml_escape(value))
+
+
+def _formula_cell(formula, cached, col, row, style=0):
+    ref = "%s%d" % (col_letter(col + 1), row)
+    s_attr = ' s="%d"' % style if style else ""
+    if _blank(cached):
+        return '<c r="%s"%s><f>%s</f></c>' % (ref, s_attr, xml_escape(formula))
+    if isinstance(cached, (int, float)) and not isinstance(cached, bool):
+        return '<c r="%s"%s><f>%s</f><v>%s</v></c>' % (ref, s_attr, xml_escape(formula), repr(cached))
+    return '<c r="%s"%s t="str"><f>%s</f><v>%s</v></c>' % (
+        ref, s_attr, xml_escape(formula), xml_escape(cached))
 
 
 def _row_get(row, field, idx):
@@ -380,6 +399,15 @@ def _sheet_xml(sheet, styles, cat_fill):
                 st = styles.get(border=border, numfmt=numfmt, wrap=f in wrap_fields,
                                 valign="top" if f in wrap_fields else None)
             cells.append(_cell(v, c, rn, st))
+        out.append('<row r="%d">%s</row>' % (rn, "".join(cells)))
+    for i, fr in enumerate(sheet.get("footer_rows") or ()):
+        rn = DATA_START_ROW + n + i
+        cells = [_cell(fr.get("label"), 0, rn, styles.get(bold=True))]
+        by_col = sorted((fields.index(f), fm, cv) for f, fm, cv in fr.get("cells", ()) if f in fields)
+        for c, fm, cv in by_col:
+            if c == 0:
+                continue
+            cells.append(_formula_cell(fm, cv, c, rn, styles.get(numfmt="0.000")))
         out.append('<row r="%d">%s</row>' % (rn, "".join(cells)))
     out.append("</sheetData>")
     if merges:

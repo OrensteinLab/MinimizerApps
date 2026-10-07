@@ -147,6 +147,23 @@ download_one() {
   die "curl failed for $url after $attempts attempts (exit $last)"
 }
 
+# A read file shared by several datasets (hprc is queried with human's SRR5833294.fastq.gz): when
+# `dest` is missing but a non-empty file of the same name sits in another dataset's directory,
+# symlink it instead of downloading it again.
+link_existing_query() {
+  local dest="$1" fn other
+  fn="$(basename "$dest")"
+  [[ -s "$dest" ]] && return 0
+  for other in "$DATA_DIR"/data/*/"$fn"; do
+    if [[ -s "$other" && "$(readlink -f "$other")" != "$(readlink -f "$dest")" ]]; then
+      ln -sf "$(readlink -f "$other")" "$dest"
+      echo "$fn: linked to $(readlink -f "$other")"
+      return 0
+    fi
+  done
+  return 1
+}
+
 download_dataset() {
   local ds="$1"
   if dataset_is_local "$ds"; then
@@ -175,6 +192,7 @@ download_dataset() {
     [[ -n "$q_url" ]] || q_url="$(ena_url "$q_fn")"
     q_md5="$(trim "$(csv_field "$ds" query_md5)")"
     q_dest="$out_dir/$q_fn"
+    link_existing_query "$q_dest" || true
     if download_one "$q_url" "$q_dest"; then
       verify_md5 "$q_dest" "$q_md5"
     elif [[ "$SKIP_MISSING" -ne 1 ]]; then

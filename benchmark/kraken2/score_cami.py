@@ -18,7 +18,8 @@ Excluded reads are further split by what the classifier did with them:
 ex_unclassified, ex_consistent (call is on the true lineage: the true taxon, an
 ancestor such as the family, or a descendant), ex_off (call is off-lineage = a spurious assignment).
 
-Groups: all; domain (bacteria / archaea / virus / eukaryote / other, from the
+Groups: all; prokaryote (bacteria + archaea, scored as one group like the
+strain-exclusion `prokaryote` domain); domain (bacteria / archaea / virus / eukaryote / other, from the
 superkingdom of the true taxid); novelty:<category> from truth_extra.tsv (CAMI
 metadata: known_strain, new_strain, new_species, ...).
 
@@ -53,6 +54,7 @@ DOMAIN_OF_SUPERKINGDOM = {
     2759: "eukaryote",
     12884: "virus",  # viroids
 }
+PROKARYOTE_DOMAINS = ("bacteria", "archaea")
 NOVELTY_SKIP = ("", "NA", "unknown")
 FIELDS = [
     "scheme",
@@ -224,7 +226,10 @@ def make_groups(parent, truth, novelty):
     groups = defaultdict(dict)
     for seqid, taxid in truth.items():
         groups["all"][seqid] = taxid
-        groups[domain_of(parent, taxid)][seqid] = taxid
+        dom = domain_of(parent, taxid)
+        groups[dom][seqid] = taxid
+        if dom in PROKARYOTE_DOMAINS:
+            groups["prokaryote"][seqid] = taxid
         nov = novelty.get(seqid, "")
         if nov not in NOVELTY_SKIP:
             groups["novelty:" + nov][seqid] = taxid
@@ -234,6 +239,8 @@ def make_groups(parent, truth, novelty):
 def group_order(name):
     if name == "all":
         return (0, name)
+    if name == "prokaryote":
+        return (0, "prokaryote")
     if name.startswith("novelty:"):
         return (2, name)
     return (1, name)

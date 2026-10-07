@@ -26,8 +26,8 @@ dataset -> minimum_hit_groups -> order.
   classify_runs   the per-seed rows behind `classify`
   profile         NextMinimizer / phase profile (only for ENABLE_MINIMIZER_PROF builds)
   vs_reference    paired agreement with xor, library x dataset x mhg x order
-  accuracy_<dataset> (strain_exclusion, fda_argos, cami, mock) accuracy per
-                  slice (mhg / domain / group / SRR / threshold), mean / std over seeds
+  accuracy_<dataset> (strain_exclusion, fda_argos, cami) accuracy per
+                  slice (mhg / group / SRR), mean / std over seeds
   paper_check     xor at minimum_hit_groups 0 on the strain_exclusion library vs
                   the published Kraken 2 values (Wood et al. 2019, Tables S1 / S5)
 
@@ -62,8 +62,8 @@ for _p in (HERE, _COMMON):
         sys.path.insert(0, _p)
 
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
-from xlsx_book import write_book  # noqa: E402
-from xlsx_util import write_csv  # noqa: E402
+from xlsx_book import write_book, DATA_START_ROW  # noqa: E402
+from xlsx_util import write_csv, col_letter  # noqa: E402
 
 PREFIX = "kraken2_"
 WORKBOOK = "kraken2_results.xlsx"
@@ -81,7 +81,6 @@ SHEETS = (
     "accuracy_strain_exclusion",
     "accuracy_fda_argos",
     "accuracy_cami",
-    "accuracy_mock",
     "paper_check",
 )
 # accuracy sheet of each dataset kind (compare_benchmark's acc_rows key)
@@ -89,7 +88,6 @@ ACCURACY_SHEETS = OrderedDict([
     ("labeled", "accuracy_strain_exclusion"),
     ("argos", "accuracy_fda_argos"),
     ("cami", "accuracy_cami"),
-    ("mock", "accuracy_mock"),
 ])
 # Base tables: what a per-library export persists and a merge reads back
 # (build / classify are derived from build_runs / classify_runs).
@@ -106,12 +104,11 @@ PAPER_MHG = 0
 LIBRARY_ORDER = ("standard", "standard_p10", "standard_p0.5", "strain_exclusion")
 DATASET_ORDER = {
     "strain-exclusion": 0, "simulated": 0, "labeled": 0,
-    "fda-argos": 1, "argos": 1, "cami": 2, "mock": 3, "speed": 4,
+    "fda-argos": 1, "argos": 1, "cami": 2, "speed": 3,
 }
 DOMAIN_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2}
 RANK_ORDER = {"genus": 0, "species": 1}
 
-MOCK_HEADLINE_MIN_FRAC = 1e-4
 TEXT_FIELDS = frozenset([
     "library", "dataset", "order", "scheme", "run_id", "seed", "context", "domain",
     "rank", "scope", "group", "sra_run", "species", "sources", "path", "gm_table",
@@ -288,6 +285,8 @@ CAT_ID = "id / params"
 CAT_BUILD = "build"
 CAT_DENSITY = "density"
 CAT_CLASSIFY = "classify"
+CAT_MINIMIZERS = "minimizers"
+CAT_SPACE = "space"
 CAT_PROFILE = "profile"
 CAT_VSREF = "vs reference"
 
@@ -297,16 +296,22 @@ CAT_VSREF = "vs reference"
 BAND_READ = "accuracy: simulated reads, read-level truth (strain-exclusion; cami: library-aware)"
 BAND_CAMI = "accuracy: cami (library-aware)"
 BAND_ARGOS = "accuracy: fda-argos (real, genus concordance)"
-BAND_MOCK = "accuracy: mock (real, known composition)"
-ACC_BANDS = (BAND_READ, BAND_CAMI, BAND_ARGOS, BAND_MOCK)
+ACC_BANDS = (BAND_READ, BAND_CAMI, BAND_ARGOS)
+BAND_COUNTS = "accuracy: read counts (TP / VP / FP / FN)"
+BAND_EXCLUDED = "accuracy: excluded reads (true taxon not in the library)"
+BAND_EXCLUDED_CALLS = "accuracy: calls on excluded reads (cami only)"
 
+# Column groups in the SSHash order: id / params, density, minimizers, space, build.
 BUILD_METRICS = [
+    ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from tables/minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
+    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d). This is the density column the correlation rows of `build` / `classify` use", "lower", None),
+    ("distinct_minimizers", CAT_MINIMIZERS, "number of distinct minimizers (keys) in the built database = the `size` field of the 32-byte hash.k2d header (read without loading the table). A lower density gives fewer distinct minimizers", "lower", None),
+    ("index_size_gb", CAT_SPACE, "size of the built hash table (db/hash.k2d) in GB; blank when the db is not on disk", "lower", None),
     ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
     ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS (GB)", "lower", "build_gb"),
-    ("index_size_gb", CAT_BUILD, "size of the built hash table (db/hash.k2d) in GB; blank when the db is not on disk", "lower", None),
-    ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from tables/minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
-    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d)", "lower", None),
 ]
+# build properties repeated (per order and seed) on classify / classify_runs
+ORDER_PROPS = ["expected_density_factor", "particular_density_factor", "distinct_minimizers"]
 CLASSIFY_METRICS = [
     ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s) of the single classify run of this seed (/usr/bin/time -v): database load + processing. classify: mean over seeds", "lower", "class_s"),
     ("db_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_processing_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
@@ -377,13 +382,6 @@ for _k, _dir in (("concordant", "higher"), ("discordant", "lower"),
          "unweighted mean over the experiments (no read-level truth)%s" % (
              _k, "" if _dir else ". Neutral: neither right nor wrong"),
          _dir, {"fda-argos": ("argos", {"rank": "genus", "scope": "unweighted_mean"}, _k + "_frac")})
-for _rank in ("genus", "species"):
-    for _m, _src, _dir in (("taxa_f1", "f1", "higher"), ("bray_curtis", "bray_curtis", "lower"),
-                           ("off_target_fraction", "off_target_frac", "lower")):
-        _acc("%s_%s" % (_rank, _m), BAND_MOCK,
-             "mock (ZymoBIOMICS D6300), scope all, detection threshold min_frac=1e-4: %s at %s rank. "
-             "A taxa-detection / profile metric, not read-level (so not named like the read-level f1)" % (_m, _rank),
-             _dir, {"mock": ("mock", {"scope": "all", "rank": _rank, "min_frac": MOCK_HEADLINE_MIN_FRAC}, _src)})
 
 RUN_ID_FIELDS = ["run_id", "library", "dataset", "minimum_hit_groups", "order", "seed_idx", "seed"]
 BUILD_ID_FIELDS = ["run_id", "library", "order", "seed_idx", "seed"]
@@ -401,14 +399,14 @@ for _c in ACC_COLS:
     METRIC_DIR[_c["name"]] = _c["dir"]
     METRIC_CAT[_c["name"]] = _c["band"]
 BUILD_NAMES = [m[0] for m in BUILD_METRICS]
-SUMMARY_NAMES = [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
+SUMMARY_NAMES = ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
 PROFILE_NAMES = [m[0] for m in PROFILE_METRICS]
 VSREF_NAMES = [m[0] for m in VSREF_METRICS]
-SUMMARY_CATS = (CAT_CLASSIFY,) + ACC_BANDS
+SUMMARY_CATS = (CAT_DENSITY, CAT_MINIMIZERS, CAT_CLASSIFY) + ACC_BANDS
 
 
 def runs_field_order():
-    return (RUN_ID_FIELDS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
+    return (RUN_ID_FIELDS + ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
             + [c["name"] for c in ACC_COLS])
 
 
@@ -434,7 +432,7 @@ def summary_field_order():
 
 
 def build_field_order():
-    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_BUILD, CAT_DENSITY))
+    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_DENSITY, CAT_MINIMIZERS, CAT_SPACE, CAT_BUILD))
 
 
 def profile_field_order():
@@ -496,6 +494,22 @@ def _index_size_gb(run_root, order, seed_idx):
         return None
 
 
+def _distinct_minimizers(run_root, order, seed_idx):
+    """`size` of the hash.k2d header (4 little-endian uint64: capacity, size,
+    key_bits, value_bits), read from the first 32 bytes only."""
+    if not run_root:
+        return None
+    p = os.path.join(run_root, order, str(seed_idx), "db", "hash.k2d")
+    try:
+        with open(p, "rb") as f:
+            head = f.read(32)
+        if len(head) < 32:
+            return None
+        return struct.unpack("<4Q", head)[1]
+    except (IOError, OSError, struct.error):
+        return None
+
+
 def order_map(per_seed_rows, acc_rows):
     """{run directory name: display name} for every order of one library."""
     longs = [split_context(r.get("context"))[1] for r in per_seed_rows]
@@ -507,7 +521,7 @@ def order_map(per_seed_rows, acc_rows):
 def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, omap=None):
     """per_seed_rows: dicts from compare_benchmark (scheme, dataset, seed_idx,
     context, seed + collect_run_metrics keys). acc_rows: {'labeled'|'argos'|
-    'cami'|'mock': raw metric rows with context/dataset/seed_idx}. dens_rows:
+    'cami': raw metric rows with context/dataset/seed_idx}. dens_rows:
     density microbenchmark rows ({scheme, seed_idx, fac_*}); the scheme is the
     family (xor, greedymini, ...) or an order name, long or short.
 
@@ -527,7 +541,7 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             idx[key][kind].append(r)
     rfields = runs_field_order()
     runs, builds, prof, vsr = [], [], [], []
-    seen_build = set()
+    build_cache = {}
     for row in per_seed_rows:
         _lib, long_order, _ = split_context(row.get("context"))
         order = omap.get(long_order, short_order(long_order))   # display name; paths use long_order
@@ -538,7 +552,26 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             ("run_id", "%s/%s/%s" % (library, order, seed_idx)), ("library", library),
             ("dataset", ds), ("minimum_hit_groups", mhg), ("order", order), ("seed_idx", seed_idx),
             ("seed", _seed_hex(row.get("seed")))])
+        # build row: one per (order, seed), whatever the number of datasets / minimum_hit_groups
+        if (order, seed_idx) not in build_cache:
+            b = OrderedDict((f, ident.get(f)) for f in build_runs_field_order())
+            for m in BUILD_METRICS:
+                if m[4]:
+                    b[m[0]] = clean_value(row.get(m[4]))
+            b["distinct_minimizers"] = _distinct_minimizers(run_root, long_order, seed_idx)
+            b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
+            # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
+            d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
+                 or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
+            if d:
+                b["expected_density_factor"] = clean_value(d.get("fac_expected"))
+                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
+            build_cache[(order, seed_idx)] = b
+            builds.append(b)
+        b = build_cache[(order, seed_idx)]
         out = OrderedDict((f, ident.get(f)) for f in rfields)
+        for name in ORDER_PROPS:
+            out[name] = b.get(name)
         for m in CLASSIFY_METRICS:
             out[m[0]] = clean_value(row.get(m[4]))
         for m in RUN_ONLY:
@@ -549,21 +582,6 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             if sel:
                 out[c["name"]] = clean_value(_detail_pick(picked, sel, ds))
         runs.append(out)
-        # build: one row per (order, seed), whatever the number of datasets
-        if (order, seed_idx) not in seen_build:
-            seen_build.add((order, seed_idx))
-            b = OrderedDict((f, ident.get(f)) for f in build_runs_field_order())
-            for m in BUILD_METRICS:
-                if m[4]:
-                    b[m[0]] = clean_value(row.get(m[4]))
-            b["index_size_gb"] = _index_size_gb(run_root, long_order, seed_idx)
-            # per-seed density row, else the scheme-level one (density summary text: no seed_idx)
-            d = (dens.get((family(order), seed_idx)) or dens.get((order, seed_idx))
-                 or dens.get((long_order, seed_idx)) or dens.get((family(order), None)))
-            if d:
-                b["expected_density_factor"] = clean_value(d.get("fac_expected"))
-                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
-            builds.append(b)
         for names, dest in ((PROFILE_METRICS, prof), (VSREF_METRICS, vsr)):
             o2 = OrderedDict((f, ident.get(f)) for f in RUN_ID_FIELDS)
             for m in names:
@@ -577,7 +595,7 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
 
 
 def _kind_dataset(kind):
-    return {"labeled": "strain-exclusion", "argos": "fda-argos", "cami": "cami", "mock": "mock"}[kind]
+    return {"labeled": "strain-exclusion", "argos": "fda-argos", "cami": "cami"}[kind]
 
 
 def _int(v):
@@ -662,26 +680,37 @@ def vs_reference_aggregate(raw):
 # accuracy_detail: every per-seed accuracy row, shared column names
 # ---------------------------------------------------------------------------
 
-MOCK_RENAME = {"precision": "taxa_precision", "recall": "taxa_recall", "f1": "taxa_f1",
-               "l1": "l1_distance"}
 DETAIL_ID = ("library", "dataset", "order", "seed_idx", "seed")
 # slice keys of the accuracy sheets; minimum_hit_groups is the outermost one
 # (dataset -> minimum_hit_groups -> slice -> order)
-DETAIL_SLICE = ("minimum_hit_groups", "scope", "domain", "group", "sra_run", "species", "min_frac", "rank")
+DETAIL_SLICE = ("minimum_hit_groups", "scope", "group", "sra_run", "species", "rank")
+# shared column order of the accuracy sheets (strain-exclusion and cami are identical up to
+# the cami-only ex_* columns); unknown columns follow
+DETAIL_METRIC_ORDER = ["n", "n_truth", "n_calls", "n_scored", "tp", "vp", "fp", "fn", "no",
+                       "excluded", "excluded_fraction", "ex_unclassified", "ex_consistent", "ex_off",
+                       "sensitivity", "ppv", "f1"]
+DETAIL_COUNTS = ("n_truth", "n_calls", "n_scored", "tp", "vp", "fp", "fn", "no")
+GROUP_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2, "bacteria": 3, "archaea": 4, "other": 5}
+
+
+def group_key(g):
+    """all, prokaryote, virus first, then bacteria, archaea, other, then novelty:* sorted."""
+    g = "" if g is None else str(g)
+    if g in GROUP_ORDER:
+        return (GROUP_ORDER[g], "")
+    return (6 if g.startswith("novelty:") else 7, g)
 
 
 def detail_name(kind, key):
-    if kind == "mock" and key in MOCK_RENAME:
-        return MOCK_RENAME[key]
-    if key.endswith("_frac") and key != "min_frac":
+    if key.endswith("_frac"):
         return key[:-5] + "_fraction"
     return key
 
 
 def detail_rows(library, acc_rows, omap=None):
     """{accuracy sheet: rows} -- every per-seed accuracy row of each dataset kind
-    (strain-exclusion, fda-argos, cami, mock): library / dataset / order / seed +
-    the slice (rank, domain, group, scope, SRR, threshold) + counts and metrics."""
+    (strain-exclusion, fda-argos, cami): library / dataset / order / seed +
+    the slice (rank, domain, group, scope, SRR) + counts and metrics."""
     omap = omap if omap is not None else order_map([], acc_rows)
     result = OrderedDict()
     for kind, sheet in ACCURACY_SHEETS.items():
@@ -696,38 +725,41 @@ def detail_rows(library, acc_rows, omap=None):
                 if k in ("scheme", "context", "dataset", "order", "library"):
                     continue
                 row[detail_name(kind, k)] = _seed_hex(v) if k == "seed" else clean_value(v)
+            if kind == "labeled":
+                # same layout as cami: `group` instead of `domain`, no `n`, and the exclusion
+                # columns (0: every true genus and species is in the library)
+                if "domain" in row:
+                    row["group"] = row.pop("domain")
+                row.pop("n", None)
+                if _num(row.get("tp")):
+                    row["n_scored"] = (row.get("tp") or 0) + (row.get("vp") or 0) + (row.get("fp") or 0) + (row.get("fn") or 0)
+                    row["excluded"] = (row.get("n_truth") or 0) - (row.get("no") or 0) - row["n_scored"]
+                    row["excluded_fraction"] = row["excluded"] / float(row["n_truth"]) if row.get("n_truth") else 0.0
             out.append(row)
         out.sort(key=lambda r: (_int(r.get("minimum_hit_groups")) or 0, order_key(r["order"]), _int(r.get("seed_idx")) or 0,
-                                DOMAIN_ORDER.get(r.get("domain"), 9), RANK_ORDER.get(r.get("rank"), 9),
-                                str(r.get("scope") or ""), str(r.get("sra_run") or ""),
-                                str(r.get("group") or ""),
-                                str(r.get("min_frac") if r.get("min_frac") is not None else "")))
+                                group_key(r.get("group")), RANK_ORDER.get(r.get("rank"), 9),
+                                str(r.get("scope") or ""), str(r.get("sra_run") or "")))
         result[sheet] = out
     return result
 
 
 COUNT_FIELDS = frozenset([
     "n", "n_truth", "n_calls", "n_scored", "tp", "fp", "fn", "vp", "no", "excluded",
-    "ex_unclassified", "ex_consistent", "ex_off", "n_reads", "n_expected", "n_detected",
-    "tp_taxa", "fp_taxa", "fn_taxa"])
+    "ex_unclassified", "ex_consistent", "ex_off"])
 # direction of the accuracy metrics (ratio + colour); everything else is neutral
 DETAIL_DIR = {
     "sensitivity": "higher", "ppv": "higher", "f1": "higher",
     "concordant_fraction": "higher", "discordant_fraction": "lower",
-    "taxa_precision": "higher", "taxa_recall": "higher", "taxa_f1": "higher",
-    "on_target_fraction": "higher", "bray_curtis": "lower", "l1_distance": "lower",
-    "off_target_fraction": "lower",
 }
-SCOPE_ORDER = {"unweighted_mean": 0, "all": 0, "pooled": 1, "bacteria": 1, "experiment": 2}
-DETAIL_TEXT_DROP = frozenset(["top_off_target"])
+SCOPE_ORDER = {"unweighted_mean": 0, "pooled": 1, "experiment": 2}
+DETAIL_TEXT_DROP = frozenset()
 
 
 def _slice_sort(r):
-    mf = r.get("min_frac")
     return (r.get("minimum_hit_groups") if _num(r.get("minimum_hit_groups")) else -1,
-            SCOPE_ORDER.get(r.get("scope"), 9), DOMAIN_ORDER.get(r.get("domain"), 9),
-            str(r.get("group") or ""), str(r.get("sra_run") or ""), str(r.get("species") or ""),
-            mf if _num(mf) else -1.0, RANK_ORDER.get(r.get("rank"), 9))
+            SCOPE_ORDER.get(r.get("scope"), 9), group_key(r.get("group")),
+            str(r.get("sra_run") or ""), str(r.get("species") or ""),
+            RANK_ORDER.get(r.get("rank"), 9))
 
 
 def detail_aggregate(rows):
@@ -795,6 +827,7 @@ def detail_fields(rows):
         base = re.sub(r"_(mean|std|ratio)$", "", f)
         if base not in rest:
             rest.append(base)
+    rest.sort(key=lambda b: (DETAIL_METRIC_ORDER.index(b) if b in DETAIL_METRIC_ORDER else 99))
     out = list(lead)
     for base in rest:
         out += [c for c in (base + "_mean", base + "_std", base + "_ratio") if c in seen]
@@ -936,7 +969,7 @@ DATASET_INFO = {
     "strain-exclusion": (
         "simulated reads (Mason) from the 50 Table S3 held-out genomes",
         "simulated", "read-level truth",
-        "per-read taxid: the source genome (truth.tsv); genus/species sensitivity / PPV / F1",
+        "per-read taxid: the source genome (truth.tsv); genus/species sensitivity / PPV / F1 over all reads (n_scored = n_truth: every true genus and species is in the library, nothing excluded)",
         "Wood et al. 2019 Table S1; Mason 2 reads from Zenodo (download_data.sh / prepare_strex_data.sh)"),
     "fda-argos": (
         "real Illumina SRA runs (FDA-ARGOS, Table S5)",
@@ -944,15 +977,10 @@ DATASET_INFO = {
         "per-experiment species (Table S5), no per-read truth; genus concordance a-d, no sensitivity/PPV",
         "Wood et al. 2019 Table S5; ENA download of the sra_run accessions (prepare_fda_argos_reads.py)"),
     "cami": (
-        "simulated reads (ART) of CAMI II marine genomes",
+        "simulated reads (ART) of CAMI II marine genomes (supporting set, not in the original paper)",
         "simulated", "library-aware read-level truth",
-        "per-read true taxid (truth.tsv); sens / PPV / F1 over reads whose taxon is in the library, excluded reads reported",
+        "per-read true taxid (truth.tsv); sens / PPV / F1 over n_scored = the reads whose true genus / species has a sequence in the library; the others are excluded (9.6% genus / 22.6% species of reads with a node), reported not scored, so not directly comparable to the paper's definition over all reads",
         "CAMI II marine sample, subsampled (prepare_cami_reads.py, SOURCE.txt)"),
-    "mock": (
-        "real reads of the ZymoBIOMICS D6300 mock community",
-        "real", "profile vs expected composition",
-        "expected community composition only (composition.csv); profile-level precision/recall/F1, L1, Bray-Curtis, off-target",
-        "SRR12324251, subsampled (prepare_mock_reads.py, SOURCE.txt)"),
     "speed": (
         "unlabeled NCBI-library speed corpus",
         "real (unlabeled)", "none (timing only)",
@@ -1018,7 +1046,7 @@ LIBRARY_INFO = {
     "standard_p0.5": ("~0.5% subsample of the standard library (SAMPLE_SMOKE_FRAC=0.005)",
                       "-z", "smoke tests only"),
     "strain_exclusion": ("Wood 2019 library with the 50 Table S3 taxa held out (strain_excluded.fna)",
-                         "-E", "paper-style accuracy (strain-exclusion, FDA-ARGOS, CAMI, mock) and timing"),
+                         "-E", "paper-style accuracy (strain-exclusion, FDA-ARGOS, CAMI) and timing"),
 }
 LIBRARY_FIELDS = ["library", "role", "flag", "fraction", "taxonomy", "n_sequences", "n_taxa",
                   "n_fasta_files", "fasta_gb", "n_orders", "n_runs", "query_sets_run",
@@ -1153,25 +1181,26 @@ SHEET_DOC = OrderedDict([
     ("classify_runs", "one row per seed x library x dataset x minimum_hit_groups x order: the raw numbers of the single classify run behind `classify` (the replicates are the seeds: one run per seed, dataset and minimum_hit_groups)"),
     ("profile", "NextMinimizer / phase profile, only present when the run used a classify built with ENABLE_MINIMIZER_PROF=1 (nextminimizer_timing_<dataset>_mhg<m>.txt exist): library x dataset x minimum_hit_groups x order, mean / std over seeds and `_ratio` to xor"),
     ("vs_reference", "paired agreement with xor of the same seed, dataset and minimum_hit_groups (MAPE, concordance, Jaccard, newly classified / unclassified): library x dataset x minimum_hit_groups x order, mean / std over seeds"),
-    ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (minimum_hit_groups x domain x rank): one row per order, mean / std over seeds and `_ratio` to xor of the same slice (TP / VP / FP / FN counts as means)"),
+    ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (minimum_hit_groups x group x rank; same columns as accuracy_cami up to the cami-only ex_* columns): one row per order, mean / std over seeds and `_ratio` to xor of the same slice (TP / VP / FP / FN counts as means)"),
     ("accuracy_fda_argos", "FDA-ARGOS accuracy per slice (minimum_hit_groups x scope: unweighted mean / pooled / each SRR experiment): genus concordance, one row per order, mean / std over seeds and `_ratio` to xor"),
-    ("accuracy_cami", "CAMI accuracy per slice (minimum_hit_groups x group x rank): sens / PPV / F1 and the excluded fraction, one row per order, mean / std over seeds and `_ratio` to xor"),
-    ("accuracy_mock", "mock-community accuracy per slice (minimum_hit_groups x scope x detection threshold x rank): taxa precision / recall / F1, distances, off-target, one row per order, mean / std over seeds and `_ratio` to xor"),
+    ("accuracy_cami", "CAMI (supporting set, not in the original paper) accuracy per slice (minimum_hit_groups x group x rank; groups all, prokaryote = archaea + bacteria, virus, bacteria, archaea, other, novelty:*): counts, excluded reads, sens / PPV / F1, one row per order, mean / std over seeds and `_ratio` to xor"),
     ("paper_check", "paper equivalence: xor at minimum_hit_groups 0 on the strain_exclusion library vs the published Kraken 2 values (Wood et al. 2019, Table S1 genus sensitivity / PPV / F1 of the prokaryote and viral domains; Table S5 genus concordant / discordant / ancestor / unclassified, unweighted mean over experiments). Published values: benchmark/kraken2/tables/paper_kraken2_published.csv. `within_tolerance` = |ours - published| <= the stated absolute tolerance (0.01)"),
 ])
 
 COMMON_DOC = [
     ("all", CAT_ID, "library", "Kraken library id (only libraries with runs are exported, here strain_exclusion; see `libraries`)"),
-    ("all", CAT_ID, "dataset", "query set: strain-exclusion | fda-argos | cami | mock | speed (see `datasets`)"),
+    ("all", CAT_ID, "dataset", "query set: strain-exclusion | fda-argos | cami | speed (see `datasets`)"),
     ("classify/classify_runs/profile/vs_reference/accuracy_*", CAT_ID, "minimum_hit_groups", "the `--minimum-hit-groups` value of the classify run: 0 = Kraken 2 paper setting (no hit-group threshold; this is the setting that must reproduce the published accuracy, see `paper_check`), 2 = the k2 default. Every (seed, dataset, order) is classified once per value. Rows are sorted dataset -> minimum_hit_groups -> order, so for one dataset and value the orders are consecutive and every `_ratio` is against xor at the same dataset and minimum_hit_groups. `build` / `build_runs` have no such column: building does not depend on it"),
     ("all", CAT_ID, "order", "minimizer scheme/order: xor, xor-pcg, greedymini, mod-minimizer-xor, mod-minimizer-greedymini (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
     ("classify_runs/build_runs", CAT_ID, "run_id", "<library>/<order>/<seed_idx>"),
     ("classify_runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
     ("build/classify/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row (the replicates: each seed contributes one classify run per dataset and minimum_hit_groups)"),
     ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb gigabytes, _pct percent, _ns_per_call, _per_mbp, _fraction 0-1); `classify`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
-    ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant, Bray-Curtis, off-target) or higher is better (speed, sensitivity, PPV, F1, concordant, taxa F1). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
+    ("build/classify/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant) or higher is better (speed, sensitivity, PPV, F1, concordant). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
     ("build/classify/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
     ("classify/classify_runs", "classify", "classify_wall_s / db_load_s / classify_processing_s", "one classify run per cell: wall = database load + processing. db_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; db_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
+    ("build/build_runs/classify/classify_runs", "column order", "column groups", "as in the SSHash summary sheet: id / params, then density (expected, particular density factor), minimizers (distinct_minimizers), space (index_size_gb, build / build_runs only), build (build_wall_s, build_max_rss_gb; build / build_runs only), then on classify / classify_runs the classify measures and the accuracy groups. The density and minimizer columns come first because they are what the correlation rows below the data use"),
+    ("build/classify", "correlation", "correlation with density / correlation with distinct minimizers (rows under the data)", "two rows right under the data, as in the SSHash summary sheet: in every `*_ratio` column a live formula IFERROR(CORREL(<reference ratio column>, <this ratio column>), \"\") with absolute ranges over all data rows (cached value stored next to it). Reference columns: particular_density_factor_ratio (the density factor measured on the benchmark library; the SSHash sheet uses its density_factor_ratio) and distinct_minimizers_ratio. Ratios are against xor within the same block, so correlating over all rows is meaningful. `build` has one row per order, so its correlations rest on n = 5 points (the n is in the row label); in `classify` the density and distinct-minimizer values repeat for every dataset / minimum_hit_groups block of the same order, so the effective number of independent points is the number of orders (5), not the number of rows. The values (and the number of pairs used) are also in kraken2_correlations.csv (columns sheet, row_label, column, value, n); the sheet CSVs themselves hold data only"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
     ("orders", "order", "scheme / sketching / rank_order / gm_table / description", "scheme family, k2 --sketching (minimizer | mod-minimizer), the --order it ranks by (xor | xor-pcg | greedymini), the GreedyMini table (gm_table, e.g. w5_k15_canonical for greedymini and w5_k6_canonical for mod-minimizer-greedymini; blank for the xor orders) and a one-line description"),
     ("orders", "density", "expected_density_factor_mean / _std", "density factor x (w+1) on random i.i.d. DNA, mean / std over the density microbenchmark rows of the order (tables/minimizer_density.csv; independent of the library; blank for orders without density rows)"),
@@ -1183,17 +1212,16 @@ COMMON_DOC = [
     ("libraries", "libraries", "db_path / run_root", "shared library FASTA dir (db/<id>) and the run tree (runs/<id>)"),
     ("datasets", "dataset", "sources / n_sources / fragments_per_source", "what the reads come from, how many source genomes / taxa / experiments, fragments per source"),
     ("datasets", "dataset", "n_fragments / read_length_bp / paired / total_bases_r1_r2 / path", "read pairs, read length (bp, or min-max), paired-end flag, bases in R1+R2, location of the FASTQs"),
-    ("datasets", "dataset", "truth / scoring", "truth: simulated | real. scoring: read-level truth (strain-exclusion) | concordance with SRA taxon (fda-argos) | library-aware read-level truth (cami) | profile vs expected composition (mock)"),
+    ("datasets", "dataset", "truth / scoring", "truth: simulated | real. scoring: read-level truth (strain-exclusion) | concordance with SRA taxon (fda-argos) | library-aware read-level truth (cami)"),
     ("datasets", "dataset", "truth_detail / provenance / libraries", "what the truth file holds, where the reads come from, libraries the set was classified against"),
-    ("classify/classify_runs", "accuracy", "accuracy column groups", "one group per kind of accuracy, because the kinds differ per dataset and are NOT comparable across datasets (accuracy is never averaged across datasets). simulated reads with read-level truth (strain-exclusion; cami restricted to reads whose taxon is in the library): genus_/species_ sensitivity, ppv, f1. cami only: genus_/species_excluded_fraction. fda-argos (real reads, no per-read truth): genus_concordant / discordant / ancestor / unclassified _fraction. mock (real reads, known composition): genus_/species_ taxa_f1, bray_curtis, off_target_fraction (a taxa-detection F1, so named taxa_f1, not f1). A row fills only its own dataset's group; the other cells are blank, columns that no row of the sheet uses are dropped"),
+    ("classify/classify_runs", "accuracy", "accuracy column groups", "one group per kind of accuracy, because the kinds differ per dataset and are NOT comparable across datasets (accuracy is never averaged across datasets). simulated reads with read-level truth (strain-exclusion; cami restricted to reads whose taxon is in the library): genus_/species_ sensitivity, ppv, f1. cami only: genus_/species_excluded_fraction. fda-argos (real reads, no per-read truth): genus_concordant / discordant / ancestor / unclassified _fraction. A row fills only its own dataset's group; the other cells are blank, columns that no row of the sheet uses are dropped"),
     ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_seeds", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics_mhg<m>.tsv). Rows are sorted dataset -> minimum_hit_groups -> slice -> order: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / xor mean of the same slice and minimum_hit_groups (blank when xor's mean is 0 or missing), colour green = better, red = worse"),
-    ("accuracy_*", "ratio", "ratio direction and neutral columns", "higher is better (ratio coloured, reversed scale): sensitivity, ppv, f1, concordant_fraction, taxa_precision, taxa_recall, taxa_f1, on_target_fraction. Lower is better: discordant_fraction, bray_curtis, l1_distance, off_target_fraction. Neutral (mean / std only, no ratio, no colour): ancestor_fraction, unclassified_fraction, excluded_fraction (a property of library x query set), classified_fraction, above_rank_fraction and the read counts. top_off_target (text) is not aggregated"),
-    ("accuracy_*", "slice", "minimum_hit_groups / rank / domain / group / scope / sra_run / species / min_frac", "the slice of the row: minimum_hit_groups (0 | 2); rank (genus | species); strain-exclusion domain (all | prokaryote | virus); cami group (all | bacteria | archaea ...); fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species; mock scope (all | bacteria) and detection threshold min_frac"),
-    ("accuracy_*", "accuracy detail", "n / n_truth / n_calls / n_scored / tp / vp / fp / fn / no", "read counts of the slice. TP = true rank taxon or descendant, VP = ancestor, FP = off-lineage, FN = unclassified (Wood et al. 2019); no = reads without a call in a truth-less slice"),
-    ("accuracy_*", "accuracy detail", "sensitivity / ppv / f1", "read-level: sensitivity = TP/(TP+VP+FN+FP), PPV = TP/(TP+FP), F1 their harmonic mean (strain-exclusion, cami)"),
-    ("accuracy_*", "accuracy detail", "excluded / excluded_fraction / ex_unclassified / ex_consistent / ex_off", "cami: reads whose true taxon has no sequence in the library, their fraction, and what was called for them"),
+    ("accuracy_*", "ratio", "ratio direction and neutral columns", "higher is better (ratio coloured, reversed scale): sensitivity, ppv, f1, concordant_fraction. Lower is better: discordant_fraction. Neutral (mean / std only, no ratio, no colour): ancestor_fraction, unclassified_fraction, excluded_fraction (a property of library x query set), and the read counts"),
+    ("accuracy_*", "slice", "minimum_hit_groups / group / rank / scope / sra_run / species", "the slice of the row: minimum_hit_groups (0 | 2); rank (genus | species); group, shared by strain-exclusion (all | prokaryote | virus) and cami (all | prokaryote = archaea + bacteria reads scored as one group by score_cami.py | virus | bacteria | archaea | other | novelty:<category>), order all, prokaryote, virus, bacteria, archaea, other, novelty:*; fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species"),
+    ("accuracy_*", "accuracy detail", "n / n_truth / n_calls / n_scored / tp / vp / fp / fn / no", "read counts of the slice (mean over seeds). Definitions shared by accuracy_strain_exclusion and accuracy_cami (Wood et al. 2019): TP = the call is the true taxon at the rank or a descendant, VP = the call is an ancestor of it, FP = the call is off-lineage, FN = unclassified; sensitivity = TP/(TP+VP+FN+FP) = tp / n_scored, PPV = TP/(TP+FP), F1 = 2 sens ppv / (sens + ppv) (0 when undefined); n_truth = reads of the slice, n_calls = reads with a call, no = reads whose true taxon has no node at the rank, n_scored = tp + vp + fp + fn. Denominator: sensitivity is computed over n_scored reads. strain-exclusion: n_scored = n_truth (every true genus and species is in the library, excluded = 0, measured with score_cami.py coverage mode). CAMI: reads whose true genus / species has no sequence in the library are excluded (reported, not scored: 9.6% genus / 22.6% species of the reads that have a node at the rank), so CAMI sensitivities are over a different, library-covered subset and are not directly comparable to the paper's definition over all reads"),
+    ("accuracy_*", "accuracy detail", "sensitivity / ppv / f1", "read-level sensitivity, PPV and F1 from the counts above, identical definition in accuracy_strain_exclusion and accuracy_cami (sensitivity is over n_scored reads, see the denominator note)"),
+    ("accuracy_*", "accuracy detail", "excluded / excluded_fraction / ex_unclassified / ex_consistent / ex_off", "excluded = reads whose true genus / species has no sequence in the library (reported, not scored), excluded_fraction = excluded / n_truth; present in both sheets: for strain-exclusion they are 0 (excluded = n_truth - no - n_scored, because every true genus and species is in the library, measured with score_cami.py coverage mode: n_scored = n_truth). ex_unclassified / ex_consistent / ex_off exist for cami only: what the classifier did with the excluded reads (no call / a call on the true lineage / an off-lineage call)"),
     ("accuracy_*", "accuracy detail", "concordant_fraction / discordant_fraction / ancestor_fraction / unclassified_fraction", "fda-argos genus concordance of the fragments with the SRA-assigned taxon"),
-    ("accuracy_*", "accuracy detail", "taxa_precision / taxa_recall / taxa_f1 / l1_distance / bray_curtis / classified_fraction / on_target_fraction / off_target_fraction / above_rank_fraction / unclassified_fraction / n_reads / n_expected / n_detected / tp_taxa / fp_taxa / fn_taxa / top_off_target", "mock profile-level metrics against the expected composition at detection threshold min_frac (taxa-level, not read-level)"),
     ("paper_check", "paper check", "table / row / domain / rank / metric", "which published number: Wood et al. 2019 supplementary table (S1 or S5), its row (classifier), the domain (S1: prokaryote | virus), the rank (genus) and the metric (sensitivity | ppv | f1 for S1; concordant | discordant | ancestor | unclassified for S5)"),
     ("paper_check", "paper check", "ours / ours_std / n_seeds / n_experiments", "our value: xor, minimum_hit_groups 0, strain_exclusion library, mean and std over the seeds (strain-exclusion domain slice of accuracy_strain_exclusion; FDA-ARGOS unweighted mean over the n_experiments experiments, Table S5 definition). n_experiments is the number of SRA experiments actually classified (the paper has 25)"),
     ("paper_check", "paper check", "published / difference / tolerance / within_tolerance", "published Kraken 2 value (tables/paper_kraken2_published.csv; `not in repo` rows have no value and no verdict), ours - published, the absolute tolerance (0.01) and `yes` / `no`. Values are reported as they are: a `no` is a real difference, not rounded away"),
@@ -1214,7 +1242,9 @@ def overview_rows():
     for sheet, cat, col, meaning in COMMON_DOC:
         add(sheet, cat, col, meaning)
     for name, cat, meaning, _dir, _src in BUILD_METRICS:
-        add("build/build_runs", cat, name, meaning)
+        add("build/build_runs/classify/classify_runs" if name in ORDER_PROPS else "build/build_runs",
+            cat, name, meaning + (" (an order property: the same value repeats on every dataset / minimum_hit_groups row of the order in `classify` / `classify_runs`)"
+                                  if name in ORDER_PROPS else ""))
     for name, cat, meaning, _dir, _src in CLASSIFY_METRICS:
         add("classify/classify_runs", cat, name, meaning)
     for name, cat, meaning, _src in RUN_ONLY:
@@ -1272,7 +1302,7 @@ def paper_check_rows(base, published=None, tolerance=PAPER_TOLERANCE):
         note = []
         if tab == "S1":
             for r in se:
-                if r.get("domain") in S1_DOMAINS.get(domain, (domain,)):
+                if r.get("group") in S1_DOMAINS.get(domain, (domain,)):
                     ours, std, n_seeds = r.get(metric + "_mean"), r.get(metric + "_std"), r.get("n_seeds")
         elif tab == "S5":
             for r in ar:
@@ -1361,10 +1391,22 @@ def _categories(sheet, fields):
     if sheet == "datasets":
         return ["dataset"] * len(fields)
     # accuracy_<dataset>
-    band = {"accuracy_strain_exclusion": BAND_READ, "accuracy_fda_argos": BAND_ARGOS,
-            "accuracy_cami": BAND_CAMI, "accuracy_mock": BAND_MOCK}.get(sheet, "accuracy detail")
     return [CAT_ID if f in ("library", "dataset", "order", "n_seeds") else
-            "slice" if f in DETAIL_SLICE else band for f in fields]
+            "slice" if f in DETAIL_SLICE else _detail_band(f) for f in fields]
+
+
+def _detail_band(field):
+    """Column group of an accuracy-sheet column (the same names in every accuracy sheet)."""
+    base = re.sub(r"_(mean|std|ratio)$", "", field)
+    if base in ("n", "n_truth", "n_calls", "n_scored", "tp", "vp", "fp", "fn", "no"):
+        return BAND_COUNTS
+    if base in ("excluded", "excluded_fraction"):
+        return BAND_EXCLUDED
+    if base in ("ex_unclassified", "ex_consistent", "ex_off"):
+        return BAND_EXCLUDED_CALLS
+    if base in ("sensitivity", "ppv", "f1"):
+        return BAND_READ
+    return BAND_ARGOS
 
 
 def sheet_spec(name, fields, rows):
@@ -1418,8 +1460,68 @@ def sheet_spec(name, fields, rows):
     return spec
 
 
+# ---- correlation rows under the data of `build` and `classify` (as SSHash's summary sheet)
+CORREL_SHEETS = ("build", "classify")
+CORREL_DENSITY = "particular_density_factor_ratio"
+CORREL_MINIMIZERS = "distinct_minimizers_ratio"
+CORREL_ROWS = (("correlation with density", CORREL_DENSITY),
+               ("correlation with distinct minimizers", CORREL_MINIMIZERS))
+CORREL_FIELDS = ["sheet", "row_label", "column", "value", "n"]
+
+
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / float(n), sum(ys) / float(n)
+    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    if dx == 0 or dy == 0:
+        return None
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (dx * dy)
+
+
+def correlation_rows(name, fields, rows):
+    """(footer rows for the sheet, rows of kraken2_correlations.csv). One footer row
+    per reference column (particular density ratio, distinct minimizers ratio);
+    each `*_ratio` column of the sheet gets IFERROR(CORREL(ref, column), "") with
+    absolute ranges over the data rows and the python value (pairs where both
+    cells are numbers) as cached value."""
+    if name not in CORREL_SHEETS or not rows:
+        return [], []
+    first, last = DATA_START_ROW, DATA_START_ROW + len(rows) - 1
+    footer, flat = [], []
+    for label, ref in CORREL_ROWS:
+        if ref not in fields:
+            continue
+        rl = col_letter(fields.index(ref) + 1)
+        cells = []
+        shown = label if name != "build" else "%s (n = %d)" % (label, len(rows))
+        for f in fields:
+            if not f.endswith("_ratio"):
+                continue
+            cl = col_letter(fields.index(f) + 1)
+            pairs = [(r.get(ref), r.get(f)) for r in rows if _num(r.get(ref)) and _num(r.get(f))]
+            val = _pearson([a for a, _b in pairs], [b for _a, b in pairs])
+            val = round(val, 4) if val is not None else None
+            formula = 'IFERROR(CORREL($%s$%d:$%s$%d,%s$%d:%s$%d),"")' % (rl, first, rl, last, cl, first, cl, last)
+            cells.append((f, formula, val))
+            flat.append(OrderedDict([("sheet", name), ("row_label", label), ("column", f),
+                                     ("value", val), ("n", len(pairs))]))
+        footer.append({"label": shown, "cells": cells})
+    return footer, flat
+
+
 def build_sheet_specs(tables):
-    return [sheet_spec(name, tables[name][0], tables[name][1]) for name in SHEETS if name in tables]
+    specs = []
+    for name in SHEETS:
+        if name in tables:
+            spec = sheet_spec(name, tables[name][0], tables[name][1])
+            footer, _flat = correlation_rows(name, tables[name][0], tables[name][1])
+            if footer:
+                spec["footer_rows"] = footer
+            specs.append(spec)
+    return specs
 
 
 def write_outputs(tables, csv_dir, xlsx_path):
@@ -1427,7 +1529,13 @@ def write_outputs(tables, csv_dir, xlsx_path):
     files of sheets that no longer exist (e.g. profile when no timing files) are removed."""
     for name, (fields, rows) in tables.items():
         write_csv(os.path.join(csv_dir, PREFIX + name + ".csv"), fields, rows)
-    keep = set(PREFIX + n + ".csv" for n in tables)
+    flat = []
+    for name in CORREL_SHEETS:
+        if name in tables:
+            flat += correlation_rows(name, tables[name][0], tables[name][1])[1]
+    if flat:
+        write_csv(os.path.join(csv_dir, PREFIX + "correlations.csv"), CORREL_FIELDS, flat)
+    keep = set(PREFIX + n + ".csv" for n in tables) | set([PREFIX + "correlations.csv"] if flat else [])
     for f in os.listdir(csv_dir):
         if f.startswith(PREFIX) and f.endswith(".csv") and f not in keep:
             try:
