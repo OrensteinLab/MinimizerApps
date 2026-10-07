@@ -30,24 +30,31 @@ order:
 
 ## Dataset
 
-Three whole-genome collections (k=31 eulertigs) from Zenodo record
-[17582116](https://zenodo.org/records/17582116), each paired with a real-read query FASTQ from
-ENA (species/accession mapping resolved by hand via the ENA API's `scientific_name`, since the
-record's own description text doesn't spell it out):
+Six collections (k=31 eulertigs) from Zenodo record
+[17582116](https://zenodo.org/records/17582116): three whole genomes and three larger collections
+(a virus set, a bacterial pangenome and a human pangenome), each paired with the real-read query
+FASTQ the paper's benchmark scripts (jermp/kmer_sets_benchmark, `query_sshash_indexes.sh`) use for
+it. The first three FASTQs come from ENA (species/accession mapping resolved by hand via the ENA
+API's `scientific_name`); the last three are files of the record itself:
 
-| id | species | eulertigs | query FASTQ | published distinct 31-mers (approx) |
-|---|---|---|---|---|
-| `cod` | Gadus morhua | `cod.k31.eulertigs.fa.gz` (~177 MB) | `SRR12858649.fastq.gz` (~54 MB) | ~502.5M |
-| `kestrel` | Falco tinnunculus | `kestrel.k31.eulertigs.fa.gz` (~342 MB) | `SRR11449743_1.fastq.gz` (~478 MB) | ~1.15B |
-| `human` | Homo sapiens | `human.k31.eulertigs.fa.gz` (~883 MB) | `SRR5833294.fastq.gz` (~1.67 GB) | ~2.51B |
+| id | collection | eulertigs | query FASTQ |
+|---|---|---|---|
+| `cod` | Gadus morhua | `cod.k31.eulertigs.fa.gz` (~177 MB) | `SRR12858649.fastq.gz` (~54 MB) |
+| `kestrel` | Falco tinnunculus | `kestrel.k31.eulertigs.fa.gz` (~342 MB) | `SRR11449743_1.fastq.gz` (~478 MB) |
+| `human` | Homo sapiens | `human.k31.eulertigs.fa.gz` (~883 MB) | `SRR5833294.fastq.gz` (~1.67 GB) |
+| `ncbi-virus` | NCBI RefSeq viruses (18,836 assemblies) | `ncbi-virus.k31.eulertigs.fa.gz` (~136 MB) | `ncbi-queries.fastq.gz` (~6 MB) |
+| `se` | Salmonella enterica pangenome (AllTheBacteria, 534,751 genomes) | `se.k31.eulertigs.fa.gz` (~510 MB) | `SRR27871075_1.fastq.gz` (~439 MB) |
+| `hprc` | Homo sapiens pangenome (HPRC) | `hprc.k31.eulertigs.fa.gz` (~1.88 GB) | `SRR5833294.fastq.gz` (human's file; `download` links it instead of fetching it twice) |
 
-Only the record's k=31 eulertigs files are used here (its k=63 files and its three pangenome
-collections -- ncbi-virus/se/hprc -- are out of scope for this benchmark). Exact filenames,
-sizes, and md5s are in `data/datasets.csv` (committed; download URLs are the Zenodo API's file
-endpoints and, for the query FASTQ, ENA's standard `vol1/fastq/...` path convention). `scripts/zenodo.py`
-can re-fetch the record's file catalog (`python -m scripts zenodo list-files`) to re-verify or
-extend those values later -- routine `download`/`run`/`export` never needs network access to
-Zenodo itself beyond the one-time dataset download.
+Only the record's k=31 eulertigs files are used here (its k=63 files are out of scope: they need a
+second sshash build with `SSHASH_USE_MAX_KMER_LENGTH_63` and GreedyMini tables for another window).
+Exact filenames, sizes, and md5s are in `data/datasets.csv` (committed; download URLs are the Zenodo
+API's file endpoints and, for the first three query FASTQs, ENA's standard `vol1/fastq/...` path
+convention; `download` verifies every md5). `scripts/zenodo.py` can re-fetch the record's file
+catalog (`python -m scripts zenodo list-files`) to re-verify or extend those values later -- routine
+`download`/`run`/`export` never needs network access to Zenodo itself beyond the one-time dataset
+download. m stays 21 for every dataset (the paper tunes m per collection; here one m keeps the
+GreedyMini w11 tables applicable and the datasets comparable).
 
 There is also a `smoke` row in `data/datasets.csv` pointing at the in-repo
 `sshash/data/unitigs_stitched/salmonella_enterica_k31_ust.fa.gz` sample (no download, no query
@@ -128,7 +135,7 @@ make -C sshash all                                  # build sshash (cmake + make
 cp benchmark/sshash/.env.example benchmark/sshash/.env   # edit SSHASH_BENCH_ROOT
 benchmark/sshash/sshash_bench.sh download -d cod
 benchmark/sshash/sshash_bench.sh run -d cod -n 1     # quick smoke: 1 seed, all 9 orders
-# → $SSHASH_BENCH_ROOT/results/sshash_{runs,summary,vs_reference}.csv
+# → $SSHASH_BENCH_ROOT/results/sshash_{runs,summary,...}.csv
 # → $SSHASH_BENCH_ROOT/results/sshash_results.xlsx
 ```
 
@@ -138,12 +145,12 @@ benchmark/sshash/sshash_bench.sh run -d cod -n 1     # quick smoke: 1 seed, all 
 benchmark/sshash/sshash_bench.sh -h
 benchmark/sshash/sshash_bench.sh download -d cod
 benchmark/sshash/sshash_bench.sh run -d cod -n 1                     # 1 seed, all orders
-benchmark/sshash/sshash_bench.sh run -d cod,kestrel,human -O all -n 5 -t 16   # full sweep
+benchmark/sshash/sshash_bench.sh run -d cod,kestrel,human,ncbi-virus,se,hprc -O all -n 5 -t 16   # full sweep
 benchmark/sshash/sshash_bench.sh export                              # re-export CSV/XLSX only
 benchmark/sshash/sshash_bench.sh all -d cod -n 1                      # download + run + export
 ```
 
-Defaults: `cod,kestrel,human`, k=31, m=21, `-O all` (native, xor-hash, xor-pcg-hash, greedymini-k13,
+Defaults: `cod,kestrel,human,ncbi-virus,se,hprc`, k=31, m=21, `-O all` (native, xor-hash, xor-pcg-hash, greedymini-k13,
 greedymini-k15), `-M canonical`, `-n 5` seeds, 8 threads.
 
 The command name (`download`/`run`/`export`/`all`/`experiment`) must come **first**, before any
@@ -157,7 +164,7 @@ skip unchanged configs).
 
 ```bash
 benchmark/sshash/sshash_bench.sh experiment list
-benchmark/sshash/sshash_bench.sh experiment sweep_orders   # primary: all orders x 5 seeds, all 3 datasets
+benchmark/sshash/sshash_bench.sh experiment sweep_orders   # primary: all orders x 5 seeds, all 6 datasets
 benchmark/sshash/sshash_bench.sh experiment sweep_m        # secondary/optional: native only, m in {7,9,11,13}
 ```
 
@@ -257,8 +264,7 @@ runs/
 | `sshash_runs.csv` | one per run | all metrics + telemetry | `runs` |
 | `sshash_summary.csv` | one per dataset x order | mean/std across seeds, ratio vs native | `summary` |
 | `sshash_space_breakdown.csv` | one per dataset x order | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
-| `sshash_vs_reference.csv` | one per dataset | informational: measured `num_kmers` vs the Zenodo record's own published distinct-31-mer count (not order-specific) | `vs_reference` |
-| `sshash_results.xlsx` | — | `index`, `orders`, `datasets`, `summary`, `runs`, `vs_reference` | — |
+| `sshash_results.xlsx` | — | `index`, `orders`, `datasets`, `summary`, `buckets`, `space_breakdown`, `runs`, `bucket_histogram`, `super_kmer_histogram` | — |
 
 Re-export only: `benchmark/sshash/sshash_bench.sh export` (no network needed once local run
 data exists).
@@ -294,7 +300,6 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this order's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x order rows. |
 | `space_breakdown` | one row per dataset x order: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
 | `runs` | one row per run (every metric + telemetry, unfiltered) |
-| `vs_reference` | informational: measured vs the Zenodo record's own published k-mer counts |
 
 ## Notes
 

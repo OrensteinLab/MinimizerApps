@@ -1,13 +1,12 @@
 """Zenodo record 17582116 lookup helper (for future maintainers).
 
 The committed `data/datasets.csv` already holds the exact resolved
-filenames/sizes/md5s/URLs for the three whole-genome k=31 eulertigs
-collections this benchmark uses (cod, kestrel, human) plus their matching
-ENA query FASTQ -- this module is only for re-verifying those values or
-extending the catalog later (e.g. to the record's k=63 files or its
-pangenome collections, which are out of scope for this benchmark). Nothing
-in the normal `download`/`run`/`export` path calls this module or needs
-network access to Zenodo.
+filenames/sizes/md5s/URLs for the six k=31 eulertigs collections this
+benchmark uses (cod, kestrel, human, ncbi-virus, se, hprc) plus their
+matching query FASTQ -- this module is only for re-verifying those values or
+extending the catalog later (e.g. to the record's k=63 files, which are out
+of scope for this benchmark). Nothing in the normal `download`/`run`/`export`
+path calls this module or needs network access to Zenodo.
 
 The record's own description text does not spell out which query FASTQ
 (SRR/ERR accession) belongs to which species collection -- that mapping was

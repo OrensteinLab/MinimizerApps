@@ -30,7 +30,7 @@ Commands (default: run):
                Use 'experiment list' to show available experiments
 
 Run options:
-  -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human)
+  -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human,ncbi-virus,se,hprc)
   -k K                    k-mer length (default: 31)
   -m M                    Minimizer length, fixed across ALL orders by design
                           (default: 21, giving w=k-m+1=11)
@@ -67,7 +67,7 @@ Download options:
 Examples:
   $0 download -d cod
   $0 run -d cod -n 1
-  $0 run -d cod,kestrel,human -O all -n 5 -t 16
+  $0 run -d cod,kestrel,human,ncbi-virus,se,hprc -O all -n 5 -t 16
   $0 run -d cod,kestrel -O native -M regular -n 5 -t 16
   $0 run --dataset-file sshash/data/unitigs_stitched/salmonella_enterica_k31_ust.fa.gz -n 1
   $0 experiment sweep_orders
