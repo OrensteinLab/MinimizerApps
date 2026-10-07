@@ -143,6 +143,9 @@ shared implementation.
     --greedy-mini-file ../orders/GreedyMini/w11_k13_canonical.gm \
     [--gm-projection at0-cg1|at1-cg0] ...    # DNA->binary polarity
 ./sshash build -i FILE -k 31 -m 21 -O native --regular ...   # two-probe "regular parsing"
+./sshash build -i FILE -k 31 -m 21 -O mod-xor-hash --mod-t 10 -s SEED ...       # strand-symmetric mod-minimizer
+./sshash build -i FILE -k 31 -m 21 -O mod-greedymini --mod-t 10 \
+    --greedy-mini-file ../orders/GreedyMini/w22_k10_canonical.gm ...           # (a table of t-mers)
 ```
 
 The chosen order (and, for `greedymini`, the rank
@@ -169,6 +172,21 @@ tables, i.e. odd `gm_k`), `16 + 2m <= 63` and a mirror-symmetric table; all are 
 rejected with a clear error. Expected density on i.i.d. DNA at `m = 21, w = 11`: 1.592 (k13)
 and 1.524 (k15). `--gm-projection` flips the Sigma polarity. Older
 indexes are refused.
+
+*Mod-minimizer orders.* `-O mod-xor-hash` and `-O mod-greedymini` (with `--mod-t T`) sample by
+strand-symmetric mod-sampling: the k-mer's `T = k - t + 1` t-mers are ranked (canonical t-mer
+XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`); the k-mer prefers the
+strand with more G/T (a tie, even k only, by the numeric order of the k-mer and its reverse
+complement); a minimal t-mer at `x` samples the m-mer at `x mod w` on a forward-preferred k-mer
+and at `(w-1) - (((T-1) - x) mod w)` otherwise, so a k-mer and its reverse complement sample
+mirrored m-mers of the same canonical value (single-probe lookup). Several minimal t-mers: the
+sampled offset closest to the centre `(w-1)/2` wins (a mirror pair by strand). With the usual
+`t = 4 + (m - 4) mod w` (10 at k=31, m=21) the scheme is forward and has mod-sampling's density
+(1.56 xor, 1.46 with `w22_k10` on i.i.d. DNA); the builder checks forwardness. Any other `t`
+makes the two strands' rules disagree (not forward, much higher density). `--regular` does not
+apply. `util::compute_mod_minimizer` is the definition (used by `lookup`),
+`mod_minimizer_iterator` its incremental version (build, streaming); `test/test_mod_minimizer.cpp`
+checks both against a string-level reference, strand symmetry and forwardness.
 
 `build --verbose --bucket-stats` additionally prints the bucket-size and super-k-mer histograms
 (off by default; the benchmark harness passes it to fill its histogram sheets).
@@ -198,7 +216,7 @@ tables) check all of this. For `--regular` indexes the streaming query applies A
 early return: a k-mer whose forward and reverse-complement minimizers equal those of the last
 probed k-mer, whose minimizers were not in the index, is negative without a lookup. Only the
 binary-alphabet GreedyMini tables (`2^gm_k` entries) are supported; the
-DNA-alphabet tables of kmc are not. The on-disk version is 13.
+DNA-alphabet tables of kmc are not. The on-disk version is 14.
 
 **NOTE**: GreedyMini works on sshash's default nucleotide encoding (A=00, C=01, G=11, T=10):
 Sigma is bit 0 of a base, Gamma is bit 1, and complementing flips bit 1 only. Its hash of a

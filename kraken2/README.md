@@ -18,7 +18,8 @@ Custom minimizer
 ----------------
 
 This fork adds pluggable minimizer orders (`--order xor|xor-pcg|greedymini`)
-and a sketching choice (`--sketching minimizer|mod-minimizer`, with
+and a sketching choice (`--sketching minimizer|mod-minimizer`; on DNA the
+mod-minimizer is strand-symmetric, see `src/mod_minimizer.h`; with
 `--greedymini-file FILE` for the greedymini order) on top of upstream
 Kraken 2's own default order (`--sketching minimizer --order xor`), including a shared GreedyMini-based
 low-density order also used by this monorepo's
