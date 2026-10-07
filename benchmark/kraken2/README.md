@@ -327,6 +327,13 @@ used if the new path is missing.
 | `mod-minimizer-xor` | `mod-minimizer-xor` | `--sketching mod-minimizer --order xor` |
 | `mod-minimizer-greedymini` | `mod-minimizer-greedymini_w5_k6_canonical` | `--sketching mod-minimizer --order greedymini --greedymini-file w5_k6_*.gm` |
 
+`mod-minimizer` is strand-symmetric mod-sampling (this fork, not a published
+scheme; `kraken2/src/mod_minimizer.h`): mod-sampling (Groot Koerkamp & Pibiri,
+2024) with a per-k-mer preferred strand (more G/T bases), the other strand's
+k-mers using the mirror rule, so a read and its reverse complement give the
+same minimizers. Databases built with the earlier forward-only mod-minimizer
+are rejected (rebuild them).
+
 Labels are exact (old spellings `Random`, `RandomXor`, `RandomPcg`, `GreedyMini`,
 `ModRandom`, `ModGreedyMini` are rejected). The label is `sketching[-]order`
 (`scheme_label` in `kraken2/src/sketching_schemes.h`); the same labels are the

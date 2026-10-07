@@ -195,6 +195,37 @@ def xor_pcg_hash(value: int, seed: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# GreedyMini centre extension, injective packing (port of
+# common/minimizer-orders/greedymini_centre.h gm_centre::Order with
+# injective=true and TwoBitPlanes<true>, i.e. the ACGT = 0..3 encoding that
+# kraken2 and minimap2 use; benchmark/sshash/scripts/density.py has the same
+# order on sshash's own encoding). l = gm_k + 2i; first base = most
+# significant bit of each plane.
+# ---------------------------------------------------------------------------
+
+
+def _reverse_low_bits(v: int, n: int) -> int:
+    return int(format(v, f"0{n}b")[::-1], 2) if n else 0
+
+
+def greedymini_centre_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, flip: bool = False) -> int:
+    """Value of an ACGT=0123 l-mer: rank of the centre key's Sigma plane in the
+    table, then min over the two strands of (Sigma << l | Gamma). Sigma = AT vs
+    CG (bit0 ^ bit1, complemented when `flip`: --gm-projection at1-cg0),
+    Gamma = bit 1. Strand invariant; a total order on canonical l-mers."""
+    i = (l - gm_k) // 2
+    mask = (1 << l) - 1
+    sigma = _pext(lmer ^ (lmer >> 1), EVENS64 & ((1 << (2 * l)) - 1))
+    if flip:
+        sigma ^= mask
+    gamma = _pext(lmer, ODDS64 & ((1 << (2 * l)) - 1))
+    rank = gm_ranks[(sigma >> i) & ((1 << gm_k) - 1)]
+    sigma_rc = _reverse_low_bits(sigma, l)
+    gamma_rc = _reverse_low_bits(gamma, l) ^ mask
+    return (rank << (2 * l)) | min((sigma << l) | gamma, (sigma_rc << l) | gamma_rc)
+
+
+# ---------------------------------------------------------------------------
 # Mod-sampling (Groot Koerkamp & Pibiri, WABI 2024, Algorithm 6 / Definition 7)
 # ---------------------------------------------------------------------------
 
@@ -216,56 +247,36 @@ def rolling_values(dna_stream: list[int], length: int) -> list[int]:
     return out
 
 
-def mod_sampling_runs(
-    dna_stream: list[int], k: int, m: int, t: int, hash_fn, seed: int,
-    canonical: bool = False,
+def mod_sampling_density(
+    dna_stream: list[int], k: int, w: int, t: int, hash_fn, seed: int,
 ) -> tuple[int, int]:
-    """Mod-sampling particular-density counting: for each k-mer window, scan
-    its k-t+1 t-mer loci with `hash_fn` (= O_t), apply the paper's exact tie
-    rule (equal hash -> prefer the smaller i mod w), and count super-kmer
-    boundaries (how many times the selected absolute position's raw m-mer
-    value changes) -- the same (n_windows, n_super) shape `sliding_runs`
-    returns for the classic scheme, so `density_factor(n_super, n_windows, w)`
-    applies unchanged.
-
-    `canonical=False` (default) matches a single-strand/"regular parsing"
-    construction (sshash's own mod-minimizer, per sshash/include/util.hpp's
-    compute_mod_minimizer_single_strand doc comment: canonicalizing per-locus
-    isn't mirror-equivariant for mod-sampling's tie rule, so sshash keeps
-    whichever strand construction walked). `canonical=True` matches a
-    canonical (min(fwd,rc)) per-t-mer-locus construction (kraken2::ModSampler
-    and minimap2/order.cpp's sketch_mod_minimizer, which only ever need a
-    single forward-genome pass and canonicalize each t-mer locus directly).
-
-    `hash_fn` is called as hash_fn(t_mer_value, seed); pass a closure over
-    each app's own greedymini_hash for the *-greedymini variant.
-    """
-    w = k - m + 1
-    num_t_loci = k - t + 1
-    n_win = max(0, len(dna_stream) - k + 1)
-    if n_win <= 0:
-        return 0, 0
-    t_raw = rolling_values(dna_stream, t)
-    m_raw = rolling_values(dna_stream, m)
-
-    n_super = 0
-    prev_val = None
-    for start in range(n_win):
-        o_min = None
-        p = 0
-        for i in range(num_t_loci):
-            v = t_raw[start + i]
-            if canonical:
-                v = canonical_mmer(v, t)
-            o = hash_fn(v, seed)
-            pos_mod_w = i % w
-            if o_min is None or o < o_min:
-                o_min = o
-                p = pos_mod_w
-            elif o == o_min and pos_mod_w < p:
-                p = pos_mod_w
-        val = m_raw[start + p]
-        if prev_val is None or val != prev_val:
-            n_super += 1
-            prev_val = val
-    return n_win, n_super
+    """(n_kmers, n_selected) of the strand-symmetric mod-minimizer as
+    minimap2's mod-minimizer-xor and kraken2's mod-minimizer define it
+    (minimap2/order.cpp, kraken2/src/mod_minimizer.h):
+    per window of L = w+k-1 bases the preferred strand has more G/T (tie: the
+    window <= its reverse complement); forward-preferred -> k-mer offset
+    x_L mod w (x_L = leftmost minimal canonical t-mer), reverse-preferred ->
+    (w-1) - (((T-1) - x_R) mod w) (x_R = rightmost), T = w+k-t. Not a forward
+    scheme, so this counts distinct selected positions instead of
+    super-k-mer boundaries; density_factor(n_selected, n_kmers, w)."""
+    n = len(dna_stream)
+    L, T = w + k - 1, w + k - t
+    ranks = [hash_fn(canonical_mmer(v, t), seed) for v in rolling_values(dna_stream, t)]
+    gt = sum(1 for b in dna_stream[:L] if b >= 2)
+    selected: set[int] = set()
+    for s in range(n - L + 1):
+        if s:
+            gt += (dna_stream[s + L - 1] >= 2) - (dna_stream[s - 1] >= 2)
+        if 2 * gt != L:
+            fwd = 2 * gt > L
+        else:
+            win = dna_stream[s:s + L]
+            fwd = win <= [3 - b for b in reversed(win)]
+        r = ranks[s:s + T]
+        m = min(r)
+        if fwd:
+            off = r.index(m) % w
+        else:
+            off = (w - 1) - (((T - 1) - (T - 1 - r[::-1].index(m))) % w)
+        selected.add(s + off)
+    return max(0, n - k + 1), len(selected)
