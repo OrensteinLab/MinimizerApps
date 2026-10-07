@@ -2,8 +2,9 @@
 
 Benchmarks [SSHash](https://github.com/jermp/sshash) (a compact k-mer dictionary index) across
 its **minimizer order**: `native` (sshash's own baseline), `xor-hash`, `xor-pcg-hash`,
-`greedymini-k13`/`greedymini-k15` (the GreedyMini rank tables, centre-extended to the m-mer)
-(see `../../orders/README.md`). Unlike kmc's `lex`
+`greedymini-k13`/`greedymini-k15` (the GreedyMini rank tables, centre-extended to the m-mer),
+and the strand-symmetric mod-minimizer `mod-minimizer-xor` / `mod-minimizer-greedymini-k10`
+(see below and `../../orders/README.md`). Unlike kmc's `lex`
 baseline, sshash has no seed-less order — every order, including `native`, takes a seed, so this
 harness runs every order once per seed with no special-casing.
 
@@ -317,6 +318,13 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
   `gm_k` is rejected at m=21; `sshash_bench.sh run` checks this up front (`python -m scripts
   orders check-gm ORDER M`). Example:
   `./sshash_bench.sh run -d cod,kestrel -n 5 -O native,greedymini-k13,greedymini-k15,greedymini-k13-at1,greedymini-k15-at1`.
+- Strand-symmetric mod-minimizer orders (sshash `-O mod-xor-hash` / `-O mod-greedymini` with
+  `--mod-t T`, see `orders/README.md`): `mod-minimizer-xor` ranks the k-mer's t-mers by xor-hash,
+  `T = 4 + (m - 4) mod w` (10 at k=31, m=21); `mod-minimizer-greedymini-<label>` by a GreedyMini
+  table of t-mers from `config.yaml`'s `mod_greedymini_labels` (`k10` = `w22_k10`, t=10),
+  `T` = the table's gm_k. Both are in `all`; `--regular` does not apply to them. With
+  t = m mod w (both here) the scheme is forward, which the build checks; any other t makes the
+  two strands' offset rules disagree (a t=11 table gave density ~2.2, worse than native).
   The orders sheet's expected density is the Monte Carlo on i.i.d. DNA (equal for both polarities
   up to sampling noise by symmetry); the particular density per dataset is what can differ.
 - The built `.sshash` index is deleted after each run's check/bench/query/equivalence steps

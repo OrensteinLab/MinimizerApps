@@ -108,6 +108,9 @@ if (SSHASH_BUILD_EXECUTABLES)
     add_executable(test_streaming_order test/test_streaming_order.cpp)
     target_link_libraries(test_streaming_order PRIVATE sshash_static)
 
+    add_executable(test_mod_minimizer test/test_mod_minimizer.cpp)
+    target_link_libraries(test_mod_minimizer PRIVATE sshash_static)
+
     add_executable(check test/check.cpp)
     target_link_libraries(check PRIVATE sshash_static)
 

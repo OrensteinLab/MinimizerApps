@@ -41,6 +41,8 @@ SEEDS = {
     "greedymini-k15": 99,
     "greedymini-k13-at1": 100,
     "greedymini-k15-at1": 101,
+    "mod-minimizer-xor": 102,
+    "mod-minimizer-greedymini-k10": 103,
 }
 
 
@@ -98,6 +100,11 @@ def test_orders_module() -> None:
     assert check_gm_order("greedymini-k13-at1", 21) is None
     assert "m - gm_k even" in (check_gm_order("greedymini-k13", 20) or "")
     assert "greedymini" not in ORDERS
+    # strand-symmetric mod-minimizer: t = 4 + (m - 4) mod w for xor, the table's gm_k otherwise
+    assert build_flags("mod-minimizer-xor", 7) == ["-O", "mod-xor-hash", "--mod-t", "10", "-s", "7"]
+    gm10 = build_flags("mod-minimizer-greedymini-k10", 7)
+    assert gm10[:2] == ["-O", "mod-greedymini"] and gm10[gm10.index("--mod-t") + 1] == "10"
+    assert build_flags("mod-minimizer-xor", 7, k=31, m=20)[3] == "8"  # w = 12
     print("ok  orders module: flag mapping")
 
 

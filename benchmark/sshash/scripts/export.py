@@ -61,8 +61,8 @@ from scripts.common import bench_paths, die, load_dotenv
 from scripts.config import seeds as bench_seeds
 from scripts.density import density_factor as _density_factor
 from scripts.expected_density import ensure_expected_orders
-from scripts.config import greedymini_label_file
-from scripts.orders import ORDERS, parse_greedymini_order
+from scripts.config import greedymini_label_file, mod_greedymini_label_file
+from scripts.orders import ORDERS, parse_greedymini_order, parse_mod_order
 from xlsx_util import col_letter, root_rels_xml, write_csv as _shared_write_csv, xml_escape
 
 
@@ -1296,12 +1296,14 @@ CHART_SIZE_EMU = (5_400_000, 2_880_000)
 CHART_ORDER_ORDER = (
     "native", "xor-hash", "xor-pcg-hash",
     "greedymini-k13", "greedymini-k15", "greedymini-k13-at1", "greedymini-k15-at1",
+    "mod-minimizer-xor", "mod-minimizer-greedymini-k10",
 )
 CHART_DATASET_ORDER = ("cod", "kestrel", "human", "ncbi-virus", "se", "hprc")
 CHART_COLORS = {
     "native": "7F7F7F", "xor-hash": "ED7D31", "xor-pcg-hash": "FFC000",
     "greedymini-k13": "70AD47", "greedymini-k15": "4472C4",
     "greedymini-k13-at1": "A9D18E", "greedymini-k15-at1": "8FAADC",
+    "mod-minimizer-xor": "C00000", "mod-minimizer-greedymini-k10": "7030A0",
 }
 
 
@@ -1525,7 +1527,7 @@ def index_rows() -> list[dict]:
     return [
         row("all", "dataset / k / m", "dataset id, k-mer length, minimizer length (m fixed at 21 for every order, giving w=k-m+1=11; see README 'Choice of m')"),
         row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order."),
-        row("all", "order", "minimizer order id: native | xor-hash | xor-pcg-hash | greedymini-k13 | greedymini-k15 (+ '-at1' for the flipped polarity)"),
+        row("all", "order", "minimizer order id: native | xor-hash | xor-pcg-hash | greedymini-k13 | greedymini-k15 (+ '-at1' for the flipped polarity) | mod-minimizer-xor | mod-minimizer-greedymini-k10 (strand-symmetric mod-minimizer; the label is the t-mer table, config.yaml's mod_greedymini_labels)"),
         row("all", "gm_projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. Plain greedymini orders only; blank otherwise. The order id carries it as an '-at1' suffix (greedymini-k13-at1, greedymini-k15-at1); the table is the label (-k13/-k15, config.yaml's greedymini_labels)"),
         row("all", "num_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
@@ -1580,6 +1582,22 @@ def order_info(order: str) -> dict:
     from its config.yaml label and suffix."""
     if order in ORDER_DESCRIPTIONS:
         return ORDER_DESCRIPTIONS[order]
+    mod = parse_mod_order(order)
+    if mod is not None:
+        common = ("Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri 2024, with a "
+                  "per-k-mer preferred strand -- more G/T; this repo, not published): the k-mer's t-mers "
+                  "are ranked, the m-mer at x_L mod w is sampled (x_L = leftmost minimal t-mer), or the "
+                  "mirror rule on a reverse-preferred k-mer, so a k-mer and its reverse complement share "
+                  "the bucket; ")
+        if mod[0] == "xor":
+            return {"description": common + "t-mers ranked by xor-hash, t = 4 + (m - 4) mod w",
+                    "cli": "-O mod-xor-hash --mod-t T -s SEED"}
+        try:
+            gm_name = mod_greedymini_label_file(mod[1]).name
+        except SystemExit:
+            gm_name = "?"
+        return {"description": common + f"t-mers ranked by the GreedyMini {gm_name} table, t = its gm_k",
+                "cli": f"-O mod-greedymini --greedy-mini-file orders/GreedyMini/{gm_name} --mod-t T -s SEED"}
     plain = parse_greedymini_order(order)
     if plain is None:
         return {"description": "", "cli": ""}

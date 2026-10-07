@@ -423,7 +423,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
             uint64_t pos_in_bucket = -1;
             for (auto mt : bucket)  //
             {
-                ++pos_in_bucket;  // one position per tuple: the scheme is forward
+                ++pos_in_bucket;  // one position per tuple (repeated for a re-selected locus)
                 assert(mt.pos_in_seq >= mt.pos_in_kmer);
 
                 mt.pos_in_seq = d.m_spss.strings_offsets.decode(mt.pos_in_seq).absolute_offset;

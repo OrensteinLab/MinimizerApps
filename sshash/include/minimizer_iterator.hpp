@@ -506,10 +506,138 @@ private:
     }
 };
 
+/*
+    The strand-symmetric mod-minimizer (util::compute_mod_minimizer), incrementally: the hashes
+    of the kmer's T = k - t + 1 t-mers live in a ring (64 slots, locus x of the current kmer at
+    slot (m_base + x) & 63), with the minimum hash and its leftmost and rightmost loci (a tie
+    between them is resolved from the ring, util::mod_tie_offset). A slide
+    hashes the one new t-mer; the whole ring is re-scanned only when the leftmost minimum leaves
+    the kmer (the "re-scan" method of minimizer_iterator). The sampled offset then follows from
+    the kmer's preferred strand in O(1). If the kmer passed to `next` is the first one after
+    reset() / set_position(), the ring is filled from the kmer; every other call must pass the
+    one-base slide of the previous kmer (the assertion against util::compute_minimizer checks
+    the result in debug builds).
+*/
+template <typename Kmer, custom_order_mode Mode>
+struct mod_minimizer_iterator {
+    static_assert(is_mod_mode(Mode));
+
+    mod_minimizer_iterator() {}
+
+    mod_minimizer_iterator(uint64_t k, uint64_t m, hasher_type const& hasher,
+                           uint64_t position = 0)
+        : m_k(k)
+        , m_m(m)
+        , m_t(hasher.mod_t())
+        , m_w(k - m + 1)
+        , m_T(k - hasher.mod_t() + 1)
+        , m_hasher_p(&hasher)  //
+    {
+        assert(k > 0 and m <= k and k <= 63);
+        assert(m_t > 0 and m_t < m);
+        set_position(position);
+    }
+
+    void set_position(uint64_t position) {
+        m_position = position;
+        reset();
+    }
+
+    void reset() { m_valid = false; }
+
+    __attribute__((noinline)) minimizer_info next(Kmer kmer) {
+        Kmer kmer_rc = kmer;
+        kmer_rc.reverse_complement_inplace(m_k);
+
+        if (!m_valid) {
+            m_base = 0;
+            Kmer window = kmer;
+            for (uint64_t x = 0; x != m_T; ++x, window.drop_char()) {
+                m_ring[x] = hash_at(window, kmer_rc, x);
+            }
+            rescan();
+            m_valid = true;
+        } else {
+            m_base = (m_base + 1) & 63;
+            Kmer window = kmer;
+            window.drop_chars(m_T - 1);
+            const uint64_t hash = hash_at(window, kmer_rc, m_T - 1);
+            m_ring[slot(m_T - 1)] = hash;
+            if (m_left == 0) {  // the leftmost minimum left the kmer
+                rescan();
+            } else {
+                m_left -= 1;
+                m_right -= 1;
+                if (hash < m_min_hash) {
+                    m_min_hash = hash;
+                    m_left = m_T - 1;
+                    m_right = m_T - 1;
+                } else if (hash == m_min_hash) {
+                    m_right = m_T - 1;
+                }
+            }
+        }
+
+        const bool fwd = util::mod_forward_preferred(kmer, kmer_rc, m_k);
+        const uint64_t p = m_left == m_right ? util::mod_offset(m_left, m_w, m_T, fwd)
+                                             : util::mod_tie_offset(m_ring, m_base, m_T, m_w,
+                                                                    m_min_hash, m_left, m_right, fwd);
+        Kmer mwin = kmer;
+        mwin.drop_chars(p);
+        minimizer_info mini_info(util::canonical_mmer_at<Kmer>(mwin, kmer_rc, m_k, m_m, p),
+                                 m_position + p, p);
+        m_position += 1;
+
+        assert(minimizer_info(mini_info.minimizer, mini_info.pos_in_kmer) ==
+               util::compute_minimizer<Kmer>(kmer, kmer_rc, m_k, m_m, hasher()));
+        return mini_info;
+    }
+
+private:
+    uint64_t m_k = 0, m_m = 0, m_t = 0, m_w = 0, m_T = 0;
+    uint64_t m_position = 0;  // position of the next kmer in the sequence
+    uint64_t m_base = 0;
+    uint64_t m_min_hash = 0, m_left = 0, m_right = 0;  // loci in the current kmer
+    bool m_valid = false;
+    hasher_type const* m_hasher_p = nullptr;  // the hasher must outlive the iterator
+    uint64_t m_ring[64];
+
+    hasher_type const& hasher() const { return *m_hasher_p; }
+    uint64_t slot(uint64_t x) const { return (m_base + x) & 63; }
+
+    /* hash of the t-mer at locus x; `window` is the kmer shifted so that x is at its low end */
+    inline uint64_t hash_at(Kmer window, Kmer const& kmer_rc, uint64_t x) const {
+        if constexpr (is_gm_mode(Mode)) {
+            window.take_chars(m_t);
+            return hasher().hash_gm(uint64_t(window));
+        } else {
+            return hasher().template plain<Mode>().hash(
+                util::canonical_mmer_at<Kmer>(window, kmer_rc, m_k, m_t, x));
+        }
+    }
+
+    void rescan() {
+        m_min_hash = m_ring[slot(0)];
+        m_left = 0;
+        m_right = 0;
+        for (uint64_t x = 1; x != m_T; ++x) {
+            const uint64_t h = m_ring[slot(x)];
+            if (h < m_min_hash) {
+                m_min_hash = h;
+                m_left = x;
+                m_right = x;
+            } else if (h == m_min_hash) {
+                m_right = x;
+            }
+        }
+    }
+};
+
 /* The iterator of the classical path for the order `Mode`. */
 template <typename Kmer, custom_order_mode Mode>
-using order_minimizer_iterator =
+using order_minimizer_iterator = std::conditional_t<
+    is_mod_mode(Mode), mod_minimizer_iterator<Kmer, Mode>,
     std::conditional_t<Mode == custom_order_mode::GREEDYMINI,
-                       strand_invariant_minimizer_iterator<Kmer>, minimizer_iterator<Kmer, Mode>>;
+                       strand_invariant_minimizer_iterator<Kmer>, minimizer_iterator<Kmer, Mode>>>;
 
 }  // namespace sshash

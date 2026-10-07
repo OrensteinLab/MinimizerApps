@@ -18,6 +18,11 @@
 // header): bit 0 of a base is its Sigma (A,T -> 0; C,G -> 1), bit 1 its Gamma (A,C -> 0; G,T -> 1),
 // and complementing a base flips bit 1 only. The hash of a window is a function of the base
 // sequence alone, so it is the same as with the packing greedymini_rank.h documents (ACGT = 0123).
+//
+// The mod-minimizer modes (MOD_XOR_HASH, MOD_GREEDYMINI) sample with strand-symmetric
+// mod-sampling (util::compute_mod_minimizer) instead of a plain argmin over the m-mers: the
+// order ranks the t-mers of the k-mer (t = mod_t(), the width hash() then takes), and the
+// m-mer at an offset derived from the minimal t-mer is sampled.
 
 #pragma once
 
@@ -39,8 +44,21 @@ enum class custom_order_mode : uint8_t {
     NATIVE = 0,        // sshash's own order (mixer_64), unchanged
     XOR_HASH = 1,      // RandomXor
     XOR_PCG_HASH = 2,  // RandomPcg
-    GREEDYMINI = 3     // GreedyMini
+    GREEDYMINI = 3,    // GreedyMini
+    /* strand-symmetric mod-minimizer (util::compute_mod_minimizer); the order ranks t-mers */
+    MOD_XOR_HASH = 4,   // t-mers by RandomXor
+    MOD_GREEDYMINI = 5  // t-mers by GreedyMini (a table with gm_k = t)
 };
+
+/* GreedyMini ranks the hashed substrings (m-mers, or t-mers for the mod-minimizer) */
+constexpr bool is_gm_mode(custom_order_mode mode) {
+    return mode == custom_order_mode::GREEDYMINI or mode == custom_order_mode::MOD_GREEDYMINI;
+}
+
+/* strand-symmetric mod-minimizer sampling */
+constexpr bool is_mod_mode(custom_order_mode mode) {
+    return mode == custom_order_mode::MOD_XOR_HASH or mode == custom_order_mode::MOD_GREEDYMINI;
+}
 
 inline const char* custom_order_mode_name(custom_order_mode mode) {
     switch (mode) {
@@ -50,6 +68,10 @@ inline const char* custom_order_mode_name(custom_order_mode mode) {
             return "xor-pcg-hash";
         case custom_order_mode::GREEDYMINI:
             return "greedymini";
+        case custom_order_mode::MOD_XOR_HASH:
+            return "mod-xor-hash";
+        case custom_order_mode::MOD_GREEDYMINI:
+            return "mod-greedymini";
         case custom_order_mode::NATIVE:
         default:
             return "native";
@@ -61,8 +83,11 @@ inline custom_order_mode parse_custom_order_mode(std::string const& s) {
     if (s == "xor-hash") return custom_order_mode::XOR_HASH;
     if (s == "xor-pcg-hash") return custom_order_mode::XOR_PCG_HASH;
     if (s == "greedymini") return custom_order_mode::GREEDYMINI;
+    if (s == "mod-xor-hash") return custom_order_mode::MOD_XOR_HASH;
+    if (s == "mod-greedymini") return custom_order_mode::MOD_GREEDYMINI;
     throw std::invalid_argument("unknown order '" + s +
-                                "' (choices: native, xor-hash, xor-pcg-hash, greedymini)");
+                                "' (choices: native, xor-hash, xor-pcg-hash, greedymini, "
+                                "mod-xor-hash, mod-greedymini)");
 }
 
 /*
@@ -103,6 +128,10 @@ inline decltype(auto) dispatch_order(custom_order_mode mode, F&& f) {
             return f(order_tag<custom_order_mode::XOR_PCG_HASH>());
         case custom_order_mode::GREEDYMINI:
             return f(order_tag<custom_order_mode::GREEDYMINI>());
+        case custom_order_mode::MOD_XOR_HASH:
+            return f(order_tag<custom_order_mode::MOD_XOR_HASH>());
+        case custom_order_mode::MOD_GREEDYMINI:
+            return f(order_tag<custom_order_mode::MOD_GREEDYMINI>());
         case custom_order_mode::NATIVE:
         default:
             return f(order_tag<custom_order_mode::NATIVE>());
@@ -118,14 +147,15 @@ inline decltype(auto) dispatch_order(custom_order_mode mode, F&& f) {
 */
 template <custom_order_mode Mode>
 struct plain_hasher {
-    static_assert(Mode != custom_order_mode::GREEDYMINI);
+    static_assert(!is_gm_mode(Mode));
 
     uint64_t key = 0;  // native: mixer_64's magic, xxhash_64(seed); xor-hash, xor-pcg-hash: the seed
 
     inline uint64_t hash(uint64_t value) const {
         if constexpr (Mode == custom_order_mode::NATIVE) {
             return (value * 0x517cc1b727220a95ull) ^ key;
-        } else if constexpr (Mode == custom_order_mode::XOR_HASH) {
+        } else if constexpr (Mode == custom_order_mode::XOR_HASH or
+                             Mode == custom_order_mode::MOD_XOR_HASH) {
             return value ^ key;
         } else {
             return pcg_rxs_m_xs64(value ^ key);
@@ -158,25 +188,35 @@ struct custom_order_hasher {
     void seed(const uint64_t s) {
         m_seed = s;
         m_native_magic = pthash::xxhash_64::hash(s, 0).first();
-        if (m_mode == custom_order_mode::GREEDYMINI) m_toggle = tb_toggle();  // seeded after configure()
+        if (is_gm_mode(m_mode)) m_toggle = tb_toggle();  // seeded after configure()
     }
 
     /*
         Called once at build time (dictionary_builder::build), right after
-        seed(). `l` is sshash's minimizer length m -- the width, in bases, of
-        the value passed to hash(). No-op for NATIVE/XOR_HASH/XOR_PCG_HASH.
-        For GreedyMini the table must be mirror symmetric, (l - gm_k) even and
-        16 + 2l <= 63, else this throws.
+        seed(). `l` is sshash's minimizer length m. The mod-minimizer modes take
+        the t-mer length `mod_t` (0 < t < m; 0 for the other modes): hash() is
+        then applied to t-mers, so the width of the hashed value is t. No-op
+        otherwise for NATIVE/XOR_HASH/XOR_PCG_HASH. For GreedyMini the table
+        must be mirror symmetric, (width - gm_k) even and 16 + 2 width <= 63,
+        else this throws.
     */
     void configure(custom_order_mode mode, uint64_t l,
                    std::string const& greedy_mini_filename = "",
-                   gm_projection projection = gm_projection::AT0_CG1) {
+                   gm_projection projection = gm_projection::AT0_CG1, uint64_t mod_t = 0) {
         m_mode = mode;
-        m_l = (int)l;
         m_projection = projection;
-        if (mode != custom_order_mode::GREEDYMINI) {
+        if (is_mod_mode(mode)) {
+            if (mod_t == 0 or mod_t >= l) {
+                throw std::invalid_argument("the mod-minimizer needs 0 < --mod-t < m");
+            }
+        } else if (mod_t != 0) {
+            throw std::invalid_argument("--mod-t only applies to the mod-minimizer orders");
+        }
+        m_mod_t = (int)mod_t;
+        m_l = is_mod_mode(mode) ? (int)mod_t : (int)l;  // width of the hashed value
+        if (!is_gm_mode(mode)) {
             if (projection != gm_projection::AT0_CG1) {
-                throw std::invalid_argument("--gm-projection only applies to -O greedymini");
+                throw std::invalid_argument("--gm-projection only applies to -O greedymini and -O mod-greedymini");
             }
             return;
         }
@@ -203,13 +243,13 @@ struct custom_order_hasher {
         Holds for every GreedyMini configuration by construction; derived from
         the mode, so the on-disk format carries nothing for it.
     */
-    inline bool strand_invariant() const { return m_mode == custom_order_mode::GREEDYMINI; }
+    inline bool strand_invariant() const { return is_gm_mode(m_mode); }
 
     /* The hash of the order chosen at run time; the hot loops know the order at compile time
        and use plain<Mode>().hash() / hash_gm() directly (see dispatch_order). */
     inline uint64_t hash(uint64_t value) const {
         return dispatch_order(m_mode, [&](auto mode) {
-            if constexpr (decltype(mode)::value == custom_order_mode::GREEDYMINI) {
+            if constexpr (is_gm_mode(decltype(mode)::value)) {
                 return hash_gm(value);
             } else {
                 return plain<decltype(mode)::value>().hash(value);
@@ -221,6 +261,7 @@ struct custom_order_hasher {
        numerically canonical m-mer, as a value of its own. */
     template <custom_order_mode Mode>
     plain_hasher<Mode> plain() const {
+        static_assert(!is_gm_mode(Mode));
         return plain_hasher<Mode>{Mode == custom_order_mode::NATIVE ? m_native_magic : m_seed};
     }
 
@@ -322,12 +363,14 @@ struct custom_order_hasher {
     custom_order_mode mode() const { return m_mode; }
     gm_projection projection() const { return m_projection; }
     int gm_k() const { return m_gm_k; }
+    /* the mod-minimizer's t-mer length (0: not a mod-minimizer order) */
+    uint64_t mod_t() const { return uint64_t(m_mod_t); }
 
     template <typename Visitor>
     void visit(Visitor& visitor) {
         visit_impl(visitor, *this);
         /* the derived, non-serialized members follow the loaded ones */
-        if (m_mode == custom_order_mode::GREEDYMINI and !m_gm_ranks.empty()) derive();
+        if (is_gm_mode(m_mode) and !m_gm_ranks.empty()) derive();
     }
 
     template <typename Visitor>
@@ -345,6 +388,7 @@ private:
         visitor.visit(t.m_gm_k);
         visitor.visit(t.m_gm_ranks);
         visitor.visit(t.m_projection);
+        visitor.visit(t.m_mod_t);
     }
 
     /* Preconditions: (l - gm_k) even, 16 + 2l <= 63 and a mirror-symmetric table (the single
@@ -362,7 +406,8 @@ private:
             throw std::invalid_argument("GreedyMini order requires a non-empty table");
         }
         if (table.gm_k() > m_l) {
-            throw std::invalid_argument("GreedyMini gm_k exceeds minimizer length m");
+            throw std::invalid_argument(
+                "GreedyMini gm_k exceeds the hashed length (m, or --mod-t for mod-greedymini)");
         }
         validate(table);
         m_gm_k = table.gm_k();
@@ -399,6 +444,7 @@ private:
     int m_l = 0;
     int m_gm_k = 0;
     gm_projection m_projection = gm_projection::AT0_CG1;
+    int m_mod_t = 0;  // t-mer length of the mod-minimizer orders, 0 otherwise
     std::vector<uint16_t> m_gm_ranks;  // embedded in the .sshash file; no sidecar needed
 
     /* derived by derive(); never serialized */

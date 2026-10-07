@@ -3,7 +3,10 @@
 # (including native) takes a seed with sshash -- unlike kmc's lex, there is
 # no seed-less baseline to special-case here.
 
-ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini-k13,greedymini-k15"
+# mod-minimizer-xor / mod-minimizer-greedymini-<label>: the strand-symmetric mod-minimizer
+# (sshash -O mod-xor-hash / mod-greedymini --mod-t T; tables from config.yaml's
+# mod_greedymini_labels, t = the table's gm_k; xor: t = 4 + (m - 4) mod (k - m + 1)).
+ALL_ORDERS="native,xor-hash,xor-pcg-hash,greedymini-k13,greedymini-k15,mod-minimizer-xor,mod-minimizer-greedymini-k10"
 
 # Splits a plain-greedymini order name "greedymini-<label>[-at1]" into
 # GM_LABEL (table from config.yaml's greedymini_labels, e.g. k13) and
@@ -28,6 +31,7 @@ order_dir_name() {
     xor-pcg-hash) echo "xor_pcg_hash" ;;
     # plain greedymini table/projection variants (see order_gm_split)
     greedymini-*) echo "${1//-/_}" ;;
+    mod-minimizer-xor|mod-minimizer-greedymini-*) echo "${1//-/_}" ;;
     *) die "unknown order: $1 (see orders/README.md)" ;;
   esac
 }
@@ -39,6 +43,12 @@ order_gm_file() {
     greedymini-*)
       order_gm_split "$1"
       greedymini_label_file "$GM_LABEL"
+      ;;
+    mod-minimizer-greedymini-*)
+      local file
+      file="$(_config_scalar mod_greedymini_labels "${1#mod-minimizer-greedymini-}")"
+      [[ -n "$file" ]] || die "unknown order: $1 (see config.yaml's mod_greedymini_labels)"
+      echo "$GM_DIR_ABS/$file"
       ;;
     *) echo "" ;;
   esac
@@ -67,9 +77,19 @@ build_order_flags() {
       # exactly the flags they always did.
       [[ "$GM_PROJECTION" == "at0-cg1" ]] || ORDER_FLAGS+=(--gm-projection "$GM_PROJECTION")
       ;;
+    mod-minimizer-xor)
+      # k, m: run_one's (the caller's) values, else the defaults
+      ORDER_FLAGS+=(-O mod-xor-hash --mod-t "$(bench_py orders mod-t "$order" "${k:-$K}" "${m:-$M}")")
+      ;;
+    mod-minimizer-greedymini-*)
+      [[ -f "$gm_file" ]] || die "GreedyMini table not found: $gm_file"
+      ORDER_FLAGS+=(-O mod-greedymini --greedy-mini-file "$gm_file"
+                    --mod-t "$(bench_py orders mod-t "$order" "${k:-$K}" "${m:-$M}")")
+      ;;
     *) die "unknown order: $order (see orders/README.md)" ;;
   esac
   if [[ "$modality" == "regular" ]]; then
+    [[ "$order" != mod-minimizer-* ]] || die "the mod-minimizer orders have no regular modality"
     ORDER_FLAGS+=(--regular)
   fi
 }

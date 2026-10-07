@@ -28,7 +28,7 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
                             uint64_t num_kmers_in_super_kmer)  //
             {
                 assert(num_kmers_in_super_kmer <= k - m + 1 /* max num kmers in super-kmer */);
-                /* the scheme is forward: a minimizer position is never saved twice */
+                /* consecutive super-kmers never share their minimizer position */
                 assert(buffer.empty() or !(buffer.back().minimizer == mini_info.minimizer and
                                            buffer.back().pos_in_seq == mini_info.pos_in_seq));
                 if (buffer.size() == buffer_size) {
@@ -45,7 +45,7 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
             kmer_iterator<Kmer, bits::bit_vector::builder> kmer_it(strings_builder, k);
             hasher_type hasher(build_config.seed);
             hasher.configure(build_config.order, m, build_config.greedy_mini_filename,
-                             build_config.gm_proj);
+                             build_config.gm_proj, build_config.mod_t);
 
             /* the body is instantiated per order (see dispatch_order) */
             auto compute = [&](auto mode) {

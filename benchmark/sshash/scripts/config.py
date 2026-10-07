@@ -80,6 +80,19 @@ def greedymini_labels() -> dict[str, str]:
     return dict(_cfg().get("greedymini_labels", {}) or {})
 
 
+def mod_greedymini_labels() -> dict[str, str]:
+    """config.yaml's mod_greedymini_labels: label -> GreedyMini table of t-mers, for orders
+    "mod-minimizer-greedymini-<label>"."""
+    return dict(_cfg().get("mod_greedymini_labels", {}) or {})
+
+
+def mod_greedymini_label_file(label: str) -> Path:
+    name = mod_greedymini_labels().get(label)
+    if name is None:
+        _die(f"unknown mod-minimizer GreedyMini label '{label}' (add it to config.yaml's mod_greedymini_labels)")
+    return gm_dir() / str(name)
+
+
 def greedymini_label_file(label: str) -> Path:
     labels = _cfg().get("greedymini_labels", {}) or {}
     name = labels.get(label)

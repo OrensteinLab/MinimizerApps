@@ -38,3 +38,12 @@ defaults:
 greedymini_labels:
   k13: w11_k13_canonical.gm
   k15: w11_k15_canonical.gm
+
+# Strand-symmetric mod-minimizer with a GreedyMini table of t-mers, each exposed as the order
+# "mod-minimizer-greedymini-<label>" (sshash -O mod-greedymini --mod-t t, t = the table's gm_k;
+# a table for mod-sampling is built for the window of T = k - t + 1 t-mers: w22_k10 is
+# t = 10 = 4 + (m - 4) mod w at k=31, m=21). "mod-minimizer-xor" ranks the t-mers by xor-hash,
+# with t = 4 + (m - 4) mod w. Only t = m mod w keeps the scheme forward and at mod-sampling's
+# density (a t = 11 table gave ~2.2 on random DNA and se, worse than native).
+mod_greedymini_labels:
+  k10: w22_k10_canonical.gm

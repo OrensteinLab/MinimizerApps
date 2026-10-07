@@ -34,10 +34,11 @@ constexpr int backward_orientation = -1;
    serialized field set/order changes (last: the hasher's centre-only GreedyMini field set, 10;
    then the removal of the mod-minimizer fields, 11; then of the hasher's alphabet field, 12;
    then GreedyMini on sshash's own nucleotide encoding, 13 -- the encoding is part of the index
-   semantics, and the hasher's sigma-flip mask is no longer serialized) -- an index built by an
-   older binary must not be silently misread by a newer one. */
+   semantics, and the hasher's sigma-flip mask is no longer serialized; then the hasher's mod_t
+   of the strand-symmetric mod-minimizer orders, 14) -- an index built by an older binary must
+   not be silently misread by a newer one. */
 namespace current_version_number {
-constexpr uint8_t x = 13;
+constexpr uint8_t x = 14;
 constexpr uint8_t y = 0;
 constexpr uint8_t z = 0;
 }  // namespace current_version_number

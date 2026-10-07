@@ -166,6 +166,7 @@ struct build_configuration {
 
         , order(custom_order_mode::NATIVE)
         , gm_proj(gm_projection::AT0_CG1)
+        , mod_t(0)
         , regular_parsing(false)
 
     {}
@@ -189,6 +190,7 @@ struct build_configuration {
     custom_order_mode order;
     std::string greedy_mini_filename;  // required when order == GREEDYMINI
     gm_projection gm_proj;  // DNA->binary Sigma polarity
+    uint64_t mod_t;         // t-mer length of the mod-minimizer orders (0 otherwise)
 
     /* Forces the two-probe "regular parsing" modality (see
        util::compute_minimizer_single_strand) -- an explicit comparison mode,
@@ -207,7 +209,8 @@ struct build_configuration {
                   << ", bucket_stats = " << (bucket_stats ? "true" : "false") //
                   << ", tmp_dirname = '" << tmp_dirname << "'"                //
                   << ", order = '" << custom_order_mode_name(order) << "'"              //
-                  << (order == custom_order_mode::GREEDYMINI ? std::string(", gm_projection = ") + gm_projection_name(gm_proj) : std::string()) //
+                  << (is_gm_mode(order) ? std::string(", gm_projection = ") + gm_projection_name(gm_proj) : std::string()) //
+                  << (is_mod_mode(order) ? ", mod_t = " + std::to_string(mod_t) : std::string()) //
                   << (regular_parsing ? ", regular_parsing = true" : "") << std::endl;      //
     }
 };
@@ -586,13 +589,154 @@ minimizer_info compute_minimizer_ranked(Kmer kmer, Kmer const& kmer_rc, const ui
     return {minimizer, leftmost};
 }
 
+/*
+    Number of G and T bases of a kmer: in both nucleotide encodings (A=00, C=01, G=11, T=10 and
+    the traditional A=00, C=01, G=10, T=11) exactly G and T have bit 1 set.
+*/
+template <typename Kmer>
+inline uint64_t count_gt(Kmer const& kmer, const uint64_t k) {
+    static_assert(Kmer::bits_per_char == 2, "DNA kmers only");
+    constexpr uint64_t hi_bits = 0xAAAAAAAAAAAAAAAAull;
+    const uint64_t lo = uint64_t(kmer);
+    if (2 * k <= 64) {
+        const uint64_t mask = 2 * k == 64 ? ~uint64_t(0) : (uint64_t(1) << (2 * k)) - 1;
+        return uint64_t(__builtin_popcountll(lo & hi_bits & mask));
+    }
+    uint64_t hi = 0;
+    if constexpr (sizeof(kmer.bits) > 8) hi = uint64_t(kmer.bits >> 64);
+    const uint64_t hmask = 2 * k - 64 == 64 ? ~uint64_t(0) : (uint64_t(1) << (2 * k - 64)) - 1;
+    return uint64_t(__builtin_popcountll(lo & hi_bits)) +
+           uint64_t(__builtin_popcountll(hi & hi_bits & hmask));
+}
+
+/*
+    Whether the mod-minimizer samples the kmer from its forward strand: the strand with more G/T
+    bases is preferred (rc(x) has as many G/T as x has A/C); on a tie (even k only) the
+    numerically smaller of x and rc(x) -- exactly one of a kmer and its reverse complement is
+    forward-preferred unless it is its own reverse complement.
+*/
+template <typename Kmer>
+inline bool mod_forward_preferred(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k) {
+    if constexpr (!Kmer::has_reverse_complement) {  // no strands: plain mod-sampling
+        (void)kmer, (void)kmer_rc, (void)k;
+        return true;
+    } else {
+        const uint64_t g2 = 2 * count_gt(kmer, k);
+        if (g2 != k) return g2 > k;
+        return !(kmer_rc < kmer);
+    }
+}
+
+/* The offset of the sampled m-mer for the minimal t-mer at locus x (see compute_mod_minimizer). */
+inline uint64_t mod_offset(uint64_t x, uint64_t w, uint64_t T, bool forward_preferred) {
+    return forward_preferred ? x % w : (w - 1) - (((T - 1) - x) % w);
+}
+
+/* Tie at the minimum of the mod-minimizer: every locus in [x_l, x_r] whose hash
+   (hashes[(base + x) & 63]) is min_hash offers the offset mod_offset(x); take the offset closest
+   to the centre (w-1)/2 of the kmer's m-mers (doubled distance |2p - (w-1)|), and between two
+   equally close ones (mirror images p and w-1-p) the smaller on a forward-preferred kmer, the
+   larger otherwise. */
+inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t T, uint64_t w,
+                               uint64_t min_hash, uint64_t x_l, uint64_t x_r,
+                               bool forward_preferred) {
+    uint64_t best = constants::invalid_uint64, lo = 0, hi = 0;
+    for (uint64_t x = x_l; x <= x_r; ++x) {
+        if (hashes[(base + x) & 63] != min_hash) continue;
+        const uint64_t p = mod_offset(x, w, T, forward_preferred);
+        const uint64_t d = 2 * p > w - 1 ? 2 * p - (w - 1) : (w - 1) - 2 * p;
+        if (d < best) {
+            best = d;
+            lo = p;
+            hi = p;
+        } else if (d == best) {
+            lo = p < lo ? p : lo;
+            hi = p > hi ? p : hi;
+        }
+    }
+    return forward_preferred ? lo : hi;
+}
+
+/*
+    Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with a
+    preferred strand per kmer; this fork, not a published scheme -- the rule of the minimap2 and
+    kraken2 forks' mod-minimizer, except for ties, see below). The kmer's T = k - t + 1 t-mers
+    are ranked by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its
+    hash being strand invariant); x is the locus of the minimal hash. A forward-preferred kmer
+    (mod_forward_preferred) samples the m-mer at offset x mod w, w = k - m + 1, as plain
+    mod-sampling does; otherwise the same rule is applied from the other end of the kmer:
+    offset (w-1) - (((T-1) - x) mod w). rc(x) then samples the mirror locus k-m-p of the m-mer
+    x samples at p, whose canonical value is the same: a kmer and its reverse complement share
+    the bucket and the mirrored position, as with compute_minimizer.
+
+    A tie at the minimum (equal canonical t-mers, ~1e-3 of the kmers on real data) is broken in
+    the spirit of compute_minimizer's own (resolve_tie), on the sampled positions: every tied
+    t-mer offers its offset, and the offset closest to the centre (w-1)/2 of the kmer's m-mers
+    wins; between two equally close ones (mirror images) the smaller on a forward-preferred
+    kmer, the larger otherwise. (minimap2 and kraken2 take the leftmost / rightmost tied t-mer
+    by strand instead, which on a strand flip can return to an abandoned position.)
+
+    With t = r + (m - r) mod w (r = 4), T-1 = (w-1) mod w and both offset rules give x mod w:
+    the scheme keeps mod-sampling's density and is forward -- a tied t-mer's sampled position
+    stays put while the window slides, new candidates enter on the right, and the candidate
+    closest to a centre moving right never lies left of the previous choice (the builder checks
+    it, see minimizers_tuples). For other t the strand rules disagree, the density degrades
+    badly and the scheme is not forward; the builder then admits a (minimizer, position) pair
+    in more than one super-kmer.
+
+    The definition evaluated directly (O(T) hashes); mod_minimizer_iterator computes the same
+    incrementally.
+*/
+template <custom_order_mode Mode, typename Kmer>
+minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k,
+                                     const uint64_t m, hasher_type const& hasher)  //
+{
+    static_assert(is_mod_mode(Mode));
+    const uint64_t t = hasher.mod_t();
+    assert(t > 0 and t < m and m <= k);
+    const uint64_t w = k - m + 1;
+    const uint64_t T = k - t + 1;
+    assert(T <= 64);  // k <= 63
+
+    uint64_t min_hash = constants::invalid_uint64;
+    uint64_t x_l = 0, x_r = 0;
+    uint64_t hashes[64];
+    Kmer window = kmer;
+    for (uint64_t x = 0; x != T; ++x, window.drop_char()) {
+        uint64_t hash;
+        if constexpr (is_gm_mode(Mode)) {
+            Kmer tmer = window;
+            tmer.take_chars(t);
+            hash = hasher.hash_gm(uint64_t(tmer));
+        } else {
+            hash = hasher.plain<Mode>().hash(canonical_mmer_at<Kmer>(window, kmer_rc, k, t, x));
+        }
+        hashes[x] = hash;
+        if (x == 0 or hash < min_hash) {
+            min_hash = hash;
+            x_l = x;
+            x_r = x;
+        } else if (hash == min_hash) {
+            x_r = x;
+        }
+    }
+    const bool fwd = mod_forward_preferred(kmer, kmer_rc, k);
+    const uint64_t p = x_l == x_r ? mod_offset(x_l, w, T, fwd)
+                                  : mod_tie_offset(hashes, 0, T, w, min_hash, x_l, x_r, fwd);
+    Kmer mwin = kmer;
+    mwin.drop_chars(p);
+    return {canonical_mmer_at<Kmer>(mwin, kmer_rc, k, m, p), p};
+}
+
 /* The minimizer under the order `Mode`, known at compile time. */
 template <custom_order_mode Mode, typename Kmer>
 inline minimizer_info compute_minimizer_for(Kmer const& kmer, Kmer const& kmer_rc,
                                             const uint64_t k, const uint64_t m,
                                             hasher_type const& hasher)  //
 {
-    if constexpr (Mode == custom_order_mode::GREEDYMINI) {
+    if constexpr (is_mod_mode(Mode)) {
+        return compute_mod_minimizer<Mode, Kmer>(kmer, kmer_rc, k, m, hasher);
+    } else if constexpr (Mode == custom_order_mode::GREEDYMINI) {
         return compute_minimizer_ranked<Kmer>(kmer, kmer_rc, k, m, hasher);
     } else {
         return compute_minimizer_all_loci<Kmer>(kmer, kmer_rc, k, m, hasher.plain<Mode>());
@@ -629,7 +773,9 @@ minimizer_info compute_minimizer_reference(Kmer const& kmer, Kmer const& kmer_rc
                                            const uint64_t m, hasher_type const& hasher)  //
 {
     return dispatch_order(hasher.mode(), [&](auto mode) {
-        if constexpr (decltype(mode)::value == custom_order_mode::GREEDYMINI) {
+        if constexpr (is_mod_mode(decltype(mode)::value)) {
+            return compute_mod_minimizer<decltype(mode)::value, Kmer>(kmer, kmer_rc, k, m, hasher);
+        } else if constexpr (decltype(mode)::value == custom_order_mode::GREEDYMINI) {
             return compute_minimizer_all_loci<Kmer>(kmer, kmer_rc, k, m, hasher);
         } else {
             return compute_minimizer_all_loci<Kmer>(kmer, kmer_rc, k, m,

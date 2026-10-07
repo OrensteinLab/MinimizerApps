@@ -115,7 +115,7 @@ kmc ...                                                        # no -or/-co: kmc
 | xor (RandomXor) | `--order xor` (default) | `-orhash -ol<label> [-os<seed>]` | `-O xor-hash -s<seed>` | `--minimizer-order xor --order-seed SEED` |
 | xor-pcg (RandomPcg) | `--order xor-pcg` | `-orpcg -ol<label> [-os<seed>]` | `-O xor-pcg-hash -s<seed>` | `--minimizer-order xor-pcg-hash --order-seed SEED` |
 | greedymini | `--order greedymini --greedymini-file FILE.gm` | `-co FILE.gm -ol<label> [-os<seed>] [-ode]` | `-O greedymini --greedy-mini-file FILE.gm` (binary alphabet only) | `--minimizer-order greedymini --greedymini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` (binary alphabet only; centre extension to `-k = gm_k + 2i`) |
-| mod-minimizer sketching (strand-symmetric, see below) | `--sketching mod-minimizer` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | (n/a) | `--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T` (O_t = xor only) |
+| mod-minimizer sketching (strand-symmetric, see below) | `--sketching mod-minimizer` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-xor-hash --mod-t T -s<seed>` or `-O mod-greedymini --greedy-mini-file FILE.gm --mod-t T` (a table of t-mers) | `--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T` (O_t = xor only) |
 
 kraken2's and minimap2's mod-minimizer is a strand-symmetric variant of
 mod-sampling (Groot Koerkamp & Pibiri, WABI 2024; this repo, not a published
@@ -124,7 +124,17 @@ scheme): each window prefers the strand with more G/T bases (tie: the window
 offset `x_L mod w` (`x_L` = leftmost minimal t-mer), a reverse-preferred one at
 `(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T` t-mers per
 window), so a read and its reverse complement select the same k-mers.
-Implemented in `kraken2/src/mod_minimizer.h` and `minimap2/order.cpp`.
+Implemented in `kraken2/src/mod_minimizer.h`, `minimap2/order.cpp` and
+`sshash/include/util.hpp` (`compute_mod_minimizer`; sshash's window is the k-mer, `w = k-m+1`,
+`T = k-t+1`). With the usual `t = 4 + (m - 4) mod w` (`(T-1) ≡ w-1 mod w`) both rules reduce
+to `x mod w` and the strands differ only on ties, so the density is mod-sampling's. Ties
+(equal minimal canonical t-mers): minimap2 and kraken2 take the leftmost tied t-mer on a
+forward-preferred window and the rightmost otherwise; sshash, whose super-k-mers need a
+forward scheme, takes the tied t-mer whose sampled offset is closest to the window centre
+`(w-1)/2` (a mirror pair by strand), which keeps the scheme forward (checked by its builder).
+For any other `t` the strand rules disagree and the density degrades (sshash, k=31, m=21:
+a t=11 GreedyMini table gave ~2.2 against 1.46 at t=10 with `w22_k10`), so only t = m mod w
+is used.
 
 ## Regenerating a `.gm` table
 

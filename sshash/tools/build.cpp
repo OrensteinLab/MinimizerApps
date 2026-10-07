@@ -47,12 +47,18 @@ int build(int argc, char** argv) {
                "Also print the bucket-size and super-k-mer histograms after construction.",
                "--bucket-stats", false, true);
     parser.add("order",
-               "Minimizer order: native (default), xor-hash, xor-pcg-hash or greedymini. "
-               "See orders/README.md.",
+               "Minimizer order: native (default), xor-hash, xor-pcg-hash or greedymini; or the "
+               "strand-symmetric mod-minimizer with t-mers ranked by xor-hash (mod-xor-hash) or "
+               "GreedyMini (mod-greedymini), with --mod-t. See orders/README.md.",
                "-O", false);
     parser.add("greedy_mini_filename",
-               "GreedyMini .gm rank table (required with -O greedymini).",
+               "GreedyMini .gm rank table (required with -O greedymini and -O mod-greedymini; "
+               "for mod-greedymini a table of t-mers).",
                "--greedy-mini-file", false);
+    parser.add("mod_t",
+               "t-mer length of the mod-minimizer orders (0 < t < m; the usual choice is "
+               "4 + (m - 4) mod (k - m + 1)).",
+               "--mod-t", false);
     parser.add("gm_projection",
                "DNA->binary projection polarity for GreedyMini: "
                "at0-cg1 (default; A,T->0 and C,G->1) or at1-cg0 (flipped).",
@@ -94,25 +100,36 @@ int build(int argc, char** argv) {
     if (parser.parsed("gm_projection")) {
         build_config.gm_proj = parse_gm_projection(parser.get<std::string>("gm_projection"));
         if (build_config.gm_proj != gm_projection::AT0_CG1 and
-            build_config.order != custom_order_mode::GREEDYMINI) {
-            std::cerr << "Error: --gm-projection at1-cg0 requires -O greedymini" << std::endl;
+            !is_gm_mode(build_config.order)) {
+            std::cerr << "Error: --gm-projection at1-cg0 requires a GreedyMini order" << std::endl;
             return 1;
         }
     }
-    if (build_config.order == custom_order_mode::GREEDYMINI &&
-        build_config.greedy_mini_filename.empty()) {
-        std::cerr << "Error: -O greedymini requires --greedy-mini-file" << std::endl;
+    if (is_gm_mode(build_config.order) && build_config.greedy_mini_filename.empty()) {
+        std::cerr << "Error: -O " << custom_order_mode_name(build_config.order)
+                  << " requires --greedy-mini-file" << std::endl;
+        return 1;
+    }
+    if (parser.parsed("mod_t")) build_config.mod_t = parser.get<uint64_t>("mod_t");
+    if (is_mod_mode(build_config.order) != (build_config.mod_t != 0)) {
+        std::cerr << "Error: --mod-t is required by, and only valid with, the mod-minimizer "
+                     "orders (mod-xor-hash, mod-greedymini)"
+                  << std::endl;
         return 1;
     }
     build_config.regular_parsing = parser.get<bool>("regular_parsing");
+    if (build_config.regular_parsing and is_mod_mode(build_config.order)) {
+        std::cerr << "Error: --regular does not apply to the mod-minimizer orders" << std::endl;
+        return 1;
+    }
 
-    if (build_config.order == custom_order_mode::GREEDYMINI) {
+    if (is_gm_mode(build_config.order) or is_mod_mode(build_config.order)) {
         /* fail early with a clear message (e.g. an odd m - gm_k,
            or a table that is not mirror-symmetric) instead of an uncaught exception */
         try {
             hasher_type probe(build_config.seed);
             probe.configure(build_config.order, m, build_config.greedy_mini_filename,
-                            build_config.gm_proj);
+                            build_config.gm_proj, build_config.mod_t);
         } catch (std::exception const& e) {
             std::cerr << "Error: " << e.what() << std::endl;
             return 1;

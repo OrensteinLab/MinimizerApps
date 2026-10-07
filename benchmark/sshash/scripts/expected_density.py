@@ -31,15 +31,18 @@ from scripts.density import (
     _gm_k_from_table,
     gm_centre_valid,
     greedymini_hash,
+    mod_sampling_runs,
     native_hash,
     read_gm_ranks,
     xor_hash,
     xor_pcg_hash,
     _sliding_runs,
 )
-from scripts.orders import ORDERS, parse_greedymini_order
+from scripts.orders import ORDERS, mod_t, parse_greedymini_order, parse_mod_order
 
 DEFAULT_N_BASES = 300_000
+# the mod-minimizer's Monte Carlo is O(k) per k-mer in pure Python
+DEFAULT_MOD_N_BASES = 60_000
 DEFAULT_SEED = 0xC0FFEE01
 
 
@@ -67,7 +70,20 @@ def expected_density_factor(
     rng_seed: int = DEFAULT_SEED,
 ) -> float | None:
     rng = random.Random(rng_seed)
+    mod = parse_mod_order(order)
+    if mod is not None:
+        n_bases = min(n_bases, DEFAULT_MOD_N_BASES)
     dna_stream = [rng.randrange(4) for _ in range(n_bases)]
+    if mod is not None:
+        k = w + m - 1
+        t = mod_t(order, k, m)
+        if mod[0] == "xor":
+            fn = xor_hash
+        else:
+            assert gm_ranks is not None
+            fn = lambda value, seed: greedymini_hash(value, t, gm_ranks, seed)  # noqa: E731
+        n_kmers, n_super = mod_sampling_runs(dna_stream, k, m, t, fn, seed)
+        return density_factor(n_super, n_kmers, w)
     plain = parse_greedymini_order(order)
     sigma_flip = plain is not None and plain[1] == "at1-cg0"
     if plain is not None and gm_ranks is not None and not gm_centre_valid(m, _gm_k_from_table(gm_ranks)):
@@ -98,7 +114,7 @@ def compute_all_orders(
     orders: Iterable[str] | None = None,
 ) -> list[dict]:
     """Monte Carlo rows for `orders` (default: every order in ORDERS)."""
-    from scripts.config import greedymini_label_file
+    from scripts.config import greedymini_label_file, mod_greedymini_label_file
 
     wanted = set(orders) if orders is not None else None
     out: list[dict] = []
@@ -106,12 +122,14 @@ def compute_all_orders(
         if wanted is not None and order not in wanted:
             continue
         plain = parse_greedymini_order(order)
+        mod = parse_mod_order(order)
         gm_ranks = None
-        if plain is not None:
-            path = greedymini_label_file(plain[0])
+        if plain is not None or (mod is not None and mod[0] == "greedymini"):
+            path = greedymini_label_file(plain[0]) if plain else mod_greedymini_label_file(mod[1])
             gm_ranks = read_gm_ranks(path) if path.is_file() else None
+        needs_table = plain is not None or (mod is not None and mod[0] == "greedymini")
         vals: list[float] = []
-        if plain is None or gm_ranks is not None:
+        if not needs_table or gm_ranks is not None:
             for seed in seeds:
                 v = expected_density_factor(order, m, w, seed=seed, n_bases=n_bases, gm_ranks=gm_ranks)
                 if v is not None:

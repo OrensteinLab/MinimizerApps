@@ -233,12 +233,13 @@ private:
 
                 1. The last seed matched via a singleton bucket, at position L
                    say, and the current kmer still carries the very same
-                   minimizer occurrence (same `pos_in_seq`: the scheme is
-                   forward, so a sampled position, once abandoned, is never
-                   re-selected). Then the only locus the kmer could occupy is
-                   L - pos_in_kmer, which the just-failed extension step
-                   already compared and rejected (or it lies beyond the string
-                   boundary): negative, with no text access at all. The mirror
+                   minimizer occurrence (same `pos_in_seq`). Then the only locus
+                   the kmer could occupy is L - pos_in_kmer; and if it occurred
+                   there, the query and the text would agree from the seed kmer
+                   to the current one (both contain the occurrence, so they
+                   overlap), i.e. the extension would not have stopped:
+                   negative, with no text access at all (an argument that does
+                   not need the scheme to be forward). The mirror
                    locus L - (k - m - pos_in_kmer) hosts the reverse
                    complement of the minimizer occurrence, not the occurrence
                    itself, so it is excluded too -- unless the minimizer is
