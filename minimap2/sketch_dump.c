@@ -3,8 +3,9 @@
 // line. validate_mod_minimizer.py compares this against a brute-force
 // reference, so the check covers the compiled order.cpp, not a port of it.
 //
-// Usage: sketch_dump <order> <w> <k> <seed> <t> < seq.txt   (order: native,
-// xor, xor-pcg-hash, mod-minimizer-xor; HPC off)
+// Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq.txt
+// (order: native, xor, xor-pcg-hash, greedymini, mod-minimizer-xor; HPC off;
+// t = 0 for non-mod orders)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +41,8 @@ int main(int argc, char *argv[])
 		conf.seed = strtoull(argv[4], 0, 0);
 		conf.t = atoi(argv[5]);
 		conf.k = k;
+		if (argc > 6) conf.greedymini_file = argv[6];
+		if (argc > 7 && strcmp(argv[7], "at1-cg0") == 0) conf.gm_projection = MM_GM_PROJ_AT1_CG0;
 		if ((ord = mm_order_init(&conf, errbuf, sizeof errbuf)) == 0) {
 			fprintf(stderr, "%s\n", errbuf);
 			return 1;

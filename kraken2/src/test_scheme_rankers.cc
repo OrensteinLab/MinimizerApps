@@ -387,7 +387,7 @@ int main() {
                  IndexOptionsValid(o, sizeof(IndexOptions));
       }
     check(all_ok, "IndexOptions scheme encode/decode + magic");
-    check((int)SketchingScheme::MINIMIZER == 0 && (int)SketchingScheme::MOD == 1 &&
+    check((int)SketchingScheme::MINIMIZER == 0 && (int)SketchingScheme::MOD == 2 &&
               (int)Order::RANDOM_XOR == 0 && (int)Order::GM == 1 &&
               (int)Order::RANDOM_PCG == 2,
           "persisted enum ids");
@@ -412,6 +412,10 @@ int main() {
     v = o;
     v.order = 3;
     check(!IndexOptionsValid(v, sizeof(IndexOptions)), "bad order id rejected");
+    v = o;
+    v.sketching_scheme = 1;  // the retired forward-only mod-minimizer
+    check(!IndexOptionsValid(v, sizeof(IndexOptions)),
+          "retired sketching id 1 rejected");
   }
 
   // Scheme / order vocabulary.

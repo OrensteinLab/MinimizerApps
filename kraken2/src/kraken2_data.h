@@ -50,7 +50,8 @@ inline bool IndexOptionsValid(const IndexOptions &opts, size_t file_size) {
   return file_size == sizeof(IndexOptions) &&
          opts.db_version == KRAKEN2_DB_VERSION &&
          opts.magic == KRAKEN2_OPTS_MAGIC &&
-         opts.sketching_scheme <= (uint8_t)SketchingScheme::MOD &&
+         (opts.sketching_scheme == (uint8_t)SketchingScheme::MINIMIZER ||
+          opts.sketching_scheme == (uint8_t)SketchingScheme::MOD) &&
          opts.order <= (uint8_t)Order::RANDOM_PCG;
 }
 

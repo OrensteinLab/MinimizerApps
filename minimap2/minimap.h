@@ -83,12 +83,13 @@ typedef struct { size_t n, m; mm128_t *a; } mm128_v;
 // already does for the native order (see order.cpp's design comment).
 typedef enum {
 	// Values are persisted in .mmi files (order.cpp mm_order_serialize): keep
-	// them stable. 5 was the removed mod-minimizer-pcg-xor-hash.
+	// them stable. 4 was the removed forward (not strand-symmetric)
+	// mod-minimizer-xor, 5 the removed mod-minimizer-pcg-xor-hash.
 	MM_ORDER_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()
 	MM_ORDER_XOR = 1,           // kmer ^ seed
 	MM_ORDER_XOR_PCG_HASH = 2,  // pcg_rxs_m_xs64(kmer ^ seed)
 	MM_ORDER_GREEDYMINI = 3,    // GreedyMini UHS rank table (binary alphabet + projection)
-	MM_ORDER_MOD_XOR = 4        // mod-minimizer, O_t = xor
+	MM_ORDER_MOD_XOR = 6        // strand-symmetric mod-minimizer, O_t = xor (order.cpp)
 } mm_order_kind_t;
 
 // GreedyMini DNA -> binary projection polarity (Sigma plane = {A,T} vs {C,G}),

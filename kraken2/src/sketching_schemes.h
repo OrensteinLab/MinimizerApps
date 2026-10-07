@@ -4,7 +4,9 @@
  * SketchingScheme — how the window representative is chosen
  * (CLI --sketching):
  *   MINIMIZER — "minimizer": classic leftmost min over w l-mers
- *   MOD       — "mod-minimizer": mod-sampling (Groot Koerkamp & Pibiri 2024)
+ *   MOD       — "mod-minimizer": strand-symmetric mod-sampling (mod-sampling,
+ *               Groot Koerkamp & Pibiri 2024, with a per-window preferred
+ *               strand; see mod_minimizer.h)
  *
  * Order — how substrings are ranked (O_l for MINIMIZER, O_t for MOD)
  * (CLI --order):
@@ -12,7 +14,9 @@
  *   GM         — "greedymini": GreedyMini UHS table
  *   RANDOM_PCG — "xor-pcg": PCG RXS-M-XS scramble of (canonical ^ toggle)
  *
- * The numeric ids are persisted in opts.k2d; do not renumber.
+ * The numeric ids are persisted in opts.k2d; do not renumber. Sketching id 1
+ * was the earlier forward-only (not strand-symmetric) mod-minimizer: databases
+ * built with it are rejected (rebuild them).
  */
 
 #ifndef KRAKEN2_SKETCHING_SCHEMES_H_
@@ -26,7 +30,7 @@ namespace kraken2 {
 
 enum class SketchingScheme : uint8_t {
   MINIMIZER = 0,
-  MOD       = 1
+  MOD       = 2  // 1: retired forward-only mod-minimizer
 };
 
 enum class Order : uint8_t {

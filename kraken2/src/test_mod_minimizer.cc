@@ -1,5 +1,6 @@
 /*
- * Correctness tests for MOD streaming sampler (ModSampler + MinimizerScanner).
+ * Correctness tests for MOD streaming sampler (ModSampler + MinimizerScanner):
+ * strand-symmetric mod-sampling on DNA (see mod_minimizer.h).
  */
 
 #include "dna_kmer.h"
@@ -7,6 +8,7 @@
 #include "mod_minimizer.h"
 #include "utilities.h"
 
+#include <algorithm>
 #include <deque>
 #include <cstdint>
 #include <iostream>
@@ -31,7 +33,11 @@ static uint64_t xor_rank(uint64_t canonical, uint64_t toggle_mask) {
   return canonical ^ toggle_mask;
 }
 
-// Slow reference MOD stream (no fast-path LUTs/counters).
+// Slow reference MOD stream (no fast-path LUTs/counters): w residue deques,
+// and the window's preferred strand from its k bases (more G/T; tie: window
+// <= its reverse complement). Forward-preferred: offset x_L mod w (x_L =
+// leftmost minimal t-mer); reverse-preferred: (w-1) - (((T-1) - x_R) mod w)
+// (x_R = rightmost minimal t-mer).
 class NaiveModReference {
  public:
   NaiveModReference(int k, int l, uint64_t toggle_mask,
@@ -66,6 +72,7 @@ class NaiveModReference {
       dq.clear();
     t_bases_.clear();
     l_bases_.clear();
+    k_bases_.clear();
     abs_base_ = 0;
     abs_tmer_ = 0;
     lmers_stored_ = 0;
@@ -93,6 +100,10 @@ class NaiveModReference {
       abs_tmer_++;
     }
 
+    k_bases_.push_back(code);
+    if ((int)k_bases_.size() > k_)
+      k_bases_.pop_front();
+
     l_bases_.push_back(code);
     if ((int)l_bases_.size() > l_)
       l_bases_.pop_front();
@@ -117,27 +128,30 @@ class NaiveModReference {
     for (int a = 0; a < w_; a++)
       expire_before(deques_[(size_t)a], win);
 
-    const int wm = (int)(win % w_);
     uint64_t best_rank = UINT64_MAX;
-    int best_p = 0;
-    bool any = false;
+    for (int a = 0; a < w_; a++)
+      if (!deques_[(size_t)a].empty())
+        best_rank = std::min(best_rank, deques_[(size_t)a].front().rank);
+    // Match ModSampler: non-UHS GM ranks (UINT64_MAX) are not candidates.
+    if (best_rank == UINT64_MAX)
+      return false;
+    // x_L / x_R: leftmost / rightmost minimal t-mer (in each residue deque
+    // the entries equal to the front rank are contiguous at the front)
+    ssize_t x_l = -1, x_r = -1;
     for (int a = 0; a < w_; a++) {
-      if (deques_[(size_t)a].empty())
-        continue;
-      const uint64_t r = deques_[(size_t)a].front().rank;
-      // Match ModSampler: non-UHS GM ranks (UINT64_MAX) are not candidates.
-      if (r == UINT64_MAX)
-        continue;
-      const int p = residue_pos(a, wm);
-      if (!any || r < best_rank || (r == best_rank && p < best_p)) {
-        best_rank = r;
-        best_p = p;
-        any = true;
+      for (const Entry &e : deques_[(size_t)a]) {
+        if (e.rank != best_rank)
+          break;
+        if (x_l < 0 || e.pos < x_l)
+          x_l = e.pos;
+        x_r = std::max(x_r, e.pos);
       }
     }
-    if (!any)
-      return false;
-    *out = lmer_ring_[(size_t)((wm + best_p) % w_)];
+    const int T = tmer_span_;
+    const int off = forward_preferred()
+                        ? (int)((x_l - win) % w_)
+                        : (w_ - 1) - (int)(((T - 1) - (x_r - win)) % w_);
+    *out = lmer_ring_[(size_t)((win + off) % w_)];
     win_start_ = win;
     return true;
   }
@@ -147,6 +161,21 @@ class NaiveModReference {
     uint64_t rank;
     ssize_t pos;
   };
+
+  bool forward_preferred() const {
+    int gt = 0;
+    for (uint8_t b : k_bases_)
+      gt += b >> 1;
+    if (2 * gt != k_)
+      return 2 * gt > k_;
+    for (int j = 0; j < k_; j++) {
+      const int a = k_bases_[(size_t)j];
+      const int b = 3 - k_bases_[(size_t)(k_ - 1 - j)];
+      if (a != b)
+        return a < b;
+    }
+    return true;
+  }
 
   static uint64_t encode(const std::deque<uint8_t> &bases, int n) {
     uint64_t v = 0;
@@ -166,11 +195,6 @@ class NaiveModReference {
       dq.pop_front();
   }
 
-  int residue_pos(int a, int win_mod) const {
-    int p = a - win_mod;
-    return p < 0 ? p + w_ : p;
-  }
-
   int k_, l_, w_, t_, tmer_span_;
   uint64_t toggle_, t_mask_, toggle_t_, lmer_mask_, spaced_seed_mask_;
   int revcom_version_;
@@ -179,6 +203,7 @@ class NaiveModReference {
   std::vector<std::deque<Entry>> deques_;
   std::deque<uint8_t> t_bases_;
   std::deque<uint8_t> l_bases_;
+  std::deque<uint8_t> k_bases_;  // the window's bases
   std::vector<uint64_t> lmer_ring_;
   ssize_t abs_base_;
   ssize_t abs_tmer_;
@@ -610,7 +635,7 @@ static void test_deterministic_checksum() {
   // Regression anchor: if sampled ℓ-mer stream changes, update this.
   // Warm-up batching does not change window samples (only drops pre-window
   // returns of ~0, which XOR out of the old L-length checksum).
-  const uint64_t expect = 0x11c7d2e0bfbefd85ULL;
+  const uint64_t expect = 0x240fd3bb257f260eULL;
   if (checksum != expect) {
     std::cerr << "FAIL: checksum regression got=0x" << std::hex << checksum
               << " expect=0x" << expect << std::dec << "\n";
@@ -1040,29 +1065,16 @@ static void test_mod_gm_matches_naive() {
   check(masked == designed, "MOD+GM scanner matches unmasked t-mer rank");
 }
 
-static void test_mod_revcom_v0() {
-  const int k = 35, l = 31;
-  const uint64_t toggle = DEFAULT_TOGGLE_MASK;
-  std::mt19937_64 rng(13);
-  std::string dna(800, 'A');
-  const char *bases = "ACGT";
-  for (size_t i = 0; i < dna.size(); i++)
-    dna[i] = bases[rng() & 3ULL];
-
-  test_naive_matches_scanner(k, l, dna, toggle, "MOD revcom v0", 0, 0);
-
-  const auto v0 = scan_mod_minimizers(dna, k, l, toggle, 0, /*revcom*/0);
-  const auto v1 = scan_mod_minimizers(dna, k, l, toggle, 0,
-                                      CURRENT_REVCOM_VERSION);
-  check(v0.size() == v1.size(), "MOD v0 vs v1 size");
-  bool differ = false;
-  for (size_t i = 0; i < v0.size() && i < v1.size(); i++) {
-    if (v0[i] != v1[i]) {
-      differ = true;
-      break;
-    }
+// The old revcom_version 0 reverse complement is not exact, so its t-mer
+// ranks are not strand-invariant: mod-sampling on DNA rejects it.
+static void test_mod_revcom_v0_rejected() {
+  bool threw = false;
+  try {
+    ModSampler ms(35, 31, 2, DEFAULT_TOGGLE_MASK, true, Order::RANDOM_XOR, 0);
+  } catch (const std::invalid_argument &) {
+    threw = true;
   }
-  check(differ, "MOD revcom_version=0 differs from v1");
+  check(threw, "MOD on DNA rejects revcom_version=0");
 }
 
 // The per-base push is specialised on the order / LUT choice; the debug-log
@@ -1081,10 +1093,9 @@ static void test_mod_kinds_and_logs() {
   const Cfg cfgs[] = {
       {35, 31, Order::RANDOM_XOR, false, 0, 1},
       {35, 31, Order::RANDOM_XOR, false, smask, 1},
-      {35, 31, Order::RANDOM_XOR, false, smask, 0},
       {35, 31, Order::RANDOM_PCG, false, smask, 1},   // t=6: canonical LUT
       {40, 31, Order::RANDOM_PCG, false, smask, 1},   // t=11: ranker, no LUT
-      {40, 31, Order::RANDOM_XOR, false, 0, 0},       // t=11 xor, revcom v0
+      {40, 31, Order::RANDOM_XOR, false, 0, 1},       // t=11 xor
       {6, 4, Order::GM, true, 0, 1},                  // t=4: raw LUT
       {6, 4, Order::GM, true, 0x3fULL << 2, 1},
   };
@@ -1142,6 +1153,128 @@ static void test_mod_kinds_and_logs() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Strand symmetry, against a string-level definition independent of
+// NaiveModReference
+// ---------------------------------------------------------------------------
+
+static std::string revcomp_string(const std::string &s) {
+  std::string r(s.rbegin(), s.rend());
+  for (char &c : r)
+    c = c == 'A' ? 'T' : c == 'C' ? 'G' : c == 'G' ? 'C' : 'A';
+  return r;
+}
+
+// The definition, per k-mer window (no shared state with ModSampler): the
+// preferred strand has more G/T (tie: window <= revcomp(window)); forward ->
+// x_L mod w (x_L = leftmost minimal t-mer), reverse -> (w-1) - (((T-1) - x_R)
+// mod w) (x_R = rightmost); the window's canonical l-mer at that offset.
+static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
+                                                 int l, uint64_t toggle) {
+  const int w = k - l + 1, t = 4 + (l - 4) % w, T = w + l - t;
+  const uint64_t tog = toggle & ((1ULL << (2 * t)) - 1ULL);
+  auto pack = [&](size_t pos, int len) {
+    uint64_t v = 0;
+    for (int i = 0; i < len; i++)
+      v = (v << 2) | dna_lut(dna[pos + (size_t)i]);
+    return v;
+  };
+  std::vector<uint64_t> out;
+  for (size_t s = 0; s + (size_t)k <= dna.size(); s++) {
+    int gt = 0;
+    for (int i = 0; i < k; i++)
+      gt += dna_lut(dna[s + (size_t)i]) >> 1;
+    bool fwd = 2 * gt > k;
+    if (2 * gt == k) {
+      const std::string win = dna.substr(s, (size_t)k);
+      fwd = win <= revcomp_string(win);
+    }
+    std::vector<uint64_t> r((size_t)T);
+    for (int x = 0; x < T; x++)
+      r[(size_t)x] = dna_canonical_representation(pack(s + (size_t)x, t), (uint8_t)t,
+                                                   CURRENT_REVCOM_VERSION) ^ tog;
+    const auto first = std::min_element(r.begin(), r.end());
+    const int x_l = (int)(first - r.begin());
+    int x_r = x_l;
+    for (int x = 0; x < T; x++)
+      if (r[(size_t)x] == *first)
+        x_r = x;
+    const int p = fwd ? x_l % w : (w - 1) - (((T - 1) - x_r) % w);
+    out.push_back(dna_canonical_representation(pack(s + (size_t)p, l), (uint8_t)l,
+                                               CURRENT_REVCOM_VERSION));
+  }
+  return out;
+}
+
+static void test_matches_string_definition() {
+  std::mt19937_64 rng(31);
+  const char *bases = "ACGT";
+  for (int k : {35, 36, 37}) {  // w = 5, 6 (even window: G/T ties), 7
+    std::string dna(3000, 'A');
+    for (char &c : dna)
+      c = bases[rng() & 3ULL];
+    const auto fast = scan_mod_minimizers(dna, k, 31, DEFAULT_TOGGLE_MASK);
+    const auto naive = naive_canonical_xor(dna, k, 31, DEFAULT_TOGGLE_MASK);
+    check(fast == naive, ("MOD matches the string definition k=" + std::to_string(k)).c_str());
+  }
+}
+
+// Per k-mer window: whether the sampler selected an l-mer, and which. A window
+// whose t-mers are all outside the GreedyMini UHS has no candidate; the scanner
+// then repeats the previous window's minimizer, which depends on the scan
+// direction, so the strand test compares selected windows only.
+static std::vector<std::pair<bool, uint64_t>> window_selections(
+    const std::string &dna, int k, int l, Order order,
+    std::shared_ptr<const GreedyMiniTable> table) {
+  ModSampler ms(k, l, 2, DEFAULT_TOGGLE_MASK, true, order, CURRENT_REVCOM_VERSION,
+                0, table);
+  std::vector<std::pair<bool, uint64_t>> out;
+  for (size_t i = 0; i < dna.size(); i++) {
+    uint64_t sel = 0;
+    const ssize_t win = (ssize_t)i + 1 - k;
+    const bool ok = ms.PushAndFinish(dna_lut(dna[i]), win, &sel);
+    if (win >= 0)
+      out.emplace_back(ok, sel);
+  }
+  return out;
+}
+
+// A read and its reverse complement select the same l-mers, window by window
+// in reverse order -- except at a window that is its own reverse complement
+// (possible only for even k), which has no preferred strand.
+static size_t strand_mismatches(const std::string &dna, int k, int l, Order order,
+                                std::shared_ptr<const GreedyMiniTable> table) {
+  const auto f = window_selections(dna, k, l, order, table);
+  auto r = window_selections(revcomp_string(dna), k, l, order, table);
+  std::reverse(r.begin(), r.end());
+  size_t bad = f.size() != r.size() ? 1 : 0;
+  for (size_t i = 0; i < f.size() && i < r.size(); i++) {
+    const std::string win = dna.substr(i, (size_t)k);
+    if (win == revcomp_string(win))
+      continue;
+    if (f[i].first != r[i].first || (f[i].first && f[i].second != r[i].second))
+      bad++;
+  }
+  return bad;
+}
+
+static void test_strand_symmetric() {
+  std::mt19937_64 rng(33);
+  const char *bases = "ACGT";
+  std::string dna(5000, 'A');
+  for (char &c : dna)
+    c = bases[rng() & 3ULL];
+  check(strand_mismatches(dna, 35, 31, Order::RANDOM_XOR, nullptr) == 0,
+        "MOD xor: read and reverse complement select the same l-mers");
+  check(strand_mismatches(dna, 36, 31, Order::RANDOM_XOR, nullptr) == 0,
+        "MOD xor, even k: same l-mers on both strands");
+  check(strand_mismatches(dna, 35, 31, Order::RANDOM_PCG, nullptr) == 0,
+        "MOD xor-pcg: same l-mers on both strands");
+  auto table = synthetic_gm_k4();  // gm_k = t = 4 for (k, l) = (6, 4)
+  check(strand_mismatches(dna, 6, 4, Order::GM, table) == 0,
+        "MOD greedymini: same l-mers on both strands");
+}
+
 int main() {
   const uint64_t toggle = DEFAULT_TOGGLE_MASK;
   std::mt19937_64 rng(7);
@@ -1183,8 +1316,10 @@ int main() {
   test_gm_scanner_revcom_v0();
   test_gm_rank_first_matches_rank_path();
   test_mod_gm_matches_naive();
-  test_mod_revcom_v0();
+  test_mod_revcom_v0_rejected();
   test_mod_kinds_and_logs();
+  test_matches_string_definition();
+  test_strand_symmetric();
 
   if (failures) {
     std::cerr << failures << " failure(s)\n";

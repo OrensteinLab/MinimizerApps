@@ -43,9 +43,10 @@
 // logic) -- correct for native's near-injective hash64, but if reused
 // naively for GreedyMini's rank (which collapses many distinct non-UHS
 // k-mers to the same value) it would pathologically over-select right where
-// GreedyMini is supposed to reduce density. greedymini_rank() below fixes
-// this by packing the UHS primary above a PCG-scrambled tiebreak of the full
-// k-mer, so ties only occur where the original algorithm intends duplicate
+// GreedyMini is supposed to reduce density. RankState<MM_ORDER_GREEDYMINI> below uses the
+// shared centre-extension order in its injective packing (UHS rank, then the
+// Sigma and Gamma planes of the k-mer), which is a total order on canonical
+// k-mers, so ties only occur where the original algorithm intends duplicate
 // detection to fire (genuine repeats), not as an artifact of the ranking's
 // own coarseness.
 
@@ -53,9 +54,10 @@
 #include "kvec.h" // kv_resize/kv_push (also pulls in kalloc.h for kmalloc/krealloc)
 
 #include "../common/minimizer-orders/pcg_rxs_m_xs.h"
-#include "../common/minimizer-orders/dna_revcomp.h"
 #include "../common/minimizer-orders/greedymini_rank.h"
+#include "../common/minimizer-orders/greedymini_centre.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -78,18 +80,16 @@ struct mm_order_s {
 	uint64_t seed;
 	int t;
 	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI only
-	// gm_dna_key_pext_mask(l, gm->gm_k()) precomputed once at load time (init
-	// or deserialize), not per candidate: l/gm_k are fixed for a whole
-	// build/map run, so recomputing this mask (a handful of shift/sub ops)
-	// on every single greedymini_rank() call -- twice, once per strand -- was
-	// pure waste. Only meaningful when gm is set; mm_order_clone's copy
-	// constructor carries it over for free.
-	uint64_t gm_key_mask = 0;
-	// --gm-projection at1-cg0: XORed into every table key (flips each Sigma
-	// bit, Gamma untouched -- sshash's custom_order_hasher.hpp does the same
-	// on its own plane). 0 for at0-cg1, the default.
+	// GREEDYMINI only, built once at init/deserialize for the index's k
+	// (read-only afterwards, so shared by all sketching threads and by
+	// mm_order_clone's copies): the centre-extension order of the gm_k table
+	// at length k (k = gm_k + 2i), and the Sigma/Gamma planes of minimap2's
+	// ACGT=0123 k-mers. --gm-projection at1-cg0 complements Sigma (sshash's
+	// custom_order_hasher.hpp does the same on its own encoding).
+	int gm_l = 0;
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
-	uint32_t gm_key_flip = 0;
+	std::shared_ptr<const gm_centre::Order> gm_order;
+	gm_centre::TwoBitPlanes<true> gm_planes;
 };
 
 namespace {
@@ -113,58 +113,72 @@ bool needs_gm_kind(mm_order_kind_t k) {
 	return k == MM_ORDER_GREEDYMINI;
 }
 
-// Dual-orientation GreedyMini rank (binary alphabet + on-the-fly projection,
-// per the user's requirement -- no DNA-alphabet backend, no Extend-k: the
-// table's own gm_k must equal the ranked length exactly, checked in
-// mm_order_init). Ported in spirit from kraken2::GMRanker (see
-// kraken2/src/minimizer_rankers.h) but simplified: minimap2 never persists
-// this rank as an index key (see file header), so there is no need for
-// GMRanker's Extend-k/gamma tiebreak *packing* -- only for *injectivity*,
-// which the PCG-scrambled tiebreak below provides directly from the shared
-// pcg_rxs_m_xs.h primitive instead of hand-rolled bit packing.
-uint64_t greedymini_rank(uint64_t lmer, int l, const GreedyMiniTable &tbl, uint64_t key_mask, uint32_t key_flip) {
-	// key_mask == gm_dna_key_pext_mask(l, tbl.gm_k()), precomputed once by our
-	// caller (mm_order_init/mm_order_deserialize) instead of recomputed here
-	// on every call. gm_pext_odd(atcg, key_mask) is exactly
-	// gm_extract_dna_key_atcg(atcg, l, tbl.gm_k())'s own BMI2 path with that
-	// same mask (identical call), and -- since minimap2 never allows
-	// Extend-k (gm_k == l is checked at load time, so the offset term in
-	// gm_dna_key_pext_mask is always 0) -- also identical to its SWAR
-	// fallback path bit-for-bit, not just when BMI2 is enabled. key_flip
-	// (all-ones over gm_k bits, or 0) selects the AT/CG projection polarity.
-	const uint64_t atcg = gm_acgt_to_atcg(lmer);
-	const uint32_t key_fwd = (uint32_t)gm_pext_odd(atcg, key_mask) ^ key_flip;
-	uint16_t best = tbl.primary(key_fwd);
-	const uint64_t rc = dna_reverse_complement(lmer, (uint8_t)l);
-	if (rc != lmer) {
-		const uint64_t atcg_rc = gm_acgt_to_atcg(rc);
-		const uint32_t key_rc = (uint32_t)gm_pext_odd(atcg_rc, key_mask) ^ key_flip;
-		const uint16_t p_rc = tbl.primary(key_rc);
-		if (p_rc < best) best = p_rc;
-	}
-	// best < kInfRank (0xFFFF) for any UHS member; kInfRank for non-UHS. The
-	// tiebreak is unmasked/full-width so every distinct k-mer is (with
-	// overwhelming probability) individually ranked, never bucketed together.
-	const uint64_t tiebreak = pcg_rxs_m_xs64(lmer) & 0xFFFFFFFFFFFFULL; // low 48 bits
-	return ((uint64_t)best << 48) | tiebreak;
-}
+// GreedyMini rank of a k-mer: the shared centre extension
+// (common/minimizer-orders/greedymini_centre.h), as kraken2's GMRanker and
+// sshash's custom_order_hasher use it. With k = gm_k + 2i the k-mer is
+// x y z (|x| = |z| = i, |y| = gm_k): rank the binary (AT/CG) projection of
+// the centre y by the table, then break ties by the smaller of the two
+// strands' Sigma planes, then by Gamma -- the injective packing, a total
+// order on canonical k-mers that is strand invariant (the reverse
+// complement's centre is the mirror of y, and the table is mirror
+// symmetric). A centre outside the UHS has rank 0xFFFF in the top field, so
+// the value is never UINT64_MAX (k <= 23, checked at init) and such k-mers
+// still compete, ordered by their planes. i = 0 (k == gm_k) is the plain
+// table order.
+//
+// Per-sketch rank state of the single-window path, one specialisation per
+// order kind (sketch_single_window is a template on it, so the order is
+// resolved at compile time, not per k-mer): push(c) sees every base of the
+// current N-free run, in order, before the palindrome skip; rank(kmer)
+// ranks the k-mer ending at the last pushed base. `kmer` is the lex-min
+// canonical strand (native's z = kmer[0]<kmer[1]?0:1); the GreedyMini order
+// is strand invariant and ignores it.
+template <int Kind> struct RankState;
 
-// Selection rank for the plain single-window path (xor / xor-pcg-hash /
-// greedymini). `kmer` is already the lex-min-canonicalized strand (matching
-// native's own z = kmer[0]<kmer[1]?0:1), same convention for all three kinds.
-uint64_t order_rank(const mm_order_t *ord, uint64_t kmer, int k) {
-	switch (ord->kind) {
-		case MM_ORDER_XOR:          return kmer ^ ord->seed;
-		case MM_ORDER_XOR_PCG_HASH: return pcg_rxs_m_xs64(kmer ^ ord->seed);
-		case MM_ORDER_GREEDYMINI:   return greedymini_rank(kmer, k, *ord->gm, ord->gm_key_mask, ord->gm_key_flip);
-		default:                    assert(0 && "order_rank: unexpected kind"); return kmer;
+template <> struct RankState<MM_ORDER_XOR> {
+	uint64_t seed;
+	RankState(const mm_order_t *ord, int) : seed(ord->seed) {}
+	void push(int) {}
+	uint64_t rank(uint64_t kmer) const { return kmer ^ seed; }
+};
+
+template <> struct RankState<MM_ORDER_XOR_PCG_HASH> {
+	uint64_t seed;
+	RankState(const mm_order_t *ord, int) : seed(ord->seed) {}
+	void push(int) {}
+	uint64_t rank(uint64_t kmer) const { return pcg_rxs_m_xs64(kmer ^ seed); }
+};
+
+// GreedyMini: the Sigma (AT/CG) and Gamma planes of both strands are rolled
+// one base per step, as kraken2's GMRanker and sshash's iterator do with the
+// same header's helpers, instead of extracted (two pext) and bit-reversed per
+// k-mer; Order::value_of_both_strands then costs one table load. Planes:
+// bit p = base p of the strand word, first base = most significant bit. The
+// forward word's newest base is its lowest (roll_in_low); the reverse
+// complement's newest base is its highest (roll_in_high), and complementing
+// a base keeps its AT/CG class (same Sigma bit) and flips Gamma.
+template <> struct RankState<MM_ORDER_GREEDYMINI> {
+	const gm_centre::Order &order;
+	const gm_centre::TwoBitPlanes<true> &planes;
+	int k;
+	uint64_t mask, sigma_f = 0, gamma_f = 0, sigma_r = 0, gamma_r = 0;
+	RankState(const mm_order_t *ord, int k_)
+		: order(*ord->gm_order), planes(ord->gm_planes), k(k_), mask((1ULL << k_) - 1) {}
+	void push(int c) {
+		const uint64_t s = planes.base_sigma((uint64_t)c);
+		const uint64_t g = (uint64_t)c >> 1;
+		sigma_f = gm_centre::roll_in_low(sigma_f, s, mask);
+		gamma_f = ((gamma_f << 1) | g) & mask;
+		sigma_r = gm_centre::roll_in_high(sigma_r, s, k);
+		gamma_r = (gamma_r >> 1) | ((g ^ 1ULL) << (k - 1));
 	}
-}
+	uint64_t rank(uint64_t) const { return order.value_of_both_strands(sigma_f, gamma_f, sigma_r, gamma_r); }
+};
 
 // ---------------------------------------------------------------------------
 // HPC span bookkeeping (copied from sketch.c's own private tiny_queue_t --
 // that one is `static inline`/file-local, not shared library code, so this
-// is minimap2's own helper duplicated the same pragmatic way dna_revcomp.h's
+// is minimap2's own helper duplicated the same pragmatic way common/minimizer-orders/dna_revcomp.h's
 // own doc comment describes for consumers that don't already have a copy in
 // scope; not part of common/minimizer-orders/'s order-algorithm surface).
 // ---------------------------------------------------------------------------
@@ -186,7 +200,7 @@ inline int tq_shift(tiny_queue_t *q) {
 // Single-window ordered sketch (xor / xor-pcg-hash / greedymini).
 //
 // Mechanical port of mm_sketch()'s own robust-winnowing loop (sketch.c),
-// with the per-candidate scoring function swapped for order_rank() and the
+// with the per-candidate scoring function swapped for RankState::rank() and the
 // stored `x` reconstructed from the *selected* k-mer at each push site
 // (Cand::kmer) rather than carried through as the comparison value itself
 // (Cand::rank) -- see the file header for why. Everything else (HPC span
@@ -205,9 +219,11 @@ inline mm128_t cand_to_mm128(const Cand &c, uint64_t mask) {
 	return r;
 }
 
+template <int Kind>
 void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int len,
                            int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
+	RankState<Kind> rs(ord, k);
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL << 2 * k) - 1, kmer[2] = {0, 0};
 	int i, j, l, buf_pos, min_pos, kmer_span = 0;
 	std::vector<Cand> buf(w);
@@ -238,11 +254,12 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 			} else kmer_span = l + 1 < k ? l + 1 : k;
 			kmer[0] = (kmer[0] << 2 | (uint64_t)c) & mask;
 			kmer[1] = (kmer[1] >> 2) | ((3ULL ^ (uint64_t)c) << shift1);
+			rs.push(c);
 			if (kmer[0] == kmer[1]) continue; // skip "symmetric k-mers", same as native
 			z = kmer[0] < kmer[1] ? 0 : 1;
 			++l;
 			if (l >= k && kmer_span < 256) {
-				info.rank = order_rank(ord, kmer[z], k);
+				info.rank = rs.rank(kmer[z]);
 				info.kmer = kmer[z];
 				info.span = (uint32_t)kmer_span;
 				info.y = (uint64_t)rid << 32 | (uint32_t)i << 1 | (uint64_t)z;
@@ -279,41 +296,39 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 }
 
 // ---------------------------------------------------------------------------
-// mod-minimizer ordered sketch (Groot Koerkamp & Pibiri, WABI 2024), O_t = xor.
+// mod-minimizer-xor: strand-symmetric (canonical) mod-sampling with O_t = xor.
 //
-// minimap2's own (w, k) already match the paper's notation directly: k is
-// the sampled substring length, w the window's candidate count, and the
-// paper's window span is exactly minimap2's own w+k-1 bases (mm_sketch()'s
-// own `l >= w+k-1` first-output condition). t-mers are ranked over that
-// whole span, i.e. tmer_span = w+k-t candidate t-mer positions per window.
-// The window's sampled k-mer is the one at offset p = x mod w, where x is
-// the offset of the window's smallest t-mer (ties -> smallest x).
+// mod-sampling (Groot Koerkamp & Pibiri, WABI 2024) in minimap2's notation: k
+// is the sampled k-mer length, w the window's k-mer count, the window spans
+// L = w + k - 1 bases (mm_sketch()'s own first-output condition) and holds
+// T = w + k - t t-mers, ranked as canonical t-mers XOR the seed. Plain
+// mod-sampling picks the k-mer at offset x_L mod w (x_L = leftmost minimal
+// t-mer); that is not reverse-complement symmetric (reducing the winner's
+// position mod w does not commute with mirroring the window), so a read and
+// its reverse complement select different loci (~5% at t = 5 on human DNA).
 //
-// Same streaming layout as kraken2::ModSampler (kraken2/src/mod_minimizer.h):
-// ONE monotone deque over every live t-mer of the window, a power-of-two ring
-// with no division on the hot path, residue classes tracked by wrap-around
-// counters instead of `% w`. Entries stay in position order and a push pops
-// only *strictly* larger ranks, so among equal minimal ranks the front is
-// the leftmost -- the paper's argmin with its smallest-x tie-break, read in
-// O(1) (amortized, each t-mer is pushed and popped once). kraken2 instead
-// scans the equal-rank run for the smallest p; we keep the paper's
-// smallest-x rule, which validate_mod_minimizer.py checks against a brute
-// force. With O_t = xor the t-mer rank is one XOR, so kraken2's t-mer rank
-// LUT doesn't apply here.
+// This variant (not a published scheme; the mod-sampling counterpart of
+// simd-minimizers' canonical minimizer, Groot Koerkamp & Martayan SEA 2025)
+// gives each window a preferred strand: the one with more G/T bases, a tie
+// (even L) broken by W <= revcomp(W) lexicographically. A forward-preferred
+// window samples offset x_L mod w; a reverse-preferred one applies the same
+// rule from the other end: x_R = rightmost minimal t-mer, offset
+// (w-1) - (((T-1) - x_R) mod w). The reverse complement of a window then
+// samples the mirror k-mer, so both strands select the same loci (except in a
+// window that is its own reverse complement). Density: +0-1% over plain
+// mod-sampling (benchmark/minimap2/analysis/canonical_mod.py; validate_mod_minimizer.py checks
+// the code against a brute force of this definition).
 //
-// KNOWN LIMITATION, not fixed here: the scheme (ranking canonical t-mers,
-// then reducing the winner's offset mod w) is NOT reverse-complement
-// symmetric, because "reduce the winning t-mer's position mod w" does not
-// commute with mirroring a window end-to-end. Building an index from one
-// strand and querying with the reverse complement of the same sequence can
-// select largely disjoint minimizers (measured on a 3kb real-genome test:
-// 4 of 140 keys shared, vs ~90% for the per-locus canonical orders). sshash
-// works around this with a dual-probe / regular-parsing fallback; not
-// ported here.
+// Streaming layout as kraken2::ModSampler (kraken2/src/mod_minimizer.h): one
+// monotone deque over every live t-mer (power-of-two ring; a push pops only
+// strictly larger ranks, so equal minimal ranks sit at the front in position
+// order), residue classes by wrap-around counters. The sampled position can
+// move back as the window slides, so a selected k-mer is only marked pending
+// in its residue slot and emitted when it leaves the window (no later window
+// can select it): output stays in position order, each k-mer once, no sort.
 // ---------------------------------------------------------------------------
-
 void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int len,
-                           int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
+                          int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
 	const int t = ord->t;
 	assert(t > 0 && t < k);
@@ -338,21 +353,55 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	ssize_t run_pos = -1;   // bases seen since the last reset (0-indexed once >= 0)
 	int t_cls = 0;          // (next t-mer ordinal) mod w
 	int l_cls = 0;          // (next k-mer ordinal) mod w
-	ssize_t last_emitted = -1; // k-mer ordinal last pushed: a winner that stays the
-	                           // same across consecutive windows is emitted once
 	int kmer_span = 0;
 	tiny_queue_t tq;
 	std::memset(&tq, 0, sizeof(tq));
 	for (int a = 0; a < w; ++a) lring[a].valid = 0;
+
+	// The window's forward and reverse-complement 2-bit words when L <= 32
+	// (G/T count = popcount of the high bits, exact lexicographic tie-break);
+	// otherwise its bases in a ring (wb_pos = next slot) and a running G/T
+	// count. Per residue slot: whether its k-mer is selected but not yet
+	// emitted, and the slot the mirror rule picks for a rightmost minimal
+	// t-mer in that slot's residue class.
+	const int L = w + k - 1;
+	const bool win_word = L <= 32;
+	std::vector<uint8_t> wbase(win_word ? 0 : (size_t)L);
+	std::vector<uint8_t> pending((size_t)w, 0);
+	std::vector<uint8_t> mirror_slot((size_t)w);
+	int wb_pos = 0, gt = 0;
+	uint64_t win_fw = 0, win_rc = 0;
+	const uint64_t win_mask = L >= 32 ? ~0ULL : (1ULL << (2 * L)) - 1;
+	const uint64_t win_hi = 0xAAAAAAAAAAAAAAAAULL & win_mask; // bit 1 of each base: G = 2, T = 3
+	// mirror rule: offset p = (w-1) - (((T-1) - x_R) mod w), slot (win + p) mod w;
+	// with x_R mod w = cls_R - win (mod w) the window index cancels:
+	// slot = (cls_R + (w-1) - (T-1)) mod w
+	const int tm1_mod = (tmer_span - 1) % w;
+	for (int a = 0; a < w; ++a)
+		mirror_slot[(size_t)a] = (uint8_t)((a + (w - 1) - tm1_mod) % w);
+	auto emit = [&](const LEntry &e) {
+		mm128_t out;
+		out.x = (mm_hash64(e.kmer, k_mask) << 8) | e.span;
+		out.y = e.y;
+		kv_push(mm128_t, km, *p, out);
+	};
+	// Emit the still-pending k-mers of the current run in position order (the
+	// oldest live ordinal sits in slot l_cls).
+	auto flush_pending = [&]() {
+		for (int j = 0, a = l_cls; j < w; ++j, a = a + 1 == w ? 0 : a + 1)
+			if (pending[(size_t)a]) { emit(lring[(size_t)a]); pending[(size_t)a] = 0; }
+	};
 
 	kv_resize(mm128_t, km, *p, p->n + len / w);
 
 	for (int i = 0; i < len; ++i) {
 		int c = seq_nt4_table[(uint8_t)str[i]];
 		if (c >= 4) { // ambiguous base: reset everything, same as native
+			flush_pending();
+			gt = 0; wb_pos = 0; win_fw = win_rc = 0;
 			dq_head = dq_tail = 0;
 			for (int a = 0; a < w; ++a) lring[a].valid = 0;
-			run_pos = -1; t_cls = l_cls = 0; last_emitted = -1; kmer_span = 0;
+			run_pos = -1; t_cls = l_cls = 0; kmer_span = 0;
 			tq.count = tq.front = 0;
 			continue;
 		}
@@ -376,6 +425,16 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		tmer_rc = (tmer_rc >> 2) | (((uint64_t)(3 ^ c)) << t_shift1);
 		kmer[0] = ((kmer[0] << 2) | (uint64_t)c) & k_mask;
 		kmer[1] = (kmer[1] >> 2) | (((uint64_t)(3 ^ c)) << k_shift1);
+		if (win_word) {
+			win_fw = ((win_fw << 2) | (uint64_t)c) & win_mask;
+			win_rc = (win_rc >> 2) | ((uint64_t)(3 ^ c) << (2 * (L - 1)));
+		} else {
+			uint8_t &slot_b = wbase[(size_t)wb_pos];
+			if (++wb_pos == L) wb_pos = 0;
+			if (run_pos >= L) gt -= slot_b >> 1; // G = 2, T = 3: bit 1 set
+			slot_b = (uint8_t)c;
+			gt += c >> 1;
+		}
 
 		const ssize_t ot = run_pos - t + 1; // ordinal of the t-mer ending here
 		if (ot >= 0) {
@@ -392,6 +451,10 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		const int slot = l_cls;
 		if (++l_cls == w) l_cls = 0;
 		LEntry &le = lring[(size_t)slot];
+		if (pending[(size_t)slot]) { // k-mer ol - w leaves every future window
+			emit(le);
+			pending[(size_t)slot] = 0;
+		}
 		if (kmer[0] == kmer[1] || kmer_span >= 256) {
 			le.valid = 0; // palindrome or oversized span: no valid k-mer here
 		} else {
@@ -406,24 +469,40 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		// t-mers are exactly ordinals [win, ot] (ot == win + tmer_span - 1).
 		const ssize_t win = ol - w + 1;
 		if (win < 0) continue;
-		const int wm = slot + 1 == w ? 0 : slot + 1; // win mod w
 
 		while (dq[dq_head & dq_mask].pos < win) ++dq_head; // never empties: ot >= win
 		const Ent &best = dq[dq_head & dq_mask];
-		int best_p = best.cls - wm; // (x mod w), x = best.pos - win
-		if (best_p < 0) best_p += w;
-		const ssize_t abs_ord = win + best_p;
-		if (abs_ord != last_emitted) {
-			const LEntry &sel = lring[(size_t)best.cls]; // (win + p) mod w == best.cls
-			if (sel.valid) {
-				mm128_t out;
-				out.x = (mm_hash64(sel.kmer, k_mask) << 8) | sel.span;
-				out.y = sel.y;
-				kv_push(mm128_t, km, *p, out);
+		// Preferred strand, branch-free when L <= 32 (the choice is close to a
+		// fair coin per window, so a branch would mispredict half the time).
+		bool fwd;
+		if (win_word) {
+			const int g2 = 2 * __builtin_popcountll(win_fw & win_hi);
+			fwd = (g2 > L) | ((g2 == L) & (win_fw <= win_rc));
+		} else {
+			fwd = 2 * gt > L;
+			if (2 * gt == L) { // tie: W <= revcomp(W), base by base
+				// the window's first base sits in ring slot wb_pos (oldest)
+				int cmp = 0;
+				for (int j = 0; j < L && cmp == 0; ++j) {
+					const int a = wbase[(size_t)((wb_pos + j) % L)];
+					const int b = 3 - wbase[(size_t)((wb_pos + L - 1 - j) % L)];
+					cmp = a < b ? -1 : a > b ? 1 : 0;
+				}
+				fwd = cmp <= 0;
 			}
-			last_emitted = abs_ord;
 		}
+		// Forward: the leftmost minimum's k-mer is in residue slot best.cls
+		// ((win + (x_L mod w)) mod w == best.cls). Reverse: the rightmost
+		// minimal t-mer x_R (equal minimal ranks are contiguous at the deque
+		// front, in position order) -> mirror_slot.
+		uint32_t r = dq_head;
+		while (r + 1 != dq_tail && dq[(r + 1) & dq_mask].rank == best.rank) ++r;
+		const int rslot = mirror_slot[(size_t)dq[r & dq_mask].cls];
+		const int fmask = -(int)fwd; // all ones when forward-preferred
+		const int sel_slot = rslot ^ ((best.cls ^ rslot) & fmask);
+		pending[(size_t)sel_slot] |= (uint8_t)lring[(size_t)sel_slot].valid;
 	}
+	flush_pending();
 }
 
 } // namespace
@@ -434,14 +513,31 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 
 namespace {
 
-// l == gm->gm_k() always (Extend-k disallowed, checked in mm_order_init), so
-// the masks need no separately-tracked k.
-void set_gm_masks(mm_order_t *ord) {
-	if (!ord->gm) return;
-	const int gm_k = ord->gm->gm_k();
-	ord->gm_key_mask = gm_dna_key_pext_mask(gm_k, gm_k);
-	ord->gm_key_flip = ord->gm_projection == MM_GM_PROJ_AT1_CG0
-		? (uint32_t)((1ULL << gm_k) - 1) : 0;
+// Max k for greedymini: the injective packing takes 16 + 2k bits, and a
+// value must stay below UINT64_MAX (sketch_single_window's "no candidate").
+const int kGmMaxK = 23;
+
+// Builds ord->gm_order for minimizer length l (ord->gm and ord->gm_projection
+// already set). Returns false with a message in errbuf on an invalid length
+// (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the centre extension
+// rejects (not mirror symmetric).
+bool build_gm_order(mm_order_t *ord, int l, char *errbuf, size_t errbuf_len) {
+	if (!ord->gm) return true;
+	if (l > kGmMaxK) {
+		char msg[160];
+		std::snprintf(msg, sizeof msg, "greedymini supports -k up to %d (got %d)", kGmMaxK, l);
+		set_err(errbuf, errbuf_len, msg);
+		return false;
+	}
+	try {
+		ord->gm_order = std::make_shared<const gm_centre::Order>(ord->gm, l, 0, /*injective=*/true);
+	} catch (const std::exception &e) {
+		set_err(errbuf, errbuf_len, e.what());
+		return false;
+	}
+	ord->gm_l = l;
+	ord->gm_planes = gm_centre::TwoBitPlanes<true>(l, ord->gm_projection == MM_GM_PROJ_AT1_CG0);
+	return true;
 }
 
 } // namespace
@@ -479,16 +575,6 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 			set_err(errbuf, errbuf_len, "failed to load GreedyMini table (missing or corrupt file)");
 			return nullptr;
 		}
-		const int need_gm_k = mod ? conf->t : conf->k;
-		if (gm->gm_k() != need_gm_k) {
-			char msg[256];
-			std::snprintf(msg, sizeof msg,
-			               "GreedyMini table gm_k=%d does not match required length %d (%s); "
-			               "Extend-k is not supported for minimap2, the table must match exactly",
-			               gm->gm_k(), need_gm_k, mod ? "--mod-t" : "-k");
-			set_err(errbuf, errbuf_len, msg);
-			return nullptr;
-		}
 	} else if (conf->greedymini_file && *conf->greedymini_file) {
 		set_err(errbuf, errbuf_len, "--greedymini-file given but the chosen order does not use a GreedyMini table");
 		return nullptr;
@@ -504,7 +590,7 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	set_gm_masks(ord);
+	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len)) { delete ord; return nullptr; }
 	return ord;
 }
 
@@ -523,9 +609,13 @@ extern "C" void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *s
 {
 	switch (ord->kind) {
 		case MM_ORDER_XOR:
+			sketch_single_window<MM_ORDER_XOR>(ord, km, str, len, w, k, rid, is_hpc, p);
+			return;
 		case MM_ORDER_XOR_PCG_HASH:
+			sketch_single_window<MM_ORDER_XOR_PCG_HASH>(ord, km, str, len, w, k, rid, is_hpc, p);
+			return;
 		case MM_ORDER_GREEDYMINI:
-			sketch_single_window(ord, km, str, len, w, k, rid, is_hpc, p);
+			sketch_single_window<MM_ORDER_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		case MM_ORDER_MOD_XOR:
 			sketch_mod_minimizer(ord, km, str, len, w, k, rid, is_hpc, p);
@@ -566,6 +656,11 @@ extern "C" int mm_order_serialize(const mm_order_t *ord, uint8_t **out, uint64_t
 	// existed (no trailing byte) still loads, as at0-cg1.
 	const uint8_t proj = (uint8_t)ord->gm_projection;
 	append_pod(buf, proj);
+	// Then the length the GreedyMini centre order was built for (the index's
+	// k). Its absence marks a greedymini index from before the centre
+	// extension, whose rank differs -- rejected on load.
+	const int32_t gm_l = (int32_t)ord->gm_l;
+	append_pod(buf, gm_l);
 	uint8_t *mem = buf.empty() ? nullptr : (uint8_t *)std::malloc(buf.size());
 	if (!buf.empty() && !mem) return -1;
 	if (!buf.empty()) std::memcpy(mem, buf.data(), buf.size());
@@ -610,6 +705,12 @@ extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, ch
 	uint8_t proj = MM_GM_PROJ_AT0_CG1;
 	if (need(sizeof(proj))) { std::memcpy(&proj, buf + off, sizeof(proj)); off += sizeof(proj); }
 	if (proj > MM_GM_PROJ_AT1_CG0) { set_err(errbuf, errbuf_len, "invalid GreedyMini projection in index"); return nullptr; }
+	int32_t gm_l = 0;
+	if (need(sizeof(gm_l))) { std::memcpy(&gm_l, buf + off, sizeof(gm_l)); off += sizeof(gm_l); }
+	if (gm && gm_l <= 0) {
+		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini centre extension; rebuild it");
+		return nullptr;
+	}
 	mm_order_t *ord = new (std::nothrow) mm_order_t();
 	if (!ord) { set_err(errbuf, errbuf_len, "out of memory"); return nullptr; }
 	ord->kind = (mm_order_kind_t)kind32;
@@ -617,7 +718,7 @@ extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, ch
 	ord->t = (int)t32;
 	ord->gm = gm;
 	ord->gm_projection = (mm_gm_projection_t)proj;
-	set_gm_masks(ord);
+	if (!build_gm_order(ord, gm_l, errbuf, errbuf_len)) { delete ord; return nullptr; }
 	return ord;
 }
 

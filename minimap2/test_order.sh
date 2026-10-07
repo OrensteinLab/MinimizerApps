@@ -2,10 +2,10 @@
 # Sanity/regression tests for the custom minimizer order integration
 # (order.h/order.cpp). See the plan's "Sanity checks / tests" section.
 #
-# greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
-# this script's fixed -k 15 -w 10 exactly), with both AT/CG projections
-# (greedymini-at1 = --gm-projection at1-cg0). The only mod-minimizer order is
-# mod-minimizer-xor (O_t = xor).
+# greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15) at this
+# script's -k 15 (no extension) and, centre-extended, at -k 19 (section 12),
+# with both AT/CG projections (greedymini-at1 = --gm-projection at1-cg0). The
+# only mod-minimizer order is mod-minimizer-xor (strand-symmetric, O_t = xor).
 #
 # Usage: ./test_order.sh (run from minimap2/, after `make all sketch_dump`)
 set -u
@@ -148,7 +148,7 @@ if $BIN -a $(order_flags greedymini) --gm-projection bogus "$REF" "$QRY" >/dev/n
 else
 	ok "unknown --gm-projection value rejected"
 fi
-for old in xor-hash mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash; do
+for old in xor-hash mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash mod-minimizer-xor-canonical; do
 	if $BIN -a --minimizer-order $old --order-seed 1 --mod-t 5 "$REF" "$QRY" >/dev/null 2>&1; then
 		bad "removed/renamed order name '$old' should be rejected"
 	else
@@ -183,6 +183,31 @@ if "$PY" validate_mod_minimizer.py >"$TMP/validate_mod_minimizer.out" 2>&1; then
 else
 	bad "brute-force validation failed -- see $TMP/validate_mod_minimizer.out"
 	tail -20 "$TMP/validate_mod_minimizer.out" >&2
+fi
+
+echo "== 12. greedymini centre extension: k = gm_k + 2i (k=19 here), both projections =="
+for proj in at0-cg1 at1-cg0; do
+	f="--minimizer-order greedymini --greedymini-file $GM_FILE --gm-projection $proj -k 19"
+	$BIN -a $f "$REF" "$QRY" > "$TMP/k19_$proj.sam" 2>/dev/null
+	$BIN -a $f "$REF" "$QRY" > "$TMP/k19b_$proj.sam" 2>/dev/null
+	if [ -s "$TMP/k19_$proj.sam" ] && diff -q "$TMP/k19_$proj.sam" "$TMP/k19b_$proj.sam" >/dev/null; then ok "k=19 determinism: $proj"; else bad "k=19 determinism: $proj"; fi
+	$BIN -d "$TMP/k19_$proj.mmi" $f "$REF" >/dev/null 2>&1
+	$BIN -a "$TMP/k19_$proj.mmi" "$QRY" > "$TMP/k19r_$proj.sam" 2>/dev/null
+	if diff -q <(grep -v '^@PG' "$TMP/k19_$proj.sam") <(grep -v '^@PG' "$TMP/k19r_$proj.sam") >/dev/null; then ok "k=19 .mmi round-trip: $proj"; else bad "k=19 .mmi round-trip: $proj"; fi
+	if $BIN -a -H $f "$REF" "$QRY" >/dev/null 2>&1; then ok "k=19 -H builds+maps: $proj"; else bad "k=19 -H builds+maps: $proj"; fi
+done
+for badk in 16 25; do
+	if $BIN -a --minimizer-order greedymini --greedymini-file "$GM_FILE" -k $badk "$REF" "$QRY" >/dev/null 2>&1; then
+		bad "greedymini -k $badk should be rejected (k - gm_k odd, or k > 23)"
+	else
+		ok "greedymini -k $badk rejected"
+	fi
+done
+if "$PY" validate_greedymini.py >"$TMP/validate_greedymini.out" 2>&1; then
+	ok "greedymini rank and sketch match the Python references (k=15..23, both projections)"
+else
+	bad "greedymini validation failed -- see $TMP/validate_greedymini.out"
+	tail -20 "$TMP/validate_greedymini.out" >&2
 fi
 
 echo

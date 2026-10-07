@@ -151,8 +151,8 @@ map.o: khash.h ksort.h
 misc.o: mmpriv.h minimap.h bseq.h kseq.h ksort.h
 options.o: mmpriv.h minimap.h bseq.h kseq.h
 order.o: order.h minimap.h kvec.h kalloc.h
-order.o: ../common/minimizer-orders/pcg_rxs_m_xs.h ../common/minimizer-orders/dna_revcomp.h
-order.o: ../common/minimizer-orders/greedymini_rank.h
+order.o: ../common/minimizer-orders/pcg_rxs_m_xs.h
+order.o: ../common/minimizer-orders/greedymini_rank.h ../common/minimizer-orders/greedymini_centre.h
 pe.o: mmpriv.h minimap.h bseq.h kseq.h kvec.h kalloc.h ksort.h
 sdust.o: kalloc.h kdq.h kvec.h sdust.h
 seed.o: mmpriv.h minimap.h bseq.h kseq.h kalloc.h ksort.h

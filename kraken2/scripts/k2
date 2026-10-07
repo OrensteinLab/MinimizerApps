@@ -93,7 +93,7 @@ WRAPPER_ARGS_TO_BIN_ARGS = {
 
 # SketchingScheme / Order (must match src/sketching_schemes.h + kraken2_data.h)
 SKETCHING_MINIMIZER = 0
-SKETCHING_MOD = 1
+SKETCHING_MOD = 2  # 1: retired forward-only mod-minimizer (rebuild such databases)
 ORDER_RANDOM_XOR = 0
 ORDER_GM = 1
 ORDER_RANDOM_PCG = 2

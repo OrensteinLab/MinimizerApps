@@ -23,21 +23,22 @@ Everything else in this folder is an unmodified import of upstream.
 Same order menu as the other three apps (see
 [`orders/README.md`](../orders/README.md) for the shared implementation and
 the cross-app CLI-flag table): `xor`, `xor-pcg-hash`, `greedymini`
-(binary alphabet + on-the-fly projection only -- no DNA-alphabet backend, no
-Extend-k: the table's `gm_k` must equal `-k` exactly; either AT/CG
-projection polarity, `--gm-projection`, as in sshash), and
-`mod-minimizer-xor` (mod-sampling with `xor` as the t-mer order).
+(binary alphabet + on-the-fly projection only, no DNA-alphabet backend;
+a `gm_k` table is centre-extended to `-k = gm_k + 2i`, as in kraken2 and
+sshash; either AT/CG projection polarity, `--gm-projection`, as in sshash), and
+`mod-minimizer-xor` (strand-symmetric mod-sampling with `xor` as the t-mer
+order; see below).
 
 ```bash
 ./minimap2 -a ref.fa reads.fq                                                    # native, unchanged
 ./minimap2 -a --minimizer-order xor --order-seed 42 ref.fa reads.fq
 ./minimap2 -a --minimizer-order xor-pcg-hash --order-seed 42 ref.fa reads.fq
 ./minimap2 -a --minimizer-order greedymini \
-    --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # needs -k 15 -w 10 (or matching gm_k)
+    --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # gm_k=15 table: -k 15, 17, 19, 21 or 23
 ./minimap2 -a --minimizer-order greedymini --gm-projection at1-cg0 \
     --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # A,T -> 1 / C,G -> 0 instead of the default at0-cg1
 
-# mod-minimizer (Groot Koerkamp & Pibiri, WABI 2024), xor as O_t
+# strand-symmetric mod-minimizer, xor as O_t
 ./minimap2 -a --minimizer-order mod-minimizer-xor --order-seed 42 --mod-t 5 ref.fa reads.fq
 ```
 
@@ -65,13 +66,26 @@ and never becomes the value actually stored in the index.
   `mappy` Python bindings) does not support a custom order -- only the CLI
   path through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this
   way are always native-order.
-- `greedymini` requires a table whose `gm_k` matches `-k` exactly --
-  Extend-k (a table built for a shorter length than it's used at) isn't
-  supported here, unlike kraken2/kmc/sshash.
-- `mod-minimizer-xor`'s scan uses kraken2's single monotone deque over all
-  live t-mers (no per-residue deques, no division on the hot path); the
-  sampled k-mer follows the paper's smallest-offset tie-break, checked
-  against a brute force by `validate_mod_minimizer.py`.
+- `greedymini` uses the shared centre extension
+  (`common/minimizer-orders/greedymini_centre.h`, injective packing): with
+  `-k = gm_k + 2i` the table ranks the middle `gm_k` bases' AT/CG projection,
+  then the k-mer's Sigma and Gamma planes break ties (min over both strands),
+  a strand-invariant total order on canonical k-mers. `-k - gm_k` must be
+  even and `-k <= 23` (the packed value must stay below UINT64_MAX).
+  `validate_greedymini.py` checks the compiled rank and sketch against two
+  independent Python versions.
+- `mod-minimizer-xor` is a strand-symmetric variant of mod-sampling (Groot
+  Koerkamp & Pibiri, WABI 2024), not a published scheme: each window of
+  `w+k-1` bases prefers the strand with more G/T (tie: the lexicographically
+  smaller strand); a forward-preferred window samples offset `x_L mod w`
+  (`x_L` = leftmost minimal t-mer, the paper's rule), a reverse-preferred one
+  `(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T =
+  w+k-t`). A read and its reverse complement thus select the same loci,
+  which plain mod-sampling does not guarantee. The scan uses kraken2's single
+  monotone deque over all live t-mers and emits a selected k-mer when it
+  leaves the window (output stays in position order); `validate_mod_minimizer.py`
+  checks it against a brute force of the definition. Indexes built with the
+  earlier forward-only mod-minimizer (order kind 4) are rejected: rebuild them.
 
 ## Build and test
 
@@ -79,4 +93,5 @@ and never becomes the value actually stored in the index.
 make all     # CC compiles the C sources; CXX (g++) compiles order.cpp; -lstdc++ added to LIBS
 make test    # builds the sketch_dump test driver, then ./test_order.sh -- sanity checks for every order,
              # including validate_mod_minimizer.py (brute force vs. the compiled mod-minimizer sketch)
+             # and validate_greedymini.py
 ```
