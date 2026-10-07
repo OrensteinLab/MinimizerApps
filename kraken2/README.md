@@ -30,8 +30,9 @@ and shared implementation.
 With `--order greedymini` and `--sketching minimizer`, a table with `gm_k < l` is
 extended by its **centre** (rank of the middle `gm_k` bases, then tie-breaks),
 which keeps the table's designed density (`w5_k15_canonical`: 1.466 at every
-valid `l`; the default `l = 31` is 4 % below the old prefix extension's 1.529).
-`l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). Databases
+valid `l`).
+`l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). The
+GreedyMini order is DNA only: protein databases (`--protein`) refuse it. Databases
 by other Kraken 2 builds (any `db_version` other than 2, including upstream
 databases, and databases built before the opts.k2d layout change: wrong size or
 missing magic) are refused by `classify` and `dump_table` and must be rebuilt. Details, numbers and the commands to reproduce them:

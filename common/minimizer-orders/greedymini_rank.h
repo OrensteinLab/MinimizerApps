@@ -1,23 +1,20 @@
 /*
  * GreedyMini rank calculation (Golan et al. 2025), shared by kraken2 and kmc.
  *
- * Binary UHS on {0,1}^gm_k sigma-extended to DNA, with
- * Extend-k (prefix extension, used by kmc; kraken2's binary order for
- * l > gm_k and sshash use the centre extension of greedymini_centre.h) when
- * l > gm_k:
+ * Binary UHS on {0,1}^gm_k sigma-extended to DNA, for an l-mer with l == gm_k
+ * (a longer l uses the centre extension of greedymini_centre.h: kraken2's
+ * binary order, sshash, minimap2; kmc only uses a table at its own length):
  *   DNA packing is ACGT = 0,1,2,3 (A=00, C=01, G=10, T=11).
  *   1. Remap each base ACGT -> ATCG bitplanes (A=00, T=01, C=10, G=11)
  *      so MSB = AT vs CG (Sigma) and LSB = within-pair residual (Gamma).
- *   2. key         = Sigma of the first gm_k bases -> UHS primary
- *   3. suffix_sigma = Sigma of the remaining (l - gm_k) bases (Extend-k lex)
- *   4. tiebreaker  = Gamma of all l bases (Extend-sigma lex tau)
- *   5. Orient by better gm_k UHS primary across DNA fwd/RC, then pack
- *      Extend-k / Gamma in that frame ("canonical gm_k, then sigma-extend").
+ *   2. key        = Sigma of the gm_k bases -> UHS primary
+ *   3. tiebreaker = Gamma of the l bases (Extend-sigma lex tau)
+ *   4. Orient by the better UHS primary across DNA fwd/RC, then pack the
+ *      Gamma tiebreaker in that frame ("canonical gm_k, then sigma-extend").
  *      Spaced-seed AND is applied to each strand's word independently
  *      (never RC of a masked l-mer).
- *   Extend-k guarantees density does not increase when l > gm_k (SS);
- *   double-stranded use orients by gm_k so reverse-symmetric tables stay valid.
- *   DNA hot path uses BMI2 pext when available.
+ *   Double-stranded use orients by the key so reverse-symmetric tables stay
+ *   valid. DNA hot path uses BMI2 pext when available. DNA only (no protein).
  *
  * Paper / .gm encoding:
  *   - UHS members have contiguous finite ranks 0 .. m-1
@@ -76,17 +73,6 @@ inline uint64_t gm_dna_key_pext_mask(int l, int gm_k) {
   return odds & window;
 }
 
-// Odd bits in the low (l - gm_k)-base window = Extend-k suffix Sigma.
-inline uint64_t gm_dna_suffix_sigma_pext_mask(int l, int gm_k) {
-  const int suf = l - gm_k;
-  if (suf <= 0)
-    return 0;
-  const uint64_t odds = 0xAAAAAAAAAAAAAAAAULL;
-  if (suf >= 32)
-    return odds;
-  return odds & ((1ULL << (2 * suf)) - 1ULL);
-}
-
 // Pack bits in even positions into a contiguous low field (SWAR).
 inline uint64_t compress_even_bits(uint64_t x) {
   x &= 0x5555555555555555ULL;
@@ -142,19 +128,6 @@ inline uint32_t gm_extract_dna_key_atcg(uint64_t atcg, int l, int gm_k) {
 #endif
 }
 
-inline uint64_t gm_extract_suffix_sigma_atcg(uint64_t atcg, int l, int gm_k) {
-  const int suf = l - gm_k;
-  if (suf <= 0)
-    return 0;
-#if defined(__BMI2__)
-  return _pext_u64(atcg, gm_dna_suffix_sigma_pext_mask(l, gm_k));
-#else
-  const uint64_t lo =
-      (suf >= 32) ? atcg : (atcg & ((1ULL << (2 * suf)) - 1ULL));
-  return compress_odd_bits(lo);
-#endif
-}
-
 inline uint64_t gm_extract_dna_tb_atcg(uint64_t atcg, int l) {
 #if defined(__BMI2__)
   return _pext_u64(atcg, gm_dna_tb_pext_mask(l));
@@ -177,27 +150,6 @@ inline void gm_extract_dna(uint64_t lmer, int l, int gm_k,
   const uint64_t atcg = gm_acgt_to_atcg(lmer);
   key = gm_extract_dna_key_atcg(atcg, l, gm_k);
   tiebreaker = gm_extract_dna_tb_atcg(atcg, l);
-}
-
-// Binary / protein: Sigma = MSB of each base, Gamma = remaining bits.
-// key = Sigma[0..gm_k), suffix_sigma = Sigma[gm_k..l), tb = Gamma[0..l).
-inline void gm_extract_generic(uint64_t lmer, int l, int gm_k, int bpc,
-                               uint32_t &key, uint64_t &suffix_sigma,
-                               uint64_t &tiebreaker) {
-  const uint64_t lsb_mask = (1u << (bpc - 1)) - 1;
-  uint64_t tmp = lmer << (64 - bpc * l);
-  key = 0;
-  suffix_sigma = 0;
-  tiebreaker = 0;
-  for (int i = 0; i < l; i++, tmp <<= bpc) {
-    const uint64_t base = tmp >> (64 - bpc);
-    const uint64_t msb = base >> (bpc - 1);
-    if (i < gm_k)
-      key = (key << 1) | (uint32_t)msb;
-    else
-      suffix_sigma = (suffix_sigma << 1) | msb;
-    tiebreaker = (tiebreaker << (bpc - 1)) | (base & lsb_mask);
-  }
 }
 
 inline int gm_k_from_size(size_t table_size) {

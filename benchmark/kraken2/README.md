@@ -433,10 +433,9 @@ make -C kraken2/src benchmark_minimizers
 (`-N` here is the random-DNA length, not the full-NCBI library flag; the default
 library is `db/standard`, `-m` / `-z` / `-E` pick the others, or set `SHARED_DB`.)
 
-Density **sweeps** over ℓ and streams (mean ± std per ℓ, old vs new revision,
-`xor` baselines) use the same tool through `density_sweep.sh` +
-`density_summary.py`; the exact commands and the measured greedymini
-prefix-vs-centre tables are in
+Density **sweeps** over ℓ and streams (mean ± std per ℓ, `xor` baselines) use
+the same tool through `density_sweep.sh` + `density_summary.py`; the exact
+commands and the measured greedymini tables are in
 [`../../kraken2/minimizers/README.md`](../../kraken2/minimizers/README.md#density).
 Raw sweep rows: `tables/gm_centre_density_*.csv`.
 

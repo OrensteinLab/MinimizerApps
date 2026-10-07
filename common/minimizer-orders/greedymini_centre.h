@@ -27,8 +27,6 @@
  *  - The winning frame's (Sigma, Gamma) determine the DNA, so the order is
  *    injective on canonical l-mers (hence a total order on them).
  *  - It keeps the density the table was designed for for every l = gm_k + 2i.
- *    The old "prefix" extension (first gm_k bases of the better strand) did
- *    not, because the two strands' prefixes are different windows of the l-mer.
  *
  * Encoding-agnostic: everything operates on the Sigma/Gamma planes; the caller
  * extracts them from its own k-mer encoding. For an exact reverse complement

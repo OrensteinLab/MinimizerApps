@@ -41,13 +41,8 @@ int main() {
         expect_key |= 1ULL << (2 * (base0 + i) + 1);
       for (int i = 0; i < l; i++)
         expect_tb |= 1ULL << (2 * i);
-      uint64_t expect_suf = 0;
-      for (int i = 0; i < l - gk; i++)
-        expect_suf |= 1ULL << (2 * i + 1);
       check(gm_dna_key_pext_mask(l, gk) == expect_key, "key mask closed form");
       check(gm_dna_tb_pext_mask(l) == expect_tb, "tb mask closed form");
-      check(gm_dna_suffix_sigma_pext_mask(l, gk) == expect_suf,
-            "suffix Σ mask closed form");
     }
   }
 
@@ -280,6 +275,9 @@ int main() {
           "odd l - gm_k rejected (9)");
     check(throws([&] { GMRanker(3, 2, 0, lmask_of(3), true, sshared); }),
           "gm_k > l rejected");
+    // GreedyMini is DNA only: a protein ranker (5 bits per residue) is refused
+    check(throws([&] { GMRanker(4, 5, 0, (1ULL << 20) - 1, false, sshared); }),
+          "protein GreedyMini rejected");
     {
       std::vector<uint64_t> asym(16, 16);  // not mirror symmetric
       asym[0] = 0;
