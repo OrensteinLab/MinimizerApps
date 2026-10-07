@@ -139,6 +139,15 @@ class ScoreCamiTest(unittest.TestCase):
         self.assertIn(("novelty:new_species", "genus"), res)
         self.assertEqual(res[("archaea", "genus")]["fn"], "1")
 
+    def test_prokaryote_group_is_bacteria_plus_archaea(self):
+        res = self.run_score(self.db)
+        for rank in ("genus", "species"):
+            p, b, a = res[("prokaryote", rank)], res[("bacteria", rank)], res[("archaea", rank)]
+            for c in ("n_truth", "n_calls", "no", "excluded", "tp", "fp", "fn", "vp"):
+                self.assertEqual(int(p[c]), int(b[c]) + int(a[c]), c)
+        self.assertEqual(res[("prokaryote", "genus")]["n_truth"], res[("all", "genus")]["n_truth"] and
+                         str(int(res[("bacteria", "genus")]["n_truth"]) + int(res[("archaea", "genus")]["n_truth"])))
+
     def test_coverage_only(self):
         self.assertEqual(score_cami.main(["--nodes", self.nodes, "--truth", self.truth,
                                           "--library-dir", self.db]), 0)
@@ -179,11 +188,6 @@ class ScoreCamiTest(unittest.TestCase):
         self.assertEqual(out[0]["n_seeds"], 2)
         self.assertAlmostEqual(out[0]["f1_mean"], 0.7)
         self.assertIn("excluded_frac_mean", fields)
-        mrows = [{"scheme": "Random", "scope": "all", "rank": "species", "min_frac": 1e-4,
-                  "seed_idx": s, **{m: 0.5 for m in compare_benchmark.MOCK_METRICS}} for s in (1, 2)]
-        fields, out = compare_benchmark.summarize_mock(mrows)
-        self.assertEqual(len(out), 1)
-        self.assertAlmostEqual(out[0]["bray_curtis_mean"], 0.5)
 
 
 if __name__ == "__main__":

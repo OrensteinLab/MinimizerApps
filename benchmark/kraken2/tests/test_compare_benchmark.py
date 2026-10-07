@@ -59,7 +59,7 @@ class Compare(unittest.TestCase):
         # a PROF-less run has no profile
         self.assertIsNone(m["nextmin_s"])
         # missing file: nothing, no crash
-        m = C.collect_run_metrics(run, 1e-6, {1: run}, "mock", 0)
+        m = C.collect_run_metrics(run, 1e-6, {1: run}, "nodata", 0)
         self.assertIsNone(m["class_s"])
         self.assertIsNone(m["db_load_s"])
 

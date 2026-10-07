@@ -10,7 +10,7 @@ Every (scheme, seed, dataset) is classified exactly once per
       classify stderr (summary lines) followed by the GNU time -v block;
       wall = DB load + processing, processing = the "processed in" seconds
   <dataset>_classification_mhg<m>.txt, <dataset>_report_mhg<m>.txt
-  <dataset>_metrics_mhg<m>.tsv (strain_exclusion, fda_argos, cami, mock)
+  <dataset>_metrics_mhg<m>.tsv (strain_exclusion, fda_argos, cami)
 There are no repeats: the replicates are the seeds. Per-seed classify rows
 are summarised as mean±std over seeds (n = number of seeds).
 
@@ -58,8 +58,7 @@ DATASET_ORDER = {
     "fda-argos": 1,
     "argos": 1,
     "cami": 2,
-    "mock": 3,
-    "speed": 4,
+    "speed": 3,
 }
 DOMAIN_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2}
 RANK_ORDER = {"genus": 0, "species": 1}
@@ -709,17 +708,7 @@ ACCURACY_KIND = {
     "accuracy_strain_exclusion": "labeled",
     "accuracy_fda_argos": "argos",
     "accuracy_cami": "cami",
-    "accuracy_mock": "mock",
 }
-
-
-def _chart_num(v):
-    if v in ("", None):
-        return 0.0
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _cell_key(scheme, dataset, mhg):
@@ -902,17 +891,6 @@ def summarize_argos_concordance(argos_rows):
 
 
 CAMI_METRICS = ("sensitivity", "ppv", "f1", "excluded_frac", "n_scored")
-MOCK_METRICS = (
-    "precision",
-    "recall",
-    "f1",
-    "l1",
-    "bray_curtis",
-    "classified_frac",
-    "on_target_frac",
-    "off_target_frac",
-)
-MOCK_HEADLINE_MIN_FRAC = 1e-4
 
 
 def _summarize_by(rows, key_fields, metrics):
@@ -944,12 +922,7 @@ def summarize_cami(rows):
     return _summarize_by(rows, ("scheme", "minimum_hit_groups", "group", "rank"), CAMI_METRICS)
 
 
-def summarize_mock(rows):
-    """Mock profile: mean±std precision / recall / F1 / L1 / BC per scheme × scope × rank × threshold."""
-    return _summarize_by(rows, ("scheme", "minimum_hit_groups", "scope", "rank", "min_frac"), MOCK_METRICS)
-
-
-METRICS_RE = re.compile(r"^(strain_exclusion|fda_argos|cami|mock)_metrics_mhg(\d+)\.tsv$")
+METRICS_RE = re.compile(r"^(strain_exclusion|fda_argos|cami)_metrics_mhg(\d+)\.tsv$")
 
 
 def load_accuracy_sheets(runs):
@@ -958,16 +931,13 @@ def load_accuracy_sheets(runs):
     labeled = []
     argos = []
     cami = []
-    mock = []
     labeled_fields = []
     argos_fields = []
     cami_fields = []
-    mock_fields = []
     kinds = {
         "strain_exclusion": (labeled, "sim"),
         "fda_argos": (argos, "argos"),
         "cami": (cami, "cami"),
-        "mock": (mock, "mock"),
     }
     for r in runs:
         out = r["outdir"]
@@ -998,8 +968,6 @@ def load_accuracy_sheets(runs):
                 labeled_fields = merged
             elif kind == "cami":
                 cami_fields = merged
-            elif kind == "mock":
-                mock_fields = merged
             else:
                 argos_fields = merged
     labeled.sort(key=_row_sort_key)
@@ -1018,17 +986,11 @@ def load_accuracy_sheets(runs):
             sheets.append(("accuracy_fda_argos_summary", sfields, srows))
         sheets.append(("accuracy_fda_argos", argos_fields, argos))
     cami.sort(key=_row_sort_key)
-    mock.sort(key=_row_sort_key)
     if cami:
         sfields, srows = summarize_cami(cami)
         if srows:
             sheets.append(("accuracy_cami_summary", sfields, srows))
         sheets.append(("accuracy_cami", cami_fields, cami))
-    if mock:
-        sfields, srows = summarize_mock(mock)
-        if srows:
-            sheets.append(("accuracy_mock_summary", sfields, srows))
-        sheets.append(("accuracy_mock", mock_fields, mock))
     return sheets
 
 
@@ -1100,14 +1062,6 @@ def _truth_taxon_stats(path):
     return len(taxa), None
 
 
-def _composition_stats(path):
-    """(expected taxa, None) for a mock composition table."""
-    if not path or not os.path.isfile(path):
-        return 0, None
-    with open(path) as f:
-        return max(0, sum(1 for line in f if line.strip()) - 1), None
-
-
 def query_sets_sheet(data_dir):
     """One row per query FASTQ directory under data/."""
     if not data_dir or not os.path.isdir(data_dir):
@@ -1127,11 +1081,6 @@ def query_sets_sheet(data_dir):
             "cami",
             "CAMI II marine genomes (distinct true taxids)",
             os.path.join(data_dir, "cami"),
-        ),
-        (
-            "mock",
-            "mock community strains (ZymoBIOMICS D6300)",
-            os.path.join(data_dir, "mock"),
         ),
     )
     fields = [
@@ -1154,8 +1103,6 @@ def query_sets_sheet(data_dir):
         n, len_min, len_max = _fastq_n_and_len(r1)
         if ds == "cami":
             n_src, per_src = _truth_taxon_stats(os.path.join(d, "truth.tsv"))
-        elif ds == "mock":
-            n_src, per_src = _composition_stats(os.path.join(d, "composition.csv"))
         else:
             n_src, per_src = _truth_source_stats(os.path.join(d, "truth.tsv"))
         if len_min == len_max:
@@ -1801,12 +1748,8 @@ def main():
             "(c) ancestor (d) unclassified; no sensitivity/PPV."
         )
         emit(
-            "  CAMI: sens/PPV/F1 over reads whose true taxon is in the library "
+            "  CAMI (supporting set): sens/PPV/F1 over reads whose true taxon is in the library "
             "(excluded = no reference; reported, not scored)."
-        )
-        emit(
-            "  Mock: taxon precision/recall, L1 and Bray-Curtis vs the expected "
-            "composition (profile level; no per-read truth)."
         )
         for name, fields, rows in acc_sheets:
             emit("")
@@ -1817,7 +1760,7 @@ def main():
             if name == "accuracy_fda_argos":
                 emit("    (per-SRR scope rows in tables/kraken2_accuracy_fda_argos.csv)")
                 continue
-            if name in ("accuracy_cami", "accuracy_mock"):
+            if name == "accuracy_cami":
                 emit("    (mean/std over seeds in tables/kraken2_{}.csv)".format(name))
                 continue
             if name == "accuracy_strain_exclusion_summary":
@@ -1829,12 +1772,6 @@ def main():
             elif name == "accuracy_cami_summary":
                 show = [c for c in fields if not c.endswith("_std")]
                 display = [r for r in rows if r.get("group") in ("all", "bacteria", "archaea")]
-            elif name == "accuracy_mock_summary":
-                show = [c for c in fields if not c.endswith("_std")]
-                display = [
-                    r for r in rows
-                    if _chart_num(r.get("min_frac")) == MOCK_HEADLINE_MIN_FRAC
-                ]
             else:
                 show = [
                     c

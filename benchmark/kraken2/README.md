@@ -31,8 +31,7 @@ library (`run_benchmark.sh -E`):
 |---|---|---|---|
 | **strain-exclusion** | `data/strain-exclusion/` | `-E` only | genus/species sensitivity / PPV / F1 (Table S1) |
 | **fda-argos** | `data/fda-argos/` | `-E` only | genus (a) concordant (b) discordant (c) ancestor (d) unclassified (Table S5) — **no** sensitivity/PPV |
-| **cami** | `data/cami/` | `-E` (or `-Q` with `-m`/`-N`) | genus/species sens / PPV / F1 over reads whose true taxon is in the library, plus the excluded fraction (see [CAMI II marine](#cami-ii-marine-datacami)) |
-| **mock** | `data/mock/` | `-E` (or `-Q`) | profile level: taxon precision / recall, L1, Bray-Curtis vs the known composition (see [mock community](#mock-community-datamock)) |
+| **cami** (supporting set, not in the original paper) | `data/cami/` | `-E` (or `-Q` with `-m`/`-N`) | genus/species sens / PPV / F1 over reads whose true taxon is in the library, plus the excluded fraction (see [CAMI II marine](#cami-ii-marine-datacami)) |
 
 NCBI `-m`/`-z`/`-N` are a fork speed experiment on an unlabeled corpus
 (`data/speed/` or legacy `data/benchmark_R*.fastq`). They do **not** score
@@ -64,19 +63,20 @@ Sensitivity and PPV are not reported for these real reads. Headline numbers
 are the unweighted mean of the 25 SRR experiments; per-run rows and a pooled
 fragment row are on the `accuracy_fda_argos` sheet (`scope` = `unweighted_mean` / `pooled` / `experiment`).
 
-## Extra query sets (CAMI and mock community)
+## Extra query set (CAMI)
 
 The two Wood et al. sets resemble each other (simulated reads from NCBI
-genomes; isolate SRA runs). Two more query sets test the minimizer schemes on
-other kinds of reads. Both are optional: `run_benchmark.sh` classifies them
-only when prepared (`-C` / `-K` skip them; `-Q` adds them to a `-m`/`-z`/`-N`
-run; `-E` includes them automatically). The existing sets and flags are
-unchanged.
+genomes; isolate SRA runs). CAMI II marine reads are a supporting set (not in
+the original paper) that tests the minimizer schemes on a different kind of
+reads. It is optional: `run_benchmark.sh` classifies it only when prepared
+(`-C` skips it; `-Q` adds it to a `-m`/`-z`/`-N` run; `-E` includes it
+automatically). The existing sets and flags are unchanged. A ZymoBIOMICS D6300
+mock community was tried and dropped on 2026-10-07 (little information on
+scheme differences); its harness, scorer and results are gone.
 
 | Dataset | Reads | Size on disk | Truth |
 |---|---|---|---|
 | `data/cami/` | CAMI II marine short-read sample 0, 2x150 bp, 250 000 of 16 647 395 pairs | ~170 MB | per read (CAMI gold standard) |
-| `data/mock/` | ZymoBIOMICS D6300 mock, SRR12324251, 2x150 bp NovaSeq, 250 000 of 29 386 307 pairs | ~175 MB | composition only |
 
 Subsampling is systematic (every k-th pair, k = pairs in the run // 250 000,
 no RNG), so every machine gets the same reads.
@@ -133,41 +133,6 @@ no RNG), so every machine gets the same reads.
   and `-n SAMPLE` select other CAMI II short-read samples
   (`strmgCAMI2` / `rhimgCAMI2`; plant has host reads).
 
-### Mock community (`data/mock/`)
-
-```bash
-./benchmark/kraken2/prepare_mock_data.sh -o "${KRAKEN2_BENCHMARK_DIR}"   # streams ~3.5 GB, keeps the sample
-```
-
-- Source: ZymoBIOMICS Microbial Community Standard (D6300: 8 bacteria + 2
-  yeasts), BioProject PRJNA648136, run **SRR12324251** (ENA/SRA), Illumina
-  NovaSeq 6000, 2x150 bp, 29 386 307 pairs, shotgun (`WGS`, `RANDOM`).
-- Expected composition: Zymo D6300 product sheet Table 1, stored in
-  `tables/mock_zymo_d6300_expected.csv` (copied to `data/mock/composition.csv`).
-  Reads scale with genomic-DNA mass, so `gdna_pct` (12 % per bacterium, 2 % per
-  yeast) is the default expected abundance; `genome_copy_pct` and `cell_pct` are
-  available with `score_mock.py --abundance`.
-- Scoring (`score_mock.py`, needs no DB, works from the `kraken2 --report`):
-  genus / species precision, recall and F1 of the detected taxa (a taxon is
-  detected at clade reads / reads >= `min_frac`; 0, 1e-4 (headline), 1e-3),
-  L1 and Bray-Curtis between expected and observed relative abundances,
-  classified fraction, on-target / off-target / above-rank / unclassified
-  fractions (sum to 1) and the top off-target taxa. Scopes: `all` and
-  `bacteria` (yeast removed from expected and from the read denominator; the
-  Kraken standard libraries have no fungi, so `all` recall is capped at 0.8).
-  Unit tests: `python3 -m unittest discover -s benchmark/kraken2/tests`.
-- Caveats: the lot-specific composition deviates from theory by up to ~15 %
-  relative; extraction/library-prep bias is not removed (the sampled reads
-  have mean GC 53.6 %, vs ~46 % expected for the nominal DNA mix, so this run
-  is GC-rich-biased; the bias is the same for every scheme, but absolute L1 /
-  Bray-Curtis include it, compare schemes rather than reading them as error); E. coli and Shigella,
-  Salmonella and other close relatives make species-level off-target calls
-  expected; D6300 strains and reference genomes were updated in lot ZRC190633.
-- Library: all eight bacterial species have sequence in every library
-  (`strain_exclusion`, `standard`, `standard_p10`, `standard_p0.5`); the two
-  yeasts are in none (no fungi), so their 4 % of the DNA can only be
-  unclassified or off-target. `-E` recommended (same library as the other sets).
-
 Official extras: [Zenodo 3365797](https://doi.org/10.5281/zenodo.3365797),
 [kraken2-experiment-code](https://github.com/DerrickWood/kraken2-experiment-code).
 Tables S3/S5: `benchmark/kraken2/tables/`.
@@ -201,9 +166,8 @@ make -C src all ENABLE_MINIMIZER_PROF=1
 # Strain-exclusion Mason + Table S5 ARGOS reads
 ./benchmark/kraken2/download_data.sh -o "${KRAKEN2_BENCHMARK_DIR}"
 
-# Optional extra query sets (CAMI II marine, ZymoBIOMICS D6300 mock)
+# Optional supporting query set (CAMI II marine)
 ./benchmark/kraken2/prepare_cami_data.sh -o "${KRAKEN2_BENCHMARK_DIR}"
-./benchmark/kraken2/prepare_mock_data.sh -o "${KRAKEN2_BENCHMARK_DIR}"
 
 # NCBI libraries + standard_p10 / standard_p0.5
 ./benchmark/kraken2/download_library.sh -o "${KRAKEN2_BENCHMARK_DIR}"
@@ -218,8 +182,8 @@ make -C src all ENABLE_MINIMIZER_PROF=1
 ./benchmark/kraken2/run_benchmark.sh -o "${KRAKEN2_BENCHMARK_DIR}" -E -S xor greedymini -n1
 ```
 
-`-a` skips FDA-ARGOS, `-C` skips CAMI, `-K` skips the mock community; `-Q` adds
-CAMI and the mock to a `-m`/`-z`/`-N` run. `-c` re-summarizes an existing run (auto-picks the only
+`-a` skips FDA-ARGOS, `-C` skips CAMI; `-Q` adds
+CAMI to a `-m`/`-z`/`-N` run. `-c` re-summarizes an existing run (auto-picks the only
 tree with a manifest, or pass `-m`/`-z`/`-N`/`-E`).
 
 `./benchmark/kraken2/run_benchmark.sh -m -n8` → `runs/standard_p10`.  
@@ -239,8 +203,6 @@ data/
     R1.fastq  R2.fastq  [truth.tsv]
   cami/               # CAMI II marine        (prepare_cami_data.sh)
     R1.fastq  R2.fastq  truth.tsv  truth_extra.tsv  taxonomic_profile.txt  SOURCE.txt
-  mock/               # ZymoBIOMICS D6300     (prepare_mock_data.sh)
-    R1.fastq  R2.fastq  composition.csv  SOURCE.txt
 db/
   standard/           # full NCBI library
   strain_exclusion/   # Wood 2019 held-out FASTA (prepare_strex_data.sh)
@@ -291,7 +253,7 @@ results/                             # all libraries merged
   | `classify_runs` | one per seed × library × dataset × order, the rows behind `classify`: the raw numbers of the single classify run of that seed |
   | `profile` | NextMinimizer / phase profile (`nextminimizer_*`, `lookups_per_mbp`, `scan_s`, ...; needs `ENABLE_MINIMIZER_PROF=1`), library × dataset × `minimum_hit_groups` × order, mean / std / ratio; only present when `nextminimizer_timing_<dataset>_mhg<m>.txt` files exist (PROF builds) |
   | `vs_reference` | paired agreement with `xor` of the same seed, dataset and `minimum_hit_groups` (`genus_mape_pct`, `concordance_pct`, `jaccard_pct`, ...), mean / std |
-  | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami`, `accuracy_mock` | accuracy of that dataset per slice (`minimum_hit_groups` × domain × rank / SRA run / group / detection threshold): one row per order, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to `xor` of the same slice; sorted dataset → `minimum_hit_groups` → slice → order, slice cells merged, border between slices. Higher-is-better ratios: sensitivity, ppv, f1, concordant, taxa precision / recall / F1; lower: discordant, bray_curtis, l1_distance, off_target; neutral (no ratio): ancestor, unclassified, excluded, classified / above-rank fractions, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics_mhg<m>.tsv`). Omitted when the dataset did not run |
+  | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami` | accuracy of that dataset per slice (`minimum_hit_groups` × `group` × `rank`, or SRA run for FDA-ARGOS): one row per order, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to `xor` of the same slice; sorted dataset → `minimum_hit_groups` → slice → order, slice cells merged, border between slices. `accuracy_strain_exclusion` and `accuracy_cami` have the same columns in the same order (identity, counts `n_truth n_calls n_scored tp vp fp fn no`, `excluded excluded_fraction`, then CAMI-only `ex_unclassified ex_consistent ex_off`, then `sensitivity ppv f1`; see the shared definitions below). Groups: `all`, `prokaryote`, `virus` (both sheets), then CAMI `bacteria`, `archaea`, `other`, `novelty:*`; CAMI `prokaryote` = the archaea + bacteria reads scored as one group by `score_cami.py` (as `prokaryote` is in the strain-exclusion truth). Higher-is-better ratios: sensitivity, ppv, f1, concordant; lower: discordant; neutral (no ratio): ancestor, unclassified, excluded, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics_mhg<m>.tsv`). Omitted when the dataset did not run |
   | `paper_check` | paper equivalence for `xor` at `minimum_hit_groups` 0 on the `strain_exclusion` library: our strain-exclusion genus sensitivity / PPV / F1 (prokaryote, virus; Table S1) and FDA-ARGOS genus concordant / discordant / ancestor / unclassified (unweighted mean over experiments; Table S5) next to the published Kraken 2 values (`tables/paper_kraken2_published.csv`, derived from `table_s1.csv` and `table_s5_kraken2_expected.csv`), `difference` and `within_tolerance` (absolute tolerance 0.01, `PAPER_TOLERANCE` in `export_layout.py`). Also `kraken2_paper_check.csv`. Differences are reported as they are |
 
   Under the data of `build` and `classify` two rows, as in the SSHash summary
@@ -305,14 +267,28 @@ results/                             # all libraries merged
   the values are in `kraken2_correlations.csv` (`sheet, row_label, column,
   value, n`).
 
+  **Accuracy definitions shared by `accuracy_strain_exclusion` and `accuracy_cami`**
+  (Wood et al. 2019, both scorers identical): TP = the call is the true taxon at
+  the rank or a descendant, VP = the call is an ancestor of it, FP = the call is
+  off-lineage, FN = unclassified; `sensitivity = TP/(TP+VP+FN+FP)` (= `tp / n_scored`),
+  `ppv = TP/(TP+FP)`, `f1 = 2·sens·ppv/(sens+ppv)` (0 when undefined);
+  `n_scored = tp+vp+fp+fn`. **Denominator:** sensitivity is computed over
+  `n_scored` reads. Strain-exclusion: `n_scored = n_truth` (every true genus and
+  species is in the library, `excluded` = 0, measured with `score_cami.py`
+  coverage mode); CAMI: reads whose true genus / species has no sequence in the
+  library are excluded (reported, not scored: 9.6 % genus / 22.6 % species of the
+  reads that have a node at the rank), so CAMI sensitivities are over a
+  different, library-covered subset and are not directly comparable to the
+  paper's definition over all reads. `ex_unclassified` / `ex_consistent` /
+  `ex_off` (CAMI only) say what the classifier did with the excluded reads (no
+  call / call on the true lineage / off-lineage call).
+
   Accuracy columns have no dataset prefix because each `classify` / `classify_runs` row is
   one dataset. The kinds differ and are not comparable across datasets (never
   averaged): strain-exclusion and CAMI share the read-level names
   `genus_` / `species_` `sensitivity` / `ppv` / `f1` (CAMI over reads whose taxon
   is in the library, plus `*_excluded_fraction`); FDA-ARGOS has
-  `genus_{concordant,discordant,ancestor,unclassified}_fraction`; the mock has the
-  taxa-level `genus_` / `species_` `taxa_f1`, `bray_curtis`, `off_target_fraction`
-  (`taxa_f1`, not `f1`, since it is a taxa-detection F1). A row fills only its
+  `genus_{concordant,discordant,ancestor,unclassified}_fraction`. A row fills only its
   own dataset's column group; columns no row uses are dropped. Neutral columns
   without ratio: `classified_pct`, `genus_ancestor_fraction`,
   `genus_unclassified_fraction`, `*_excluded_fraction`, the profile counts and
@@ -364,7 +340,7 @@ greedymini tables (`../../orders/GreedyMini/`): `-g` / env `GM_FILE`
 ## Run output layout (`runs/<lib>/<scheme_dir>/<seed>/results/`)
 
 One classify per (seed, dataset, scheme, `--minimum-hit-groups` m in {0, 2});
-`<ds>` = `strain-exclusion` | `fda-argos` | `cami` | `mock` | `speed`.
+`<ds>` = `strain-exclusion` | `fda-argos` | `cami` | `speed`.
 
 | File | Content |
 |------|---------|
@@ -373,7 +349,7 @@ One classify per (seed, dataset, scheme, `--minimum-hit-groups` m in {0, 2});
 | `<ds>_report_mhg<m>.txt` | `k2 classify --report` |
 | `classification_performance_<ds>_mhg<m>.txt` | classify stderr (`Loading database information... done.`, `N sequences (X Mbp) processed in Ys (...)`, `N sequences classified (P%)`, `N sequences unclassified (P%)`) followed by the GNU `time -v` block (wall clock, max RSS); DB-load time = wall - "processed in" |
 | `nextminimizer_timing_<ds>_mhg<m>.txt` | only for `ENABLE_MINIMIZER_PROF` classify builds (via `KRAKEN2_MINIMIZER_PROF`); absent otherwise |
-| `strain_exclusion_metrics_mhg<m>.tsv`, `fda_argos_metrics_mhg<m>.tsv`, `cami_metrics_mhg<m>.tsv`, `mock_metrics_mhg<m>.tsv` | scorer output; second column `minimum_hit_groups` (= m) |
+| `strain_exclusion_metrics_mhg<m>.tsv`, `fda_argos_metrics_mhg<m>.tsv`, `cami_metrics_mhg<m>.tsv` | scorer output; second column `minimum_hit_groups` (= m) |
 
 `runs/<lib>/.benchmark_run_manifest` has one tab-separated line per scheme and
 seed, written after that seed finished classifying: `scheme`, `context`
@@ -394,8 +370,7 @@ There is no repeat/cold-round mechanism: replicates are the seeds only.
 | `download_data.sh` | `data/strain-exclusion` + Table S5 `data/fda-argos` |
 | `prepare_strex_data.sh` | Zenodo FASTA → `db/strain_exclusion/` |
 | `prepare_cami_data.sh` / `prepare_cami_reads.py` | CAMI II marine sample → `data/cami/` (subsample + truth) |
-| `prepare_mock_data.sh` / `prepare_mock_reads.py` | ZymoBIOMICS D6300 SRR12324251 → `data/mock/` |
-| `score_cami.py` / `score_mock.py` | CAMI library-aware sens/PPV/F1; mock profile precision/recall/L1/Bray-Curtis |
+| `score_cami.py` | CAMI library-aware sens/PPV/F1 |
 | `tests/` | `python3 -m unittest discover -s benchmark/kraken2/tests` (synthetic data, no DB) |
 | `prepare_fda_argos_reads.py` | ENA download of Table S5 `sra_run` accessions |
 | `run_benchmark.sh` | build + classify + score + CSV/XLSX |
