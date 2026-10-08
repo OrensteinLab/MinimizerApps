@@ -529,14 +529,13 @@ void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part)
 	if (write_order) {
 		uint8_t *buf = 0;
 		uint64_t len = 0;
-		if (mm_order_serialize(mi->order, &buf, &len) == 0) {
-			fwrite(&len, 8, 1, fp);
-			if (len) fwrite(buf, 1, len, fp);
-			free(buf);
-		} else {
-			uint64_t zero = 0;
-			fwrite(&zero, 8, 1, fp);
+		if (mm_order_serialize(mi->order, &buf, &len) != 0 || len == 0) {
+			fprintf(stderr, "[ERROR] failed to serialize the minimizer order into the index\n");
+			exit(1);
 		}
+		fwrite(&len, 8, 1, fp);
+		fwrite(buf, 1, len, fp);
+		free(buf);
 	}
 	fflush(fp);
 }
@@ -596,18 +595,27 @@ mm_idx_t *mm_idx_load(FILE *fp)
 		mi->S = (uint32_t*)malloc((sum_len + 7) / 8 * 4);
 		fread(mi->S, 4, (sum_len + 7) / 8, fp);
 	}
-	if (has_order) {
+	if (has_order) { // an index whose order cannot be restored is refused, not mapped with the native order
 		uint64_t len = 0;
-		if (fread(&len, 8, 1, fp) == 1 && len > 0) {
+		char errbuf[256];
+		strcpy(errbuf, "truncated order metadata");
+		if (fread(&len, 8, 1, fp) == 1 && len > 0 && len < (1ULL<<40)) {
 			uint8_t *buf = (uint8_t*)malloc(len);
 			if (buf && fread(buf, 1, len, fp) == len) {
-				char errbuf[256];
 				mm_order_t *ord = mm_order_deserialize(buf, len, errbuf, sizeof errbuf);
-				if (ord) mi->order = ord;
-				else if (mm_verbose >= 1)
-					fprintf(stderr, "[WARNING] failed to load custom order metadata from index: %s\n", errbuf);
+				if (ord && mm_order_validate(ord, mi->k, errbuf, sizeof errbuf) != 0) {
+					mm_order_destroy(ord);
+					ord = 0;
+				}
+				mi->order = ord;
 			}
 			free(buf);
+		}
+		if (mi->order == 0) {
+			if (mm_verbose >= 1)
+				fprintf(stderr, "[ERROR] failed to load the minimizer order stored in the index: %s\n", errbuf);
+			mm_idx_destroy(mi);
+			return 0;
 		}
 	}
 	return mi;
@@ -688,6 +696,10 @@ mm_idx_t *mm_idx_reader_read(mm_idx_reader_t *r, int n_threads)
 		}
 		if (mi && mm_verbose >= 2 && (mi->k != r->opt.k || mi->w != r->opt.w || (mi->flag&MM_I_HPC) != (r->opt.flag&MM_I_HPC)))
 			fprintf(stderr, "[WARNING]\033[1;31m Indexing parameters (-k, -w or -H) overridden by parameters used in the prebuilt index.\033[0m\n");
+		if (mi && r->n_parts == 0 && mm_verbose >= 2 && r->opt.order_conf.kind != MM_ORDER_NATIVE
+				&& !mm_order_matches_conf(mi->order, &r->opt.order_conf))
+			fprintf(stderr, "[WARNING]\033[1;31m Minimizer order options (--minimizer-order and its flags) overridden by the order of the prebuilt index (%s).\033[0m\n",
+					mm_order_kind_name(mm_order_kind(mi->order)));
 	} else {
 		mm_order_t *ord = r->order ? mm_order_clone(r->order) : 0;
 		mi = mm_idx_gen(r->fp.seq, r->opt.w, r->opt.k, r->opt.bucket_bits, r->opt.flag, r->opt.mini_batch_size, n_threads, r->opt.batch_size, ord);

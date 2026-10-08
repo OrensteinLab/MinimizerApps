@@ -210,6 +210,49 @@ else
 	tail -20 "$TMP/validate_greedymini.out" >&2
 fi
 
+echo "== 13. robustness: bad k, unreadable stored orders, overridden options, rank sentinel =="
+for kk in 29 32; do
+	if $BIN -a $(order_flags mod-minimizer-xor) -k $kk "$REF" "$QRY" >/dev/null 2>&1; then
+		bad "mod-minimizer-xor -k $kk should be rejected (k > 28)"
+	else
+		ok "mod-minimizer-xor -k $kk rejected"
+	fi
+done
+# The order blob ends the file: [u64 len][u32 kind]...; patch the kind byte.
+patch_kind() { # <in.mmi> <out.mmi> <kind>
+	"$PY" - "$1" "$2" "$3" <<'EOF'
+import struct, sys
+b = bytearray(open(sys.argv[1], 'rb').read())
+for off in range(len(b) - 12, 0, -1):  # find the len field that spans to EOF
+	if struct.unpack_from('<Q', b, off)[0] == len(b) - off - 8:
+		b[off + 8] = int(sys.argv[3]); break
+open(sys.argv[2], 'wb').write(b)
+EOF
+}
+for kind in 4 0 3; do # retired kind, native, greedymini without a table
+	patch_kind "$TMP/xor.mmi" "$TMP/kind$kind.mmi" $kind
+	if $BIN -a "$TMP/kind$kind.mmi" "$QRY" >/dev/null 2>"$TMP/kind$kind.err"; then
+		bad "index with a patched order kind $kind should be refused"
+	elif grep -q 'failed to load the minimizer order' "$TMP/kind$kind.err"; then
+		ok "index with a patched order kind $kind refused"
+	else
+		bad "patched order kind $kind: unexpected error ($(tail -1 "$TMP/kind$kind.err"))"
+	fi
+done
+head -c $(( $(stat -c %s "$TMP/xor.mmi") - 4 )) "$TMP/xor.mmi" > "$TMP/trunc.mmi"
+if $BIN -a "$TMP/trunc.mmi" "$QRY" >/dev/null 2>&1; then bad "truncated order section should be refused"; else ok "truncated order section refused"; fi
+$BIN -a --minimizer-order xor-pcg-hash --order-seed $SEED "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/override.err"
+if grep -q 'overridden by the order of the prebuilt index (xor)' "$TMP/override.err"; then ok "order options overridden by a prebuilt index: warned"; else bad "no warning when --minimizer-order differs from the prebuilt index"; fi
+$BIN -a $(order_flags xor) "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/same.err"
+if grep -q 'Minimizer order options' "$TMP/same.err"; then bad "warning although the options match the prebuilt index"; else ok "no warning when the options match the prebuilt index"; fi
+$BIN -a $(order_flags greedymini) "$TMP/greedymini.mmi" "$QRY" >/dev/null 2>"$TMP/same_gm.err"
+if grep -q 'Minimizer order options' "$TMP/same_gm.err"; then bad "warning although the greedymini table matches the prebuilt index"; else ok "no warning when the greedymini table matches the prebuilt index"; fi
+polya=$(printf '>a\n%0100d\n' 0 | tr 0 A)
+for o in xor xor-pcg-hash; do
+	n=$(echo "$polya" | ./sketch_dump $o 10 15 0xFFFFFFFFFFFFFFFF 0 | grep -c .)
+	if [ "$n" -gt 0 ]; then ok "$o seed ~0: poly-A still selected ($n)"; else bad "$o seed ~0: poly-A never selected"; fi
+done
+
 echo
 echo "== summary: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

@@ -58,6 +58,16 @@ int mm_order_serialize(const mm_order_t *ord, uint8_t **out, uint64_t *out_len);
 // access). Returns NULL and writes to errbuf on failure.
 mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, char *errbuf, size_t errbuf_len);
 
+// Checks that ord can sketch the index's k-mers (k <= 28; for mod-minimizer
+// 0 < t < k; for greedymini a table built for length k), as mm_idx_load does
+// for an order read from an .mmi. Returns 0, or -1 with a message in errbuf.
+int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, size_t errbuf_len);
+
+// 1 if conf (the command-line order) describes ord (an index's stored order):
+// same kind, seed, mod t, projection and, when conf names one, the same
+// GreedyMini table. Used to warn when a prebuilt index overrides the options.
+int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_t *conf);
+
 // CLI helpers (main.c): name <-> kind, both directions.
 const char *mm_order_kind_name(mm_order_kind_t kind);
 int mm_order_parse_kind(const char *s, mm_order_kind_t *out); // 0 on success, -1 on unknown name

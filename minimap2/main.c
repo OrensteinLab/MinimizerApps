@@ -550,6 +550,11 @@ int main(int argc, char *argv[])
 		}
 	}
 	n_parts = idx_rdr->n_parts;
+	if (idx_rdr->is_idx && n_parts == 0) {
+		fprintf(stderr, "[ERROR] failed to load the prebuilt index '%s'\n", argv[o.ind]);
+		mm_idx_reader_close(idx_rdr);
+		return 1;
+	}
 	mm_idx_reader_close(idx_rdr);
 
 	if (opt.split_prefix)

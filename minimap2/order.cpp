@@ -135,18 +135,26 @@ bool needs_gm_kind(mm_order_kind_t k) {
 // is strand invariant and ignores it.
 template <int Kind> struct RankState;
 
+// xor: the seed's bits above the 2k k-mer bits add the same constant to every
+// rank, so masking them keeps the order and keeps a rank off UINT64_MAX
+// (sketch_single_window's "no candidate"; seed ~0 would otherwise drop
+// poly-A).
 template <> struct RankState<MM_ORDER_XOR> {
 	uint64_t seed;
-	RankState(const mm_order_t *ord, int) : seed(ord->seed) {}
+	RankState(const mm_order_t *ord, int k) : seed(ord->seed & ((1ULL << 2 * k) - 1)) {}
 	void push(int) {}
 	uint64_t rank(uint64_t kmer) const { return kmer ^ seed; }
 };
 
+// xor-pcg-hash: the one input hashing to UINT64_MAX is moved to UINT64_MAX - 1.
 template <> struct RankState<MM_ORDER_XOR_PCG_HASH> {
 	uint64_t seed;
 	RankState(const mm_order_t *ord, int) : seed(ord->seed) {}
 	void push(int) {}
-	uint64_t rank(uint64_t kmer) const { return pcg_rxs_m_xs64(kmer ^ seed); }
+	uint64_t rank(uint64_t kmer) const {
+		const uint64_t h = pcg_rxs_m_xs64(kmer ^ seed);
+		return h - (h == UINT64_MAX);
+	}
 };
 
 // GreedyMini: the Sigma (AT/CG) and Gamma planes of both strands are rolled
@@ -590,8 +598,56 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len)) { delete ord; return nullptr; }
+	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, errbuf, errbuf_len) != 0) {
+		delete ord;
+		return nullptr;
+	}
 	return ord;
+}
+
+extern "C" int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, size_t errbuf_len)
+{
+	char msg[160];
+	if (!ord) { set_err(errbuf, errbuf_len, "null order"); return -1; }
+	if (k <= 0 || k > 28) { // native mm_sketch()'s own bound
+		std::snprintf(msg, sizeof msg, "custom minimizer orders support -k up to 28 (got %d)", k);
+		set_err(errbuf, errbuf_len, msg);
+		return -1;
+	}
+	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k)) {
+		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k (t = %d, k = %d)", ord->t, k);
+		set_err(errbuf, errbuf_len, msg);
+		return -1;
+	}
+	if (needs_gm_kind(ord->kind) != (ord->gm != nullptr)) {
+		set_err(errbuf, errbuf_len, needs_gm_kind(ord->kind) ? "greedymini order without a GreedyMini table"
+		                                                     : "GreedyMini table given for an order that does not use one");
+		return -1;
+	}
+	if (ord->gm && (!ord->gm_order || ord->gm_l != k)) {
+		std::snprintf(msg, sizeof msg, "GreedyMini order built for k = %d, index k = %d", ord->gm_l, k);
+		set_err(errbuf, errbuf_len, msg);
+		return -1;
+	}
+	return 0;
+}
+
+extern "C" int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_t *conf)
+{
+	if (!ord || !conf || ord->kind != conf->kind) return 0;
+	if (needs_gm_kind(ord->kind)) {
+		if (ord->gm_projection != conf->gm_projection) return 0;
+		if (conf->greedymini_file && *conf->greedymini_file) {
+			try {
+				const std::shared_ptr<const GreedyMiniTable> gm = load_gm_table(conf->greedymini_file);
+				if (!gm || gm_table_to_raw(*gm) != gm_table_to_raw(*ord->gm)) return 0;
+			} catch (const std::exception &) {
+				return 0;
+			}
+		}
+		return 1;
+	}
+	return ord->seed == conf->seed && (!is_mod_kind(ord->kind) || ord->t == conf->t);
 }
 
 extern "C" void mm_order_destroy(mm_order_t *ord) { delete ord; }
@@ -686,16 +742,20 @@ extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, ch
 		set_err(errbuf, errbuf_len, "index was built with a minimizer order this binary no longer supports; rebuild it");
 		return nullptr;
 	}
+	if (has_gm != (needs_gm_kind((mm_order_kind_t)kind32) ? 1 : 0)) {
+		set_err(errbuf, errbuf_len, "corrupt order metadata (GreedyMini table flag does not match the order)");
+		return nullptr;
+	}
 
 	std::shared_ptr<const GreedyMiniTable> gm;
 	if (has_gm) {
 		if (!need(sizeof(uint64_t))) { set_err(errbuf, errbuf_len, "truncated GreedyMini table length"); return nullptr; }
 		uint64_t n; std::memcpy(&n, buf + off, sizeof(n)); off += sizeof(n);
-		if (!need((size_t)n * sizeof(uint64_t))) { set_err(errbuf, errbuf_len, "truncated GreedyMini table bytes"); return nullptr; }
-		std::vector<uint64_t> raw(n);
-		if (n) std::memcpy(raw.data(), buf + off, (size_t)n * sizeof(uint64_t));
-		off += (size_t)n * sizeof(uint64_t);
+		if (n > ((size_t)len - off) / sizeof(uint64_t)) { set_err(errbuf, errbuf_len, "truncated GreedyMini table bytes"); return nullptr; }
 		try {
+			std::vector<uint64_t> raw(n);
+			if (n) std::memcpy(raw.data(), buf + off, (size_t)n * sizeof(uint64_t));
+			off += (size_t)n * sizeof(uint64_t);
 			gm = std::make_shared<const GreedyMiniTable>(raw);
 		} catch (const std::exception &e) {
 			set_err(errbuf, errbuf_len, e.what());

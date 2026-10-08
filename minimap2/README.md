@@ -56,16 +56,23 @@ read. See `order.cpp`'s top-of-file comment for the full design rationale,
 in particular why the order only ever decides *which* k-mer wins a window
 and never becomes the value actually stored in the index.
 
+An index whose stored order cannot be restored (an unknown or retired order
+kind, a truncated or corrupt order section, a table that does not match the
+index's `-k`) is refused rather than mapped with the native order. Order
+flags given together with a prebuilt index are ignored, as `-k`/`-w`/`-H` are:
+the index's own order is used, with a warning when the flags describe a
+different order. Custom orders take `-k` up to 28, as native minimap2 does.
+
 ### Design notes / known limitations
 
 - The native order's own sketching path (`sketch.c`'s `mm_sketch()`) is
   byte-for-byte untouched; only the new `mm_sketch_ordered()` (`order.cpp`)
   is added, dispatched on `mi->order != NULL`. Zero added cost for the
   default case.
-- `mm_idx_str()` (the in-memory index-from-strings API, e.g. used by the
-  `mappy` Python bindings) does not support a custom order -- only the CLI
-  path through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this
-  way are always native-order.
+- `mm_idx_str()` (the in-memory index-from-strings API) and `mappy`'s
+  index-from-FASTA path do not take a custom order -- only the CLI path
+  through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this way are
+  always native-order; `mappy` does map against a custom-order `.mmi`.
 - `greedymini` uses the shared centre extension
   (`common/minimizer-orders/greedymini_centre.h`, injective packing): with
   `-k = gm_k + 2i` the table ranks the middle `gm_k` bases' AT/CG projection,
@@ -84,8 +91,11 @@ and never becomes the value actually stored in the index.
   which plain mod-sampling does not guarantee. The scan uses kraken2's single
   monotone deque over all live t-mers and emits a selected k-mer when it
   leaves the window (output stays in position order); `validate_mod_minimizer.py`
-  checks it against a brute force of the definition. Indexes built with the
-  earlier forward-only mod-minimizer (order kind 4) are rejected: rebuild them.
+  checks it against a brute force of the definition. A window whose sampled
+  k-mer is its own reverse complement (even `-k` only), or spans 256 or more
+  bases under `-H`, emits no minimizer; native minimap2 instead skips such a
+  k-mer and lets the window pick another. Indexes built with the earlier
+  forward-only mod-minimizer (order kind 4) are rejected: rebuild them.
 
 ## Build and test
 
