@@ -100,8 +100,9 @@ ORDER_RANDOM_PCG = 2
 KRAKEN2_DB_VERSION = 2  # must match kraken2_data.h; other versions are rejected
 KRAKEN2_OPTS_MAGIC = 0x4B32534B  # "K2SK"; must match kraken2_data.h
 INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
-# sketching_scheme, order, gm_k, magic, (4 bytes padding), gm_num_entries
-INDEX_OPTIONS_EXT_FMT = "<BBHI4xQ"
+# sketching_scheme, order, gm_k, magic, gm_projection, (3 reserved bytes), gm_num_entries
+INDEX_OPTIONS_EXT_FMT = "<BBHIB3xQ"
+GM_PROJECTION_NAMES = {0: "at0-cg1", 1: "at1-cg0"}
 SKETCHING_NAMES = {
     SKETCHING_MINIMIZER: "minimizer",
     SKETCHING_MOD: "mod-minimizer",
@@ -618,13 +619,14 @@ def read_index_options(opts_pathname):
     ) = struct.unpack(INDEX_OPTIONS_BASE_FMT, data[:base_size])
     if db_version != KRAKEN2_DB_VERSION:
         return None
-    sketching, order, gm_k, magic, gm_num_entries = struct.unpack(
+    sketching, order, gm_k, magic, gm_projection, gm_num_entries = struct.unpack(
         INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
     )
     if (
         magic != KRAKEN2_OPTS_MAGIC
         or sketching not in SKETCHING_NAMES
         or order not in ORDER_NAMES
+        or gm_projection not in GM_PROJECTION_NAMES
     ):
         return None
     return {
@@ -634,6 +636,7 @@ def read_index_options(opts_pathname):
         "sketching": sketching,
         "order": order,
         "gm_k": gm_k,
+        "gm_projection": gm_projection,
         "gm_num_entries": gm_num_entries,
         "dna_db": bool(dna_db),
     }
@@ -663,6 +666,7 @@ def sketching_order_build_key(args):
             if os.path.isfile(gm_file):
                 stat = os.stat(gm_file)
                 parts.append("{}:{}".format(stat.st_size, int(stat.st_mtime)))
+        parts.append(getattr(args, "gm_projection", None) or "at0-cg1")
     return ":".join(parts)
 
 
@@ -673,13 +677,21 @@ def index_sketching_order_key(opts_pathname):
     parts = [SKETCHING_NAMES[opts["sketching"]], ORDER_NAMES[opts["order"]]]
     if opts["order"] == ORDER_GM:
         parts.append("gm{}".format(opts["gm_num_entries"]))
+        parts.append(GM_PROJECTION_NAMES[opts["gm_projection"]])
     return ":".join(parts)
 
 
 def validate_minimizer_build_args(args):
     _, order = sketching_order_from_args(args)
+    projection = getattr(args, "gm_projection", None) or "at0-cg1"
     if order != "greedymini":
+        if projection != "at0-cg1":
+            LOG.error("--gm-projection applies to --order greedymini only\n")
+            sys.exit(1)
         return
+    if getattr(args, "protein", False):
+        LOG.error("--order greedymini is supported for DNA only, not --protein\n")
+        sys.exit(1)
     gm_file = getattr(args, "greedymini_file", None)
     if not gm_file:
         LOG.error("--greedymini-file is required when --order greedymini\n")
@@ -702,6 +714,9 @@ def add_sketching_args(args, argv, binary_args):
         gm_file = getattr(args, "greedymini_file", None)
         if gm_file:
             argv.extend(["-G", gm_file])
+        projection = getattr(args, "gm_projection", None) or "at0-cg1"
+        if "-P" in binary_args and projection != "at0-cg1":
+            argv.extend(["-P", projection])
     toggle = getattr(args, "toggle_mask", None)
     if toggle and "-T" in binary_args:
         argv.extend(["-T", str(toggle)])
@@ -5194,6 +5209,14 @@ def make_build_parser(subparsers):
              "must be gm_k + 2i (w5_k15_canonical.gm: 15, 17, ..., 31); with "
              "--sketching mod-minimizer the table's gm_k must equal t "
              "(w5_k6_canonical.gm)",
+    )
+    parser.add_argument(
+        "--gm-projection",
+        type=str,
+        default="at0-cg1",
+        choices=["at0-cg1", "at1-cg0"],
+        help="DNA->binary projection of the greedymini order: at0-cg1 "
+             "(default; A,T->0 and C,G->1) or at1-cg0 (flipped)",
     )
     parser.add_argument(
         "--log",

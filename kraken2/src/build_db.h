@@ -36,6 +36,7 @@ struct Options {
   Order order;
   string greedy_mini_filename;
   std::shared_ptr<const GreedyMiniTable> gm_table;
+  GmProjection gm_projection = GmProjection::AT0_CG1;
 };
 
 inline MinimizerScanner MakeMinimizerScanner(const Options &opts) {
@@ -44,7 +45,8 @@ inline MinimizerScanner MakeMinimizerScanner(const Options &opts) {
                           CURRENT_REVCOM_VERSION,
                           opts.sketching_scheme, opts.order,
                           opts.greedy_mini_filename,
-                          opts.gm_table);
+                          opts.gm_table,
+                          opts.gm_projection == GmProjection::AT1_CG0);
 }
 
 vector<string> ExtractNCBISequenceIDs(const string &header);

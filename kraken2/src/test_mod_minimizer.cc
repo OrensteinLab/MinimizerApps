@@ -955,9 +955,10 @@ static void test_gm_rank_first_matches_rank_path() {
             mask = rng() & lmer_mask;  // not aligned to bases
           const uint64_t toggle = (trial == 0) ? 0 : rng();
           for (int revcom : {1, 0}) {
+            // trial 1: the at1-cg0 projection (the rolled Sigma plane flips too)
             MinimizerScanner sc(k, l, mask, true, toggle, revcom,
                                 SketchingScheme::MINIMIZER, Order::GM, "",
-                                table);
+                                table, trial == 1);
             sc.SetRankFirst(false);
             const auto ref = scan_all(sc, seqs);
             sc.SetRankFirst(true, false);

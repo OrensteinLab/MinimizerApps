@@ -57,7 +57,8 @@ class ModSampler {
   ModSampler(int k, int l, int bpc, uint64_t toggle_mask, bool dna,
              Order order, int revcom_version = 1,
              uint64_t spaced_seed_mask = 0,
-             std::shared_ptr<const GreedyMiniTable> gm_table = nullptr)
+             std::shared_ptr<const GreedyMiniTable> gm_table = nullptr,
+             bool gm_flip = false)
       : k_(k), l_(l), bpc_(bpc), dna_bpc2_(dna && bpc == 2), order_(order),
         revcom_version_(revcom_version),
         w_(k - l + 1), t_(0), tmer_span_(0),
@@ -116,6 +117,7 @@ class ModSampler {
     // t-mer rankers do not AND the spaced mask (ℓ-mer store path does).
     cfg.spaced_seed_mask = 0;
     cfg.gm_table = gm_table;
+    cfg.gm_flip = gm_flip;
     if (order == Order::GM) {
       if (!gm_table || gm_table->empty())
         throw std::invalid_argument("MOD+GM requires a GM table");

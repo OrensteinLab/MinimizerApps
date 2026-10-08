@@ -146,6 +146,7 @@ int main(int argc, char **argv) {
   index_opts.db_type = 0;
   EncodeIndexSchemes(index_opts, opts.sketching_scheme, opts.order);
   index_opts.gm_k = (uint16_t)gm_k;
+  index_opts.gm_projection = (uint8_t)opts.gm_projection;
   index_opts.gm_num_entries = opts.gm_table ? (uint64_t)opts.gm_table->size() : 0;
   ofstream opts_fs(opts.options_filename);
   opts_fs.write((char *) &index_opts, sizeof(index_opts));
@@ -236,7 +237,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
     {"order", required_argument, nullptr, 'O'},
     {"greedymini-file", required_argument, nullptr, 'G'},
     {nullptr, 0, nullptr, 0}};
-  while ((opt = getopt_long(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:s:O:",
+  while ((opt = getopt_long(argc, argv, "?hB:b:c:FH:m:n:o:t:k:l:M:p:r:S:T:XC:G:s:O:P:",
                             long_options, nullptr)) != -1) {
     switch (opt) {
       case 'h' : case '?' :
@@ -348,8 +349,19 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
       case 'G':
         opts.greedy_mini_filename = optarg;
         break;
+      case 'P':
+        try {
+          opts.gm_projection = parse_gm_projection(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
     }
   }
+  if (opts.order == Order::GM && opts.input_is_protein)
+    errx(EX_USAGE, "the greedymini order is supported for DNA only, not protein");
+  if (opts.gm_projection != GmProjection::AT0_CG1 && opts.order != Order::GM)
+    errx(EX_USAGE, "-P (--gm-projection) applies to --order greedymini only");
 
   if (opts.spaced_seed_mask != DEFAULT_SPACED_SEED_MASK)
     ExpandSpacedSeedMask(opts.spaced_seed_mask,
@@ -406,6 +418,8 @@ void usage(int exit_code) {
        << "  -s STRING     Sketching (--sketching): minimizer (default), mod-minimizer\n"
        << "  -O STRING     Order (--order): xor (default), xor-pcg, greedymini\n"
        << "  -G FILENAME   GreedyMini rank file (--greedymini-file, .gm);\n"
-       << "                required for --order greedymini\n";
+       << "                required for --order greedymini\n"
+       << "  -P STRING     GreedyMini DNA->binary projection (--gm-projection):\n"
+       << "                at0-cg1 (default; A,T->0, C,G->1) or at1-cg0 (flipped)\n";
   exit(exit_code);
 }

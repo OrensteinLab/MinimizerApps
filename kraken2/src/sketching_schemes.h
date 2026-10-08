@@ -14,6 +14,10 @@
  *   GM         — "greedymini": GreedyMini UHS table
  *   RANDOM_PCG — "xor-pcg": PCG RXS-M-XS scramble of (canonical ^ toggle)
  *
+ * GmProjection — the DNA -> binary projection of the GreedyMini order
+ * (CLI --gm-projection): AT0_CG1 "at0-cg1" (A,T -> 0, C,G -> 1; default) or
+ * AT1_CG0 "at1-cg0" (flipped), as in the sshash and minimap2 forks.
+ *
  * The numeric ids are persisted in opts.k2d; do not renumber. Sketching id 1
  * was the earlier forward-only (not strand-symmetric) mod-minimizer: databases
  * built with it are rejected (rebuild them).
@@ -38,6 +42,24 @@ enum class Order : uint8_t {
   GM         = 1,
   RANDOM_PCG = 2
 };
+
+enum class GmProjection : uint8_t {
+  AT0_CG1 = 0,
+  AT1_CG0 = 1
+};
+
+inline const char *gm_projection_name(GmProjection p) {
+  return p == GmProjection::AT1_CG0 ? "at1-cg0" : "at0-cg1";
+}
+
+inline GmProjection parse_gm_projection(const std::string &s) {
+  if (s == "at0-cg1")
+    return GmProjection::AT0_CG1;
+  if (s == "at1-cg0")
+    return GmProjection::AT1_CG0;
+  throw std::invalid_argument("unknown gm-projection '" + s +
+                              "' (choices: at0-cg1, at1-cg0)");
+}
 
 inline const char *sketching_scheme_name(SketchingScheme s) {
   return s == SketchingScheme::MOD ? "mod-minimizer" : "minimizer";

@@ -60,7 +60,8 @@ static uint64_t spaced_mask(int l, int spaces) {
 static void usage() {
   fprintf(stderr,
           "usage: scan_dump --reads FILE|random:N:LEN [--scheme xor|xor-pcg|"
-          "greedymini|mod-minimizer-xor|mod-minimizer-greedymini]\n"
+          "greedymini|mod-minimizer-xor|mod-minimizer-greedymini|greedymini-at1|"
+          "mod-minimizer-greedymini-at1]\n"
           "       [--mode checksum|dump|chunk|time] [--out FILE] [--toggle HEX]\n"
           "       [--gm-dir DIR] [--reps N] [--chunk C] [--k 35] [--l 31] [--spaces 7]\n");
   exit(2);
@@ -147,6 +148,7 @@ int main(int argc, char **argv) {
   SketchingScheme sk = SketchingScheme::MINIMIZER;
   Order order = Order::RANDOM_XOR;
   std::string gm_file;
+  bool gm_flip = false;
   if (scheme == "xor") {
   } else if (scheme == "xor-pcg") {
     order = Order::RANDOM_PCG;
@@ -157,6 +159,11 @@ int main(int argc, char **argv) {
   } else if (scheme == "mod-minimizer-greedymini") {
     sk = SketchingScheme::MOD; order = Order::GM;
     gm_file = gm_dir + "w5_k6_canonical.gm";
+  } else if (scheme == "greedymini-at1") {
+    order = Order::GM; gm_file = gm_dir + "w5_k15_canonical.gm"; gm_flip = true;
+  } else if (scheme == "mod-minimizer-greedymini-at1") {
+    sk = SketchingScheme::MOD; order = Order::GM;
+    gm_file = gm_dir + "w5_k6_canonical.gm"; gm_flip = true;
   } else {
     usage();
   }
@@ -166,7 +173,7 @@ int main(int argc, char **argv) {
     if (!tab) { fprintf(stderr, "cannot load %s\n", gm_file.c_str()); return 1; }
   }
   MinimizerScanner sc(k, l, sp, true, toggle, CURRENT_REVCOM_VERSION, sk, order,
-                      "", tab);
+                      "", tab, gm_flip);
 #endif
 
   std::vector<std::string> reads = read_sequences(reads_src);

@@ -68,6 +68,7 @@ my (
   $sketching,
   $order,
   $greedymini_file,
+  $gm_projection,
 );
 
 # Initialization of defaults and env. var checks
@@ -127,6 +128,7 @@ GetOptions(
   "sketching=s" => \$sketching,
   "order=s" => \$order,
   "greedymini-file=s" => \$greedymini_file,
+  "gm-projection=s" => \$gm_projection,
 ) or usage();
 
 if ($is_protein) {
@@ -198,9 +200,11 @@ $ENV{"KRAKEN2_MIN_TAXID_BITS"} = $minimum_bits_for_taxid;
 $sketching = "minimizer" if ! defined $sketching;
 $order = "xor" if ! defined $order;
 $greedymini_file = "" if ! defined $greedymini_file;
+$gm_projection = "at0-cg1" if ! defined $gm_projection;
 $ENV{"KRAKEN2_SKETCHING"} = $sketching;
 $ENV{"KRAKEN2_ORDER"} = $order;
 $ENV{"KRAKEN2_GREEDYMINI_FILE"} = $greedymini_file;
+$ENV{"KRAKEN2_GM_PROJECTION"} = $gm_projection;
 
 if ($dl_taxonomy) {
   download_taxonomy();
@@ -290,6 +294,8 @@ Options:
                              greedymini (build task only).
   --greedymini-file FILE     Path to greedymini rank file (.gm); required when
                              --order greedymini.
+  --gm-projection PROJ       DNA->binary projection for greedymini: at0-cg1
+                             (default) or at1-cg0 (build task only).
 EOF
   exit $exit_code;
 }

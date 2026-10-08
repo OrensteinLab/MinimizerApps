@@ -665,7 +665,9 @@ void ProcessFiles(const char *filename1, const char *filename2,
                              idx_opts.revcom_version,
                              sketching, order,
                              "",
-                             gm_table);
+                             gm_table,
+                             idx_opts.gm_projection ==
+                                 (uint8_t)GmProjection::AT1_CG0);
     vector<taxid_t> taxa;
     taxon_counts_t hit_counts;
     ostringstream kraken_oss, c1_oss, c2_oss, u1_oss, u2_oss;

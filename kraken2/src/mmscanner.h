@@ -73,7 +73,8 @@ class MinimizerScanner {
                    SketchingScheme sketching,
                    Order order,
                    std::string greedy_mini_filename = "",
-                   std::shared_ptr<const GreedyMiniTable> gm_table = nullptr);
+                   std::shared_ptr<const GreedyMiniTable> gm_table = nullptr,
+                   bool gm_flip = false);  // GreedyMini at1-cg0 projection
 
   static std::vector<uint64_t> load_gm_file(const std::string &filename);
   static void write_gm_file(const std::string &filename,
@@ -177,6 +178,7 @@ class MinimizerScanner {
   uint64_t *NextMinimizerXor();  // default path: Minimizer + RandomXor + DNA
   void PopDominatedRankFirst(uint64_t rank);
 
+  bool gm_flip_;  // GreedyMini at1-cg0 projection (declared first: initialized first)
   const std::string *str_;  // pointer to sequence
   ssize_t k_;
   ssize_t l_;

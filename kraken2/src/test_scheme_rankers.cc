@@ -534,6 +534,44 @@ int main() {
       std::cout << "Validated w5_k15_canonical: UHS=" << loaded->uhs_size()
                 << "/" << loaded->size() << "\n";
 
+      // --- --gm-projection at1-cg0: complementing Sigma == relabelling the
+      // bases A<->C, G<->T (x ^ 0x55..55 in ACGT = 0123; Gamma unchanged, and
+      // the relabelling commutes with the reverse complement), so the flipped
+      // order of x is the default order of the relabelled x. Unmasked only: a
+      // spaced seed's dropped bases read as A, whose flipped Sigma differs. ---
+      for (int ll : {15, 21, 31}) {
+        const uint64_t lm = lmask_of(ll);
+        const uint64_t tog = 0xe37e28c4271b5a2dULL & ((1ULL << ll) - 1ULL);
+        GMRanker r0(ll, 2, tog, lm, true, loaded);
+        GMRanker r1(ll, 2, tog, lm, true, loaded, 0, DNA_REVCOM_VERSION, true);
+        std::mt19937_64 g(2000 + (uint64_t)ll);
+        uint64_t bad = 0, bad_inv = 0, differ = 0;
+        for (int it = 0; it < 1000000; it++) {
+          const uint64_t x = rand_lmer(g, ll, it % 5);
+          const uint64_t relabelled = (x ^ 0x5555555555555555ULL) & lm;
+          const uint64_t got = r1.Rank(x);
+          bad += got != r0.Rank(relabelled);
+          bad_inv += got != r1.Rank(
+              dna_reverse_complement(x, (uint8_t)ll, DNA_REVCOM_VERSION));
+          differ += got != r0.Rank(x);
+        }
+        check(bad == 0, "at1-cg0: Rank(x) == default Rank(relabelled x)");
+        check(bad_inv == 0, "at1-cg0: Rank(x) == Rank(rc(x))");
+        check(differ > 0, "at1-cg0 differs from at0-cg1");
+        // with a spaced seed: still strand invariant
+        const uint64_t mask = (uint64_t)MakeSpacedSeedMask(ll, ll / 4, 2);
+        GMRanker rm(ll, 2, tog, lm, true, loaded, mask, DNA_REVCOM_VERSION, true);
+        uint64_t bad_m = 0;
+        for (int it = 0; it < 300000; it++) {
+          const uint64_t x = rand_lmer(g, ll, it % 5);
+          bad_m += rm.Rank(x) != rm.Rank(dna_reverse_complement(
+                                     x, (uint8_t)ll, DNA_REVCOM_VERSION));
+        }
+        check(bad_m == 0, "at1-cg0 spaced: Rank(x) == Rank(rc(x))");
+      }
+      std::cout << "at1-cg0 projection: relabelling identity and strand "
+                   "invariance at l = 15, 21, 31\n";
+
       // --- centre extension on the real table, l = 17 .. 31 ---
       for (int ll : {17, 21, 25, 31}) {
         const uint64_t lm = lmask_of(ll);

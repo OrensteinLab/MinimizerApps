@@ -32,7 +32,10 @@ extended by its **centre** (rank of the middle `gm_k` bases, then tie-breaks),
 which keeps the table's designed density (`w5_k15_canonical`: 1.466 at every
 valid `l`).
 `l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). The
-GreedyMini order is DNA only: protein databases (`--protein`) refuse it. Databases
+GreedyMini order is DNA only: protein databases (`--protein`) refuse it.
+`--gm-projection at1-cg0` flips its DNA->binary projection (A,T -> 1, C,G -> 0;
+default `at0-cg1`), as in the sshash and minimap2 forks; it is stored in the
+database. Databases
 by other Kraken 2 builds (any `db_version` other than 2, including upstream
 databases, and databases built before the opts.k2d layout change: wrong size or
 missing magic) are refused by `classify` and `dump_table` and must be rebuilt. Details, numbers and the commands to reproduce them:

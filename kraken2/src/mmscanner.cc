@@ -146,6 +146,7 @@ void MinimizerScanner::init_ranker(
   cfg.revcom_version = revcom_version_;
   cfg.greedy_mini_filename = greedy_mini_filename;
   cfg.gm_table = gm_table;
+  cfg.gm_flip = gm_flip_;
 
   if (order_ == Order::GM && !cfg.gm_table) {
     if (greedy_mini_filename.empty())
@@ -160,7 +161,7 @@ void MinimizerScanner::init_ranker(
     try {
       mod_sampler_.reset(new ModSampler(
           (int)k_, (int)l_, cfg.bpc, toggle_mask_, dna_, order_,
-          revcom_version_, spaced_seed_mask_, cfg.gm_table));
+          revcom_version_, spaced_seed_mask_, cfg.gm_table, gm_flip_));
     } catch (const std::exception &ex) {
       errx(EX_DATAERR, "ModSampler: %s", ex.what());
     }
@@ -206,8 +207,8 @@ MinimizerScanner::MinimizerScanner(ssize_t k, ssize_t l,
     uint64_t spaced_seed_mask, bool dna_sequence, uint64_t toggle_mask,
     int revcom_version, SketchingScheme sketching, Order order,
     std::string greedy_mini_filename,
-    std::shared_ptr<const GreedyMiniTable> gm_table)
-    : str_(nullptr), k_(k), l_(l), str_pos_(0), start_(0), finish_(0),
+    std::shared_ptr<const GreedyMiniTable> gm_table, bool gm_flip)
+    : gm_flip_(gm_flip), str_(nullptr), k_(k), l_(l), str_pos_(0), start_(0), finish_(0),
       spaced_seed_mask_(spaced_seed_mask), dna_(dna_sequence),
       toggle_mask_(toggle_mask), loaded_ch_(0),
       last_ambig_(0), revcom_version_(revcom_version),

@@ -572,6 +572,7 @@ struct ScannerSpec {
   Order order = Order::RANDOM_XOR;
   std::string gm_path;
   std::shared_ptr<const GreedyMiniTable> gm_tbl;
+  bool gm_flip = false;
 };
 
 // GM centre order scanning: 0 = full Rank() per l-mer (reference), 1 = rank
@@ -581,7 +582,7 @@ static int g_rank_path = kDefaultRollSigma ? 2 : 1;
 static MinimizerScanner make_scanner(const ScannerSpec &spec) {
   MinimizerScanner sc(spec.k, spec.l, spec.spaced_seed_mask, true, spec.toggle,
                       CURRENT_REVCOM_VERSION, spec.sketching, spec.order,
-                      spec.gm_path, spec.gm_tbl);
+                      spec.gm_path, spec.gm_tbl, spec.gm_flip);
   sc.SetRankFirst(g_rank_path >= 1, g_rank_path == 2);
   return sc;
 }
@@ -791,17 +792,22 @@ struct SchemeLabel {
   const char *name;       // CLI / display (matches run_benchmark.sh)
   bool needs_gm_bin;      // Minimizer + greedymini binary (-g)
   bool needs_mod_gm;      // Mod + greedymini (-M)
+  bool gm_flip;           // greedymini --gm-projection at1-cg0 ("-at1")
 };
 
 // Same labels as ../benchmark/kraken2/run_benchmark.sh -S (exact names, no
 // aliases): sketching_schemes.h scheme_label(sketching, order).
 static const SchemeLabel kAllSchemes[] = {
-    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "xor", false, false},
-    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "xor-pcg", false, false},
-    {SketchingScheme::MINIMIZER, Order::GM, "greedymini", true, false},
+    {SketchingScheme::MINIMIZER, Order::RANDOM_XOR, "xor", false, false, false},
+    {SketchingScheme::MINIMIZER, Order::RANDOM_PCG, "xor-pcg", false, false, false},
+    {SketchingScheme::MINIMIZER, Order::GM, "greedymini", true, false, false},
     {SketchingScheme::MOD, Order::RANDOM_XOR, "mod-minimizer-xor", false,
+     false, false},
+    {SketchingScheme::MOD, Order::GM, "mod-minimizer-greedymini", false, true,
      false},
-    {SketchingScheme::MOD, Order::GM, "mod-minimizer-greedymini", false, true},
+    {SketchingScheme::MINIMIZER, Order::GM, "greedymini-at1", true, false, true},
+    {SketchingScheme::MOD, Order::GM, "mod-minimizer-greedymini-at1", false, true,
+     true},
 };
 
 // Default list matches run_benchmark.sh.
@@ -820,7 +826,8 @@ static const SchemeLabel *find_scheme(const std::string &name) {
 
 static void list_schemes_stderr() {
   std::cerr << "  xor | xor-pcg | greedymini | mod-minimizer-xor | "
-               "mod-minimizer-greedymini\n";
+               "mod-minimizer-greedymini | greedymini-at1 | "
+               "mod-minimizer-greedymini-at1\n";
 }
 
 struct RunRow {
@@ -1027,8 +1034,9 @@ static void usage() {
       << "Usage: benchmark_minimizers [options]\n"
       << "  -S NAME   Scheme(s) to run (repeatable / space-separated):\n"
       << "            xor | xor-pcg | greedymini | mod-minimizer-xor |\n"
-      << "            mod-minimizer-greedymini\n"
-      << "            (default: all five, in this order)\n"
+      << "            mod-minimizer-greedymini | greedymini-at1 |\n"
+      << "            mod-minimizer-greedymini-at1 (greedymini, A,T -> 1 projection)\n"
+      << "            (default: the first five, in this order)\n"
       << "  -g FILE   greedymini binary ℓ-mer table (w5_k15) for greedymini\n"
       << "  -M FILE   mod-minimizer-greedymini binary t-mer table (w5_k6; also "
          "--mod-gm)\n"
@@ -1370,6 +1378,7 @@ int main(int argc, char **argv) {
     spec.spaced_seed_mask = spaced_seed_mask;
     spec.sketching = cfg.sketching;
     spec.order = cfg.order;
+    spec.gm_flip = cfg.gm_flip;
     if (cfg.needs_gm_bin) {
       spec.gm_path = gm_file;
       spec.gm_tbl = table_bin;
@@ -1430,6 +1439,7 @@ int main(int argc, char **argv) {
     spec.spaced_seed_mask = spaced_seed_mask;
     spec.sketching = cfg.sketching;
     spec.order = cfg.order;
+    spec.gm_flip = cfg.gm_flip;
     if (cfg.needs_gm_bin) {
       spec.gm_path = gm_file;
       spec.gm_tbl = table_bin;

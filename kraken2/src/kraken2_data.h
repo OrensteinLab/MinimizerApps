@@ -40,6 +40,8 @@ struct IndexOptions {
   uint8_t  order;             // Order
   uint16_t gm_k;
   uint32_t magic;             // KRAKEN2_OPTS_MAGIC
+  uint8_t  gm_projection;     // GmProjection (0 in databases built before it)
+  uint8_t  reserved_[3];
   uint64_t gm_num_entries;
 };
 static_assert(sizeof(IndexOptions) == 80, "opts.k2d layout is 80 bytes");
@@ -52,7 +54,8 @@ inline bool IndexOptionsValid(const IndexOptions &opts, size_t file_size) {
          opts.magic == KRAKEN2_OPTS_MAGIC &&
          (opts.sketching_scheme == (uint8_t)SketchingScheme::MINIMIZER ||
           opts.sketching_scheme == (uint8_t)SketchingScheme::MOD) &&
-         opts.order <= (uint8_t)Order::RANDOM_PCG;
+         opts.order <= (uint8_t)Order::RANDOM_PCG &&
+         opts.gm_projection <= (uint8_t)GmProjection::AT1_CG0;
 }
 
 inline void DecodeIndexSchemes(const IndexOptions &opts,

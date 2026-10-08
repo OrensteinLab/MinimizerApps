@@ -45,6 +45,7 @@ struct Options {
   Order order;
   std::string greedy_mini_filename;
   std::shared_ptr<const GreedyMiniTable> gm_table;
+  GmProjection gm_projection = GmProjection::AT0_CG1;
 };
 
 void ParseCommandLine(int argc, char **argv, Options &opts);
@@ -131,7 +132,7 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
     {"order", required_argument, nullptr, 'O'},
     {"greedymini-file", required_argument, nullptr, 'G'},
     {nullptr, 0, nullptr, 0}};
-  while ((opt = getopt_long(argc, argv, "?hk:l:n:S:T:B:p:XG:s:O:",
+  while ((opt = getopt_long(argc, argv, "?hk:l:n:S:T:B:p:XG:s:O:P:",
                             long_options, nullptr)) != -1) {
     switch (opt) {
       case 'h' : case '?' :
@@ -198,6 +199,13 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
       case 'G':
         opts.greedy_mini_filename = optarg;
         break;
+      case 'P':
+        try {
+          opts.gm_projection = parse_gm_projection(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
     }
   }
 
@@ -229,7 +237,9 @@ void usage(int exit_code) {
        << "  -s STRING     Sketching (--sketching): minimizer (default), mod-minimizer" << endl
        << "  -O STRING     Order (--order): xor (default), xor-pcg, greedymini" << endl
        << "  -G FILENAME   GreedyMini rank file (--greedymini-file, .gm);" << endl
-       << "                required for --order greedymini" << endl;
+       << "                required for --order greedymini" << endl
+       << "  -P STRING     GreedyMini projection (--gm-projection): at0-cg1 (default)"
+       << " or at1-cg0" << endl;
   exit(exit_code);
 }
 
@@ -241,7 +251,8 @@ void ProcessSequence(string &seq, Options &opts,
                            CURRENT_REVCOM_VERSION,
                            opts.sketching_scheme, opts.order,
                            opts.greedy_mini_filename,
-                           opts.gm_table);
+                           opts.gm_table,
+                           opts.gm_projection == GmProjection::AT1_CG0);
   // Add terminator for protein sequences if not already there
   if (opts.input_is_protein && seq.back() != '*')
     seq.push_back('*');

@@ -95,11 +95,11 @@ class GMRanker final : public MinimizerRanker {
   GMRanker(int l, int bpc, uint64_t toggle_mask, uint64_t lmer_mask,
            bool dna, std::shared_ptr<const GreedyMiniTable> table,
            uint64_t spaced_seed_mask = 0,
-           int revcom_version = DNA_REVCOM_VERSION)
+           int revcom_version = DNA_REVCOM_VERSION, bool flip = false)
       : l_(l), gm_k_(0), gamma_bits_(0),
         tb_bits_mask_(0), tb_mask_(0), spaced_mask_(0), key_pext_mask_(0),
         tb_pext_mask_(0),
-        dna_(dna), centre_(false), sym_(false), skip_tb_xor_(true),
+        dna_(dna), flip_(flip), centre_(false), sym_(false), skip_tb_xor_(true),
         skip_space_(true),
         revcom_version_(revcom_version), table_(std::move(table)),
         ranks_ptr_(nullptr) {
@@ -131,6 +131,9 @@ class GMRanker final : public MinimizerRanker {
     skip_space_ = (spaced_mask_ == 0);
 
     key_pext_mask_ = gm_dna_key_pext_mask(l_, gm_k_);
+    // --gm-projection at1-cg0 complements Sigma: the table key here, the
+    // planes (key and Sigma tie-break) in the centre extension
+    key_flip_ = flip_ ? (uint32_t)((1ULL << gm_k_) - 1ULL) : 0u;
     tb_pext_mask_ = gm_dna_tb_pext_mask(l_);
     odd_pext_mask_ = tb_pext_mask_ << 1;
 
@@ -211,7 +214,8 @@ class GMRanker final : public MinimizerRanker {
   void init_centre() {
     // Validates l - gm_k even, mirror symmetry, rank sharing and packed width.
     centre_order_ = gm_centre::Order(table_, l_, tb_mask_);
-    planes_ = gm_centre::TwoBitPlanes<true>(l_);
+    planes_ = gm_centre::TwoBitPlanes<true>(l_, flip_);
+    sigma_flip_ = flip_ ? ((l_ >= 64) ? ~0ULL : ((1ULL << l_) - 1ULL)) : 0ULL;
     // Unmasked + exact reverse complement: the rc strand's planes come from
     // bit reversals of this strand's and share its rank.
     sym_ = skip_space_ && revcom_version_ == 1;
@@ -240,7 +244,7 @@ class GMRanker final : public MinimizerRanker {
     } else {
       // ATCG: Sigma in the odd bits, Gamma in the even bits
       const uint64_t atcg_m = gm_acgt_to_atcg(acgt) & spaced_mask_;
-      p.Sm = gm_pext_odd(atcg_m, odd_pext_mask_);
+      p.Sm = gm_pext_odd(atcg_m, odd_pext_mask_) ^ sigma_flip_;
       p.Gm = gm_pext_even(atcg_m, tb_pext_mask_);
     }
     return p;
@@ -283,9 +287,9 @@ class GMRanker final : public MinimizerRanker {
   StrandView probe_strand(uint64_t lmer) const {
     const uint64_t atcg = space(gm_acgt_to_atcg(lmer));
 #if defined(__BMI2__)
-    const uint32_t key = (uint32_t)_pext_u64(atcg, key_pext_mask_);
+    const uint32_t key = (uint32_t)_pext_u64(atcg, key_pext_mask_) ^ key_flip_;
 #else
-    const uint32_t key = gm_extract_dna_key_atcg(atcg, l_, gm_k_);
+    const uint32_t key = gm_extract_dna_key_atcg(atcg, l_, gm_k_) ^ key_flip_;
 #endif
     return StrandView{ranks_ptr_[key], atcg};
   }
@@ -316,6 +320,9 @@ class GMRanker final : public MinimizerRanker {
   uint64_t key_pext_mask_;
   uint64_t tb_pext_mask_;
   bool dna_;
+  bool flip_;           // --gm-projection at1-cg0
+  uint32_t key_flip_ = 0;
+  uint64_t sigma_flip_ = 0;
   bool centre_;
   bool sym_;
   gm_centre::Order centre_order_;
@@ -341,6 +348,7 @@ struct RankerConfig {
   // MINIMIZER+GM: AND each strand independently inside GMRanker.
   // MOD t-mer rankers ignore this; ModSampler ANDs stored/returned ℓ-mers only.
   uint64_t spaced_seed_mask = 0;
+  bool gm_flip = false;  // GreedyMini --gm-projection at1-cg0
   std::string greedy_mini_filename;
   std::shared_ptr<const GreedyMiniTable> gm_table;
 };
@@ -356,7 +364,8 @@ make_order_ranker(const RankerConfig &cfg) {
       throw std::invalid_argument("GreedyMini order requires a loaded rank table");
     return std::unique_ptr<MinimizerRanker>(
         new GMRanker(cfg.l, cfg.bpc, cfg.toggle_mask, cfg.lmer_mask, cfg.dna,
-                     cfg.gm_table, cfg.spaced_seed_mask, cfg.revcom_version));
+                     cfg.gm_table, cfg.spaced_seed_mask, cfg.revcom_version,
+                     cfg.gm_flip));
   }
   throw std::invalid_argument("unknown order");
 }
