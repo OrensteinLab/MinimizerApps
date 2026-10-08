@@ -160,7 +160,8 @@ def main(argv=None) -> int:
     with (args.out_dir / "truth.tsv").open("w") as f:
         f.write("read_id\ttrue_contig\ttrue_start\ttrue_end\ttrue_strand\tin_repeat\n")
         for rid, _seq, start, end, strand in reads:
-            in_repeat = any(rs <= start < re_ or rs < end <= re_ for _l, rs, re_ in repeat_spans)
+            # half-open overlap: also catches a read that fully spans a repeat
+            in_repeat = any(start < re_ and rs < end for _l, rs, re_ in repeat_spans)
             f.write(f"{rid}\tsmoke_genome\t{start}\t{end}\t{strand}\t{1 if in_repeat else 0}\n")
 
     with (args.out_dir / "repeats.bed").open("w") as f:

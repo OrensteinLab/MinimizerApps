@@ -9,9 +9,10 @@ seeds:
   - 0xA5A5A5A5A5A5A5A5
 
 defaults:
-  k: 15
+  # k and mod-minimizer t are not fixed here: k is the dataset preset's own
+  # (lib/constants.sh preset_default_k: map-pb k=19, map-ont k=15) and
+  # t = 4 + (k-4) % w (map-pb t=9, map-ont t=5); K=... / MOD_T=... override.
   w: 10
-  mod_t: 5
   dataset: smoke
   genome_len: 300000
   repeat_len: 20000

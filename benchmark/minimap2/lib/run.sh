@@ -18,6 +18,30 @@ run_one() {
     map_extra=(-f "$MID_OCC")
   fi
   local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$cond/$order/$seed_idx"
+  local meta_json="$run_dir/meta.json"
+
+  # meta.json is written last, only by a run that built, mapped and scored
+  # cleanly, so its presence marks a complete run. t is not part of the
+  # directory name (existing k<k>_w<w> dirs stay as they are), so a complete
+  # mod-minimizer run made with a different t is never reused or overwritten
+  # -- move it aside (or use another MINIMAP2_RESULTS_DIR) first.
+  if [ -f "$meta_json" ]; then
+    if order_is_mod "$order"; then
+      local old_t
+      old_t=$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mod_t") or "")' "$meta_json")
+      if [ -n "$old_t" ] && [ "$old_t" != "$t" ]; then
+        echo "error: $run_dir holds a complete run with t=$old_t, this one has t=$t; refusing to reuse or overwrite it" >&2
+        return 1
+      fi
+    fi
+    if [ "${FORCE:-0}" != 1 ]; then
+      echo "== [$order] skip: complete run in $run_dir (FORCE=1 reruns it) ==" >&2
+      return 0
+    fi
+    # rerun: drop the old success marker first, so a failure below can't
+    # leave the previous run's meta.json claiming success
+    rm -f "$meta_json"
+  fi
   mkdir -p "$run_dir"
 
   local data_dir="$MINIMAP2_DATA_DIR/$DATASET"
@@ -38,7 +62,7 @@ run_one() {
   local map_time="$run_dir/map_time.txt"
   local map_log="$run_dir/map.log"
   local acc_json="$run_dir/accuracy.json"
-  local meta_json="$run_dir/meta.json"
+  rm -f "$acc_json"
 
   # -x $preset (dataset_preset, lib/constants.sh): map-pb for the PacBio CLR
   # datasets -- the preset Winnowmap's paper (Jain et al. 2020) and
@@ -86,14 +110,25 @@ run_one() {
   mid_occ=$(grep -o 'mid_occ = [0-9]*' "$map_log" | grep -o '[0-9]*$' | head -1)
 
   # Real reads (no truth.tsv, e.g. the paper's D3): mapped fraction only.
-  "$PYTHON" "$HERE_DIR/lib/score_accuracy.py" --paf "$paf" --truth "$truth" --reads "$reads" --json-out "$acc_json" >&2
+  # A scoring failure fails the run: no meta.json, so export never sees it.
+  if ! "$PYTHON" "$HERE_DIR/lib/score_accuracy.py" --paf "$paf" --truth "$truth" --reads "$reads" --json-out "$acc_json" >&2; then
+    echo "  scoring FAILED for $run_dir (no meta.json written)" >&2
+    return 1
+  fi
 
-  "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
-    --order "$order" --seed "$seed" --seed-idx "$seed_idx" --k "$k" --w "$W" --mod-t "$t" --dataset "$DATASET" \
-    --mid-occ-cap "${MID_OCC:-}" --mid-occ "${mid_occ:-}" --preset "$preset" \
-    --build-time "$build_time" --map-time "$map_time" \
-    --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \
-    --accuracy "$acc_json" --out "$meta_json" >/dev/null
+  # Written to a temp name and renamed, so a half-written meta.json never
+  # looks like a complete run.
+  if ! "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
+      --order "$order" --seed "$seed" --seed-idx "$seed_idx" --k "$k" --w "$W" --mod-t "$t" --dataset "$DATASET" \
+      --mid-occ-cap "${MID_OCC:-}" --mid-occ "${mid_occ:-}" --preset "$preset" --threads "$THREADS" \
+      --build-time "$build_time" --map-time "$map_time" \
+      --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \
+      --accuracy "$acc_json" --out "$meta_json.tmp" >/dev/null; then
+    echo "  write_meta FAILED for $run_dir" >&2
+    rm -f "$meta_json.tmp"
+    return 1
+  fi
+  mv -f "$meta_json.tmp" "$meta_json"
 
   echo "  -> $meta_json"
 }

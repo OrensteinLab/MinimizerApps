@@ -160,9 +160,12 @@ never clobbered by `.env`.
 ```bash
 cd benchmark/minimap2
 ./minimap2_bench.sh make-dataset           # regenerate data/smoke/ (built-in simulator)
-./setup.sh && ./minimap2_bench.sh pbsim-reads R94.model 8  # swap in real pbsim2 ONT reads at 8x depth
+./setup.sh && ./minimap2_bench.sh pbsim-reads 5   # swap in PBSIM 1.0.3 CLR reads (paper's D1 setup) at 5x depth
 ./minimap2_bench.sh list                   # orders the default sweep covers
-./minimap2_bench.sh sweep                  # build+map+score every default order
+./minimap2_bench.sh sweep                  # build+map+score every default order (skips runs that already have meta.json)
+FORCE=1 ./minimap2_bench.sh sweep          # rerun them anyway
+# MOD_T=... overrides mod-minimizer's t (default 4 + (k-4) % w); t is not in the run
+# directory name, so a complete run made with another t is refused, never reused or overwritten
 ./minimap2_bench.sh run xor-pcg-hash 0x123  # just one order/seed
 MID_OCC=1244 ./minimap2_bench.sh sweep    # same sweep, map-time repeat cap fixed (-f 1244) for every order
 ./minimap2_bench.sh export                 # -> $MINIMAP2_RESULTS_DIR/minimap2_{overview,datasets,summary,orders,runs}.csv + minimap2_results.xlsx

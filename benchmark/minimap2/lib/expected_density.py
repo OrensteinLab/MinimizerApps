@@ -17,8 +17,15 @@ repeated n_seeds times as a formality for a uniform table shape.
 
 Feeds the `orders` xlsx sheet's expected_density_factor_mean/std columns
 (see lib/export.py); cached to minimap2_density_expected_k<k>_w<w>_t<t>_<hpc|nohpc>.csv since
-it's independent of any actual benchmark run (a pure function of k/w/t +
-the seed list) and each simulation costs real Monte Carlo time.
+it's independent of any actual benchmark run (a pure function of k/w/t/HPC,
+the GreedyMini table, the seed list and the Monte Carlo sizes) and each
+simulation costs real Monte Carlo time. Every cached row carries a
+cache_key over everything but k/w/t/HPC (which are in the file name): the
+GreedyMini table's path and content hash, the seeds, n_bases/mod_n_bases
+and the Monte Carlo RNG seed, so changing any of them recomputes the cache.
+(Both GreedyMini projections are their own orders, greedymini and
+greedymini-at1, so the projection is part of every row already.) A cache
+written before cache_key existed simply misses once.
 mod-minimizer costs O(k-t+1) more per window than the 4 base orders (it
 scans every t-mer locus in each k-mer window, not just one canonicalized
 k-mer), so its Monte Carlo uses a smaller default n_bases (see
@@ -27,6 +34,8 @@ DEFAULT_MOD_N_BASES) to keep the one-time cache-build tractable.
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import random
 import statistics
 import sys
@@ -211,7 +220,34 @@ def compute_all_orders(
     return out
 
 
-EXPECTED_ORDERS_FIELDS = ("order", "t", "k", "w", "n_seeds", "density_factor_avg", "density_factor_std")
+EXPECTED_ORDERS_FIELDS = ("order", "t", "k", "w", "n_seeds", "density_factor_avg", "density_factor_std", "cache_key")
+
+
+def expected_cache_key(
+    seeds: list[int],
+    *,
+    gm_file: Path | None,
+    n_bases: int,
+    mod_n_bases: int,
+    rng_seed: int = DEFAULT_SEED,
+) -> str:
+    """Identity of every cache input not already in the file name (k, w, t,
+    HPC): the GreedyMini table (resolved path + content sha256; 'missing' when
+    absent, so building the table later invalidates a cache computed without
+    it), the seed list, the Monte Carlo sizes and RNG seed."""
+    gm = "none"
+    if gm_file is not None:
+        gm_path = Path(gm_file).resolve()
+        digest = hashlib.sha256(gm_path.read_bytes()).hexdigest() if gm_path.is_file() else "missing"
+        gm = f"{gm_path}:{digest}"
+    ident = {
+        "gm": gm,
+        "seeds": [hex(s) for s in seeds],
+        "n_bases": n_bases,
+        "mod_n_bases": mod_n_bases,
+        "rng_seed": hex(rng_seed),
+    }
+    return hashlib.sha256(json.dumps(ident, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def expected_orders_csv_path(results: Path, k: int, w: int, t: int, is_hpc: bool) -> Path:
@@ -244,11 +280,14 @@ def ensure_expected_orders(
     to be a fair comparison: map-pb datasets use the HPC value, map-ont ones
     the non-HPC one; each is cached in its own file."""
     path = expected_orders_csv_path(results, k, w, mod_t, is_hpc)
+    key = expected_cache_key(seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases)
     if not force and path.is_file():
         cached = load_expected_orders(results, k, w, mod_t, is_hpc)
-        if cached and set(cached) == set(ORDERS):
+        if cached and set(cached) == set(ORDERS) and all(r.get("cache_key") == key for r in cached.values()):
             return cached
     rows = compute_all_orders(k, w, seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases, mod_t=mod_t, is_hpc=is_hpc)
+    for r in rows:
+        r["cache_key"] = key
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(EXPECTED_ORDERS_FIELDS))

@@ -39,7 +39,13 @@ from scripts.density import (
 )
 from scripts.expected_density import expected_orders_csv_path, load_expected_orders
 from scripts.metrics import enrich_super_kmer_metrics
-from scripts.schemes import SCHEME_ORDER, resolve_scheme_label
+from scripts.schemes import (
+    PROJECTION_AT0,
+    PROJECTION_AT1,
+    SCHEME_ORDER,
+    is_at1_projection,
+    resolve_scheme_label,
+)
 
 
 def bench_paths() -> tuple[Path, Path]:
@@ -225,7 +231,7 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         # Matches SUMMARY_PARAM_FIELDS' order for every shared field (dataset ..
         # order_label), so "runs" and "summary" line up column-for-column as far as
         # their differing row granularity allows; runs-only extras (run_id, label,
-        # seed_idx, signature_order_seed, gm_lut_mode) are prepended/appended around it.
+        # seed_idx, signature_order_seed, gm_lut_mode, gm_projection) are prepended/appended around it.
         "id / params",
         (
             "run_id",
@@ -246,6 +252,7 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "seed_idx",
             "signature_order_seed",
             "gm_lut_mode",
+            "gm_projection",
         ),
     ),
     (
@@ -874,9 +881,29 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
         "n_above_cx": stats["n_above_cx"],
         "n_super_kmers": stats["n_super_kmers"],
         "gm_lut_mode": meta.get("gm_lut_mode", ""),
+        "gm_projection": "",
     }
+    row["gm_projection"] = gm_projection_from_meta(meta, row)
     enrich_super_kmer_metrics(row)
     return row
+
+
+def gm_projection_from_meta(meta: dict, row: dict) -> str:
+    """DNA->binary projection of a GreedyMini run ("" for non-GM runs).
+
+    lib/run.sh passes ``-oat1`` to kmc for GM_PROJECTION=at1-cg0 and meta.json
+    records the full command line; older runs (and at0 runs) never had it, so
+    they stay at the default at0-cg1. The scheme dir / label suffix
+    (``greedymini_binary_at1`` / ``..._at1_s0x..``) is the fallback for a meta
+    without a command."""
+    probe = dict(row)
+    probe["gm_projection"] = ""
+    if not resolve_scheme_label(probe).startswith("greedymini"):
+        return ""
+    command = meta.get("command")
+    if isinstance(command, list) and any(str(a) == "-oat1" for a in command):
+        return PROJECTION_AT1
+    return PROJECTION_AT1 if is_at1_projection(probe) else PROJECTION_AT0
 
 
 def _ratio(a, b) -> float | None:
@@ -938,7 +965,7 @@ def is_gm_lut_run(row: dict) -> bool:
 def is_gm_binary_run(row: dict) -> bool:
     if (row.get("gm_lut_mode") or "").strip().lower() == "binary":
         return True
-    return order_label(row) == "greedymini_binary"
+    return order_label(row).startswith("greedymini_binary")
 
 
 def rows_without_gm_lut(rows: Sequence[dict]) -> list[dict]:
@@ -1003,7 +1030,7 @@ def prepare_runs_xlsx_sheet(rows: list[dict]) -> list[str]:
 
 
 def gm_lut_summary_rows(all_rows: Sequence[dict], main_rows: Sequence[dict]) -> list[dict]:
-    """Summary-format sheet: lex + GM-DNA + GM-bin per GM LUT layout (ratio vs lex)."""
+    """Summary-format sheet: lex + GM-DNA + GM-bin (+ GM-bin-at1) per GM LUT layout (ratio vs lex)."""
     lut_runs = [r for r in all_rows if is_gm_lut_run(r)]
     if not lut_runs:
         return []
@@ -1018,18 +1045,20 @@ def gm_lut_summary_rows(all_rows: Sequence[dict], main_rows: Sequence[dict]) -> 
         mode = (row.get("gm_lut_mode") or "").strip().lower()
         if not mode:
             mode = "binary" if is_gm_binary_run(row) else "dna"
+        if is_at1_projection(row):
+            mode += "_at1"
         by_layout.setdefault(gm_lut_layout_key(row), {}).setdefault(mode, []).append(row)
 
     bundle: list[dict] = []
     for layout_key in sorted(by_layout.keys()):
         modes = by_layout[layout_key]
-        ref = next((modes[m][0] for m in ("dna", "binary") if m in modes and modes[m]), None)
+        ref = next((rs[0] for rs in modes.values() if rs), None)
         if ref is None:
             continue
         hw = _xlsx_match_key(ref, with_seed=False)
         if hw in lex_pool:
             bundle.extend(lex_pool[hw])
-        for mode in ("dna", "binary"):
+        for mode in ("dna", "binary", *sorted(m for m in modes if m not in ("dna", "binary"))):
             if mode in modes:
                 bundle.extend(modes[mode])
 
@@ -1492,6 +1521,7 @@ def _build_xlsx_header_labels() -> dict[str, str]:
         "seed_idx": "seed",
         "signature_order_seed": "seed_hex",
         "gm_lut_mode": "lut",
+        "gm_projection": "projection",
         "n_super_kmers": "n_super_kmers",
         "n_total_kmers": "n_total_kmers",
         "avg_read_len": "avg_read_len",
@@ -1898,8 +1928,9 @@ def index_rows() -> list[dict]:
             "all", "order_label", "signature/minimizer ordering scheme",
             "default (kmc's shipped lex, is_allowed-protected) | lexicographic "
             "(pure canonical lex, no denylist) | hash (random xor) | pcg (xor+PCG) | "
-            "greedymini_dna / greedymini_binary (GreedyMini UHS table) -- see the "
-            "orders sheet for what each one actually does",
+            "greedymini_dna / greedymini_binary (GreedyMini UHS table) | "
+            "greedymini_binary_at1 (same binary table, flipped at1-cg0 projection, kmc -oat1) "
+            "-- see the orders sheet for what each one actually does",
         ),
         row(
             "summary / gm_lut", "n_seeds", "number of repeat runs aggregated into this row's mean/std",
@@ -2021,7 +2052,19 @@ ORDER_DESCRIPTIONS: dict[str, tuple[str, str]] = {
         "for a binary .gm source); a storage-format optimization, not a different order.",
         "no",
     ),
+    "greedymini_binary_at1": (
+        "The binary GreedyMini table under the flipped DNA->binary projection (A/T->1, "
+        "C/G->0; kmc -oat1, GM_PROJECTION=at1-cg0) instead of the default at0-cg1 -- a "
+        "different DNA order from greedymini_binary. Expected density left blank: the "
+        "expected-density Monte Carlo reads the at0 _dna.gm sort key and has no at1 model.",
+        "no",
+    ),
 }
+
+# Schemes the expected-density cache (scripts/expected_density.py) has no model
+# for: their expected_density_* cells are left blank on purpose, never filled
+# from another scheme's entry.
+NO_EXPECTED_DENSITY = frozenset({"greedymini_binary_at1"})
 
 
 def _as_float(v) -> float | None:
@@ -2103,7 +2146,7 @@ def orders_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], 
         row: dict = {"order_label": scheme, "description": desc, "is_allowed_denylist": denylist}
         if scheme.startswith("greedymini"):
             row["particular_density_binary_diagnostic_avg"] = bin_diag_avg
-        exp = expected.get(scheme, {})
+        exp = {} if scheme in NO_EXPECTED_DENSITY else expected.get(scheme, {})
         row["expected_density_avg"] = _as_float(exp.get("density_factor_avg"))
         row["expected_density_std"] = _as_float(exp.get("density_factor_std"))
         for ds in datasets:

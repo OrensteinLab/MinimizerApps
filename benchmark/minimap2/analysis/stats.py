@@ -13,9 +13,17 @@ run_seed_experiments.sh, accuracy_paired.py and lib/export.py under
   [0.95, 1/0.95]); paired per-read median log2 ratio with a bootstrap CI.
 - per-read mechanism: within each order, Pearson r between log anchors and log
   per-read time across reads.
-- accuracy: per (dataset, cap, order), paired correct-rate difference vs
-  native (all seeds), Holm-adjusted McNemar p, and TOST at +-0.1 percentage
-  point (90% CI of the difference inside [-0.001, 0.001]).
+- accuracy: per (dataset, cap, order), from accuracy_paired.py's
+  analysis_accuracy_order.csv: the paired correct-rate difference vs native
+  with reads as the independent unit -- per read, d_i = (mean over the
+  order's seeds of correct_i) - native correct_i (all seeds share one native
+  run and one read set, so seeds are not independent replicates and are never
+  pooled as n * n_seeds pairs); mean(d), SE = sd(d) / sqrt(n), its 90% CI
+  (t, df = n - 1) and TOST at +-0.1 percentage point (equivalent iff that CI
+  lies inside [-0.001, 0.001]); p from the paired t-test on d over reads, or
+  the exact McNemar test for a single-run (seed-independent) order; Holm over
+  the orders of each (dataset, cap, subset) block. Datasets without truth
+  (D3, real reads) have no accuracy rows.
 """
 from __future__ import annotations
 
@@ -211,12 +219,13 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
                 common = [k for k in per_read[order] if k in per_read["native"]]
                 lr = [math.log2(per_read[order][k] / per_read["native"][k]) for k in common
                       if per_read[order][k] > 0 and per_read["native"][k] > 0]
-                med = statistics.median(lr)
-                boots = sorted(statistics.median(rng.choices(lr, k=len(lr))) for _ in range(500))
-                row.update({
-                    "per_read_median_log2_ratio": round(med, 4),
-                    "per_read_ci95_lo": round(boots[12], 4), "per_read_ci95_hi": round(boots[487], 4),
-                })
+                if lr:  # no reads timed in both runs: leave the per-read columns blank
+                    med = statistics.median(lr)
+                    boots = sorted(statistics.median(rng.choices(lr, k=len(lr))) for _ in range(500))
+                    row.update({
+                        "per_read_median_log2_ratio": round(med, 4),
+                        "per_read_ci95_lo": round(boots[12], 4), "per_read_ci95_hi": round(boots[487], 4),
+                    })
             block.append(row)
         tested = [r for r in block if "welch_p" in r]
         for r, adj in zip(tested, holm([r["welch_p"] for r in tested])):
@@ -239,41 +248,42 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
 
 
 def accuracy(results: Path) -> list[dict]:
-    f = results / "analysis_accuracy_paired.csv"
+    f = results / "analysis_accuracy_order.csv"
     if not f.is_file():
+        if (results / "analysis_accuracy_paired.csv").is_file():
+            print(f"warning: no {f.name}; rerun analysis/accuracy_paired.py (the per-seed "
+                  "analysis_accuracy_paired.csv alone can't give a reads-as-unit test)")
         return []
-    rows = [r for r in read_csv(f) if r["order"] != "native"]
     out = []
-    groups: dict[tuple, list[dict]] = {}
-    for r in rows:
-        groups.setdefault((r["dataset"], r["mid_occ_cap"], r["order"], r["subset"]), []).append(r)
-    for (ds, cap, order, subset), rr in sorted(groups.items()):
-        n = int(rr[0]["n_reads"])
-        diffs = [float(r["diff_correct_rate"]) for r in rr]
-        # pooled over seeds: sum discordant counts (each seed is its own paired comparison)
-        b = sum(int(r["b_native_only"]) for r in rr)
-        c = sum(int(r["c_order_only"]) for r in rr)
-        N = n * len(rr)
-        d = (c - b) / N
-        se = math.sqrt(max(b + c - (b - c) ** 2 / N, 0)) / N
+    for r in read_csv(f):
+        if r["order"] == "native" or not r.get("diff_correct_rate") or not r.get("p"):
+            continue  # native itself, or an empty subset (no in-repeat reads)
+        d, se, df = float(r["diff_correct_rate"]), float(r["diff_se"]), int(r["df"])
+        tq = t_quantile(0.95, df) if df > 0 else 1.645
+        lo, hi = d - tq * se, d + tq * se
         out.append({
-            "dataset": ds, "mid_occ_cap": cap, "order": order, "subset": subset, "n_seeds": len(rr),
-            "n_reads": n, "diff_correct_rate_mean": round(statistics.mean(diffs), 6),
-            "diff_ci90_lo": round(d - 1.645 * se, 6), "diff_ci90_hi": round(d + 1.645 * se, 6),
-            "tost_equivalent_0.1pp": d - 1.645 * se >= -ACC_MARGIN and d + 1.645 * se <= ACC_MARGIN,
-            "mcnemar_p_min": min(float(r["mcnemar_p"]) for r in rr),
+            "dataset": r["dataset"], "mid_occ_cap": r["mid_occ_cap"], "order": r["order"], "subset": r["subset"],
+            "n_seeds": int(r["n_seeds"]), "n_reads": int(r["n_reads"]),
+            "diff_correct_rate_mean": round(d, 6), "diff_se": round(se, 8),
+            "diff_ci90_lo": round(lo, 6), "diff_ci90_hi": round(hi, 6),
+            "tost_equivalent_0.1pp": lo >= -ACC_MARGIN and hi <= ACC_MARGIN,
+            "test": r["test"], "p": float(r["p"]),
         })
     for key in {(r["dataset"], r["mid_occ_cap"], r["subset"]) for r in out}:
         block = [r for r in out if (r["dataset"], r["mid_occ_cap"], r["subset"]) == key]
-        for r, adj in zip(block, holm([r["mcnemar_p_min"] for r in block])):
-            r["mcnemar_p_min_holm"] = round(adj, 6)
-    return out
+        for r, adj in zip(block, holm([r["p"] for r in block])):
+            r["p_holm"] = round(adj, 6)
+            r["p"] = round(r["p"], 6)
+    return sorted(out, key=lambda r: (r["dataset"], r["mid_occ_cap"], r["subset"], ORDERS.index(r["order"])
+                                      if r["order"] in ORDERS else len(ORDERS)))
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--results-dir", type=Path, required=True)
-    ap.add_argument("--datasets", default="chm13_chrX,grch38_wg,chm13_chrX_ont")
+    # D1, D2, D3 (lib/ and README.md: Datasets); D3 (real reads, no truth) gets
+    # mechanism/timing rows only -- accuracy_paired.py skips it.
+    ap.add_argument("--datasets", default="chm13_chrX,grch38_wg,chm13_rel3_ont")
     args = ap.parse_args(argv)
     adir = args.results_dir / "analysis"
     rng = random.Random(11)

@@ -7,20 +7,24 @@
 # Usage: run_seed_experiments.sh <dataset> <n_reads> <reps> <cap|default>...
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
-ROOT=${MINIMAP2_BENCH_ROOT:-/localdata/shay_sirek/minimap2}
-BIN="$REPO/minimap2/minimap2"
-PY=${PYTHON:-/usr/bin/python3.11}
+# Same .env / PYTHON / MINIMAP2_BIN resolution as minimap2_bench.sh.
+source "$HERE/lib/env.sh"
+source "$HERE/lib/constants.sh"
+load_bench_env
+DATA="$MINIMAP2_DATA_DIR"
+RESULTS="$MINIMAP2_RESULTS_DIR"
+BIN="$MINIMAP2_BIN"
+PY="$PYTHON"
 ORDERS="native xor xor-pcg-hash greedymini greedymini-at1 mod-minimizer-xor"
 
 ds=$1 n_reads=$2 reps=$3; shift 3
-out="$ROOT/results/analysis/$ds"
+out="$RESULTS/analysis/$ds"
 mkdir -p "$out"
 sample="$out/sample_${n_reads}.fa"
 preset=map-pb
-[ -f "$ROOT/data/$ds/preset" ] && preset=$(tr -d '[:space:]' < "$ROOT/data/$ds/preset")
+[ -f "$DATA/$ds/preset" ] && preset=$(tr -d '[:space:]' < "$DATA/$ds/preset")
 if [ ! -s "$sample" ]; then
-  "$PY" - "$ROOT/data/$ds/reads.fa" "$n_reads" "$sample" <<'EOF'
+  "$PY" - "$DATA/$ds/reads.fa" "$n_reads" "$sample" <<'EOF'
 import random, sys
 src, n, dst = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 names, seqs, cur = [], {}, None
@@ -37,20 +41,20 @@ EOF
 fi
 
 # The dataset's single k<k>_w<w> run dir (k is its preset's own).
-cond=$(cd "$ROOT/results/runs/$ds" && ls -d k*_w* | grep -v _f | head -1)
-[ -n "$cond" ] || { echo "error: no runs under $ROOT/results/runs/$ds" >&2; exit 1; }
+cond=$(cd "$RESULTS/runs/$ds" && ls -d k*_w* | grep -v _f | head -1)
+[ -n "$cond" ] || { echo "error: no runs under $RESULTS/runs/$ds" >&2; exit 1; }
 
 for cap in "$@"; do
   flag=""
   [ "$cap" != default ] && flag="--cap $cap"
   for o in $ORDERS; do
-    idx="$ROOT/results/runs/$ds/$cond/$o/0/index.mmi"   # same index for both caps
+    idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"   # same index for both caps
     f="$out/seeds/$cap/$o.csv"
     [ -s "$f" ] || "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --seeds --preset "$preset" $flag
   done
   for r in $(seq 1 "$reps"); do
     for o in $(printf '%s\n' $ORDERS | shuf --random-source=<(yes $r)); do
-      idx="$ROOT/results/runs/$ds/$cond/$o/0/index.mmi"
+      idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"
       f="$out/timing/$cap/$o.r$r.csv"
       [ -s "$f" ] || "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --preset "$preset" $flag
     done

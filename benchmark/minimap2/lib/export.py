@@ -43,7 +43,8 @@ computes the theoretical value via Monte Carlo simulation on i.i.d. random
 DNA for that dataset's k, w, mod-minimizer t and HPC setting (k and t differ
 by preset: map-pb k=19 t=9, map-ont k=15 t=5), reusing
 benchmark/common/density.py's shared primitives -- the same ones order.cpp's
-own C++ is built on; cached per (k, w, t, HPC) since it is independent of any
+own C++ is built on; cached per (k, w, t, HPC) plus the GreedyMini table,
+seeds and Monte Carlo sizes (expected_density.py cache_key), since it is independent of any
 actual run.
 
 density_factor is on minimap2's own sketching scale: density_factor = total
@@ -93,7 +94,7 @@ def dataset_preset(dataset_dir: Path, runs: list[dict]) -> str:
 # Grouped so each row-1 category band is one contiguous span:
 # id/params -> density -> total -> build -> map -> accuracy.
 RUN_FIELDS = [
-    "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "n_reads", "n_reads_in_repeat",
+    "dataset", "k", "w", "mid_occ_cap", "order", "mod_t", "seed", "seed_idx", "threads", "n_reads", "n_reads_in_repeat",
     "density_factor", "density_factor_raw_bp", "distinct_minimizers", "avg_occurrences",
     "total_wall_time_sec",
     "build_wall_time_sec", "build_peak_rss_gb", "index_size_mb",
@@ -250,6 +251,9 @@ def flatten(meta: dict) -> dict:
         # the mod-minimizer orders -- blank elsewhere rather than a misleading 5.
         "mod_t": meta.get("mod_t") if str(meta.get("order") or "").startswith("mod-minimizer-") else None,
         "preset": meta.get("preset"),  # absent in runs from before presets were recorded
+        # minimap2 -t; absent in runs from before it was recorded (load_runs
+        # then reads it off the build log's own CMD line)
+        "threads": meta.get("threads"),
         "distinct_minimizers": meta.get("distinct_minimizers"),
         "avg_occurrences": meta.get("avg_occurrences"),
         # raw-bp scale as written by write_meta.py; attach_sketch_density()
@@ -282,6 +286,8 @@ def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]
             continue
         if row["mid_occ"] is None:
             row["mid_occ"] = _map_log_mid_occ(meta_path.parent / "map.log")
+        if row["threads"] is None:
+            row["threads"] = _log_threads(meta_path.parent / "build.log")
         mmi = meta_path.parent / "index.mmi"
         row["index_size_mb"] = round(mmi.stat().st_size / 1e6, 1) if mmi.is_file() else None
         rows.append(row)
@@ -307,6 +313,21 @@ def _map_log_mid_occ(map_log: Path) -> int | None:
         return None
     m = re.search(r"mid_occ = (\d+)", map_log.read_text(errors="replace"))
     return int(m.group(1)) if m else None
+
+
+def _log_threads(log: Path) -> int | None:
+    """Runs from before write_meta.py recorded threads: the -t on minimap2's
+    own '[M::main] CMD: ...' log line."""
+    if not log.is_file():
+        return None
+    m = re.search(r"\[M::main\] CMD:.*?\s-t\s*(\d+)", log.read_text(errors="replace"))
+    return int(m.group(1)) if m else None
+
+
+def _threads_text(runs: list[dict]) -> str:
+    """The -t value(s) the exported runs used, for the overview text."""
+    vals = sorted({int(r["threads"]) for r in runs if r.get("threads") is not None})
+    return "/".join(str(v) for v in vals) if vals else "<threads>"
 
 
 def _block(row: dict) -> tuple:
@@ -553,7 +574,7 @@ def orders_field_order(summary: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _ID_FIELDS = frozenset({
-    "dataset", "order", "seed", "seed_idx", "k", "w", "mod_t", "mid_occ_cap", "n_seeds", "n_reads", "n_reads_in_repeat",
+    "dataset", "order", "seed", "seed_idx", "threads", "k", "w", "mod_t", "mid_occ_cap", "n_seeds", "n_reads", "n_reads_in_repeat",
 })
 _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
@@ -596,7 +617,9 @@ def _orders_field_category(field: str) -> str:
 OVERVIEW_FIELDS = ["sheet", "column", "meaning"]
 
 
-def overview_rows() -> list[dict]:
+def overview_rows(runs: list[dict] | None = None) -> list[dict]:
+    threads = _threads_text(runs or [])
+
     def row(sheet: str, column: str, meaning: str) -> dict:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
@@ -607,6 +630,7 @@ def overview_rows() -> list[dict]:
         row("summary/runs", "mid_occ_cap", "map-time repeat-filter condition: 'default' = minimap2 picks mid_occ itself per index; a number = fixed with -f <N> for every order (set to native's own default value, so all orders filter repeats by the same rule). Each (dataset, mid_occ_cap) is its own block: own native baseline, divider, correlation rows"),
         row("all", "order", "minimizer order: native (minimap2's own hash) | xor | xor-pcg-hash | greedymini | greedymini-at1 (flipped AT/CG projection) | mod-minimizer-xor -- see orders sheet"),
         row("runs", "mod_t", "t-mer length of mod-minimizer's inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); blank for non-mod orders, merged across each order's seeds"),
+        row("runs", "threads", "minimap2 -t for build and map (meta.json; older runs: the build log's CMD line)"),
         row("runs", "seed / seed_idx", "order seed (XOR key) and its index in config.yaml's shared seed list; native and greedymini(-at1) are seed-independent, so run once (seed_idx 0)"),
         row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini/greedymini-at1, 5 otherwise)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "reads in the dataset / of those, simulated reads whose true origin overlaps repeats.bed (chm13_chrX: the DXZ1 centromeric array, the paper's Table 3; grch38_wg: a chr9 segmental duplication pair, our addition; chm13_rel3_ont: none)"),
@@ -617,9 +641,9 @@ def overview_rows() -> list[dict]:
         row("summary/runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density orders are higher here"),
         # --- total / build / map
         row("summary/runs", "total_wall_time_sec", "build_wall_time_sec + map_wall_time_sec: end-to-end cost of one run"),
-        row("summary/runs", "build_wall_time_sec / build_peak_rss_gb", "index build (minimap2 -d -x <preset> -k <k> -w 10 -t 16): wall time and peak memory (GB = 1024^3 bytes), from /usr/bin/time -v"),
+        row("summary/runs", "build_wall_time_sec / build_peak_rss_gb", f"index build (minimap2 -d -x <preset> -k <k> -w 10 -t {threads}; runs sheet: threads): wall time and peak memory (GB = 1024^3 bytes), from /usr/bin/time -v"),
         row("summary/runs", "mid_occ (summary: mid_occ_mean)", "effective repeat-filter threshold minimap2 used when mapping (its own '[M::mm_mapopt_update] mid_occ = N' log line): any minimizer occurring > mid_occ times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below"),
-        row("summary/runs", "map_wall_time_sec / map_peak_rss_gb", "mapping (minimap2 -x <preset> -c -t 16 [-f cap], as the paper's -cx map-pb / -cx map-ont): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
+        row("summary/runs", "map_wall_time_sec / map_peak_rss_gb", f"mapping (minimap2 -x <preset> -c -t {threads} [-f cap], as the paper's -cx map-pb / -cx map-ont): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
         # --- accuracy
         row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads (1 - frac_mapped = the paper's 'unmapped reads'); the only accuracy metric for chm13_rel3_ont (real reads, no truth), as in the paper"),
         row("summary/runs", "frac_correct", "reads whose primary alignment is on the true contig and overlaps the true interval by >= 10% of their union / n_reads -- the Winnowmap / minimap2 papers' own criterion"),
@@ -1091,7 +1115,7 @@ def main(argv=None) -> int:
         )
     orders = orders_rows(summary, expected)
 
-    write_csv(args.results_dir / "minimap2_overview.csv", OVERVIEW_FIELDS, overview_rows())
+    write_csv(args.results_dir / "minimap2_overview.csv", OVERVIEW_FIELDS, overview_rows(runs))
     write_csv(args.results_dir / "minimap2_datasets.csv", dataset_field_order(), datasets)
     write_csv(args.results_dir / "minimap2_summary.csv", summary_field_order(), summary)
     write_csv(args.results_dir / "minimap2_runs.csv", RUN_FIELDS, runs)
@@ -1100,7 +1124,7 @@ def main(argv=None) -> int:
 
     # sheet order as sshash's export: legend, orders, datasets, summary, runs
     write_xlsx(args.results_dir / "minimap2_results.xlsx", [
-        ("overview", OVERVIEW_FIELDS, overview_rows()),
+        ("overview", OVERVIEW_FIELDS, overview_rows(runs)),
         ("orders", orders_field_order(summary), orders),
         ("datasets", dataset_field_order(), datasets),
         ("summary", summary_field_order(), summary),

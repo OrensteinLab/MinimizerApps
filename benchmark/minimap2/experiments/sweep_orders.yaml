@@ -8,13 +8,13 @@
 # through the shared engine (a scripts/experiments.py mirroring sshash's) is
 # a natural next step once the sweep needs to vary k/w/seeds/datasets rather
 # than just the fixed order list below.
-description: "Compare minimizer orders at minimap2's own default k=15,w=10"
+description: "Compare minimizer orders at each dataset preset's own k (map-pb k=19, map-ont k=15), w=10"
 
 defaults:
   dataset: smoke
-  k: 15
+  # k = the dataset preset's default (map-pb 19, map-ont 15; lib/constants.sh
+  # preset_default_k), mod-minimizer t = 4 + (k-4) % w (9 / 5); K / MOD_T override
   w: 10
-  mod_t: 5
   seed: 0x2545F4914F6CDD1D
 
 configs:

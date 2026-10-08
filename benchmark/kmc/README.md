@@ -303,7 +303,7 @@ Re-export only: `benchmark/kmc3_bench.sh export` (or `python3 -m scripts export 
 
 **Shared keys** (all result CSVs): `dataset`, `k`, `input_format` (`gzip` \| `plain`), `config_tag` (e.g. `gzip_n512_t12_m12`, `gzip_n1536_t24_m8_sm`), `n_bins`, `threads`, `strict_memory`, `mem_limit_gb`.
 
-**Schemes:** `order_label` is one of `default`, `lexicographic`, `hash`, `pcg`, `greedymini_dna` / `greedymini_binary` (from `-O default|lex|hash|pcg|gm`). Custom runs also have `signature_order_label` (e.g. `rand_hash_s0xDEADBEEF`, `gm_w20_k9_canonical_s0xdeadbeef`).
+**Schemes:** `order_label` is one of `default`, `lexicographic`, `hash`, `pcg`, `greedymini_dna` / `greedymini_binary` (from `-O default|lex|hash|pcg|gm`), or `greedymini_binary_at1` for `GM_PROJECTION=at1-cg0` runs (its own summary/orders row, never pooled with the at0 `greedymini_binary` row; detected from `-oat1` in meta.json's command, else the scheme dir / `_at1` label; its expected density is left blank -- the expected-density Monte Carlo models only the at0 projection). Runs carry a `gm_projection` column (`at0-cg1` / `at1-cg0`, blank for non-GM). Custom runs also have `signature_order_label` (e.g. `rand_hash_s0xDEADBEEF`, `gm_w20_k9_canonical_s0xdeadbeef`).
 
 | file | additional columns |
 |---|---|

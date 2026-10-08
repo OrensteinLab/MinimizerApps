@@ -7,16 +7,29 @@ contig, same strand, overlap >= 10% of the union of true and mapped spans),
 recomputed per read so
 two orders can be compared on the *same* reads:
 
-- McNemar exact test on the discordant reads (b = native right / order wrong,
-  c = native wrong / order right), two-sided binomial p.
-- 95% CI of the paired difference in correct rate, (c - b) / n, with the
-  paired variance (b + c - (b - c)^2 / n) / n^2.
+- Per seed run (analysis_accuracy_paired.csv, descriptive): McNemar exact
+  test on the discordant reads (b = native right / order wrong, c = native
+  wrong / order right), two-sided binomial p, and the 95% CI of the paired
+  difference in correct rate, (c - b) / n, with the paired variance
+  (b + c - (b - c)^2 / n) / n^2.
+- Per order (analysis_accuracy_order.csv, the inferential test stats.py uses):
+  reads are the independent unit. Every seed of an order is mapped against
+  the *same* native run on the *same* reads, so seeds are not independent
+  replicates and their discordant counts must not be pooled as n * n_seeds
+  pairs. Instead, per read i, d_i = (mean over the order's seeds of
+  correct_i) - native correct_i; the difference is mean(d) with
+  SE = sd(d) / sqrt(n), and p is the paired t-test on d over reads (df =
+  n - 1; n is in the hundreds to ~100k, so the CLT holds even for the
+  {-1, ..., 1}-valued d_i). A seed-independent order (one run:
+  greedymini / greedymini-at1, or any order run with a single seed) is the usual
+  paired 0/1 comparison, tested with the exact McNemar test instead.
 - MAPQ curve: for each threshold q, the fraction of reads with a primary at
   MAPQ >= q and the error rate among them (minimap2's own operating-point
   metric).
 
-Writes analysis_accuracy_paired.csv and analysis_mapq_curve.csv under
---results-dir. Usage:
+Writes analysis_accuracy_paired.csv, analysis_accuracy_order.csv and
+analysis_mapq_curve.csv under --results-dir (nothing when no dataset has a
+truth.tsv). Usage:
   python3.11 analysis/accuracy_paired.py --results-dir $MINIMAP2_RESULTS_DIR --data-dir $MINIMAP2_DATA_DIR
 """
 from __future__ import annotations
@@ -29,6 +42,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from score_accuracy import load_truth, overlap_len  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stats import t_two_sided_p  # noqa: E402  (same directory; no scipy)
 
 MAPQ_THRESHOLDS = (0, 1, 5, 10, 20, 30, 40, 50, 60)
 
@@ -82,6 +97,35 @@ def mcnemar_p(b: int, c: int) -> float:
     return min(1.0, 2 * tail)
 
 
+def paired_over_reads(order_ok: list[list[int]], base_ok: list[int], idx) -> dict:
+    """Seed-averaged paired difference vs native with reads as the unit (see
+    the module docstring): d_i = mean_s(order correct_i) - native correct_i."""
+    idx = list(idx)
+    n, n_seeds = len(idx), len(order_ok)
+    d = [sum(ok[i] for ok in order_ok) / n_seeds - base_ok[i] for i in idx]
+    out = {"n_seeds": n_seeds, "n_reads": n, "diff_correct_rate": None, "diff_se": None,
+           "df": None, "test": None, "p": None}
+    if n == 0:
+        return out
+    mean = sum(d) / n
+    sd = math.sqrt(sum((x - mean) ** 2 for x in d) / (n - 1)) if n > 1 else 0.0
+    se = sd / math.sqrt(n)
+    out.update({"diff_correct_rate": round(mean, 6), "diff_se": round(se, 8), "df": n - 1})
+    if n_seeds == 1:
+        b = sum(1 for x in d if x < 0)
+        c = sum(1 for x in d if x > 0)
+        out.update({"test": "exact_mcnemar", "p": mcnemar_p(b, c)})
+    else:
+        out.update({"test": "paired_t_over_reads", "p": _paired_t_p(mean, se, n - 1)})
+    return out
+
+
+def _paired_t_p(mean: float, se: float, df: int) -> float:
+    if se == 0:
+        return 1.0 if mean == 0 else 0.0
+    return t_two_sided_p(abs(mean / se), df)
+
+
 def runs_by_block(results: Path) -> dict[tuple[str, str], dict[str, list[Path]]]:
     """{(dataset, cap): {order: [run dirs sorted by seed_idx]}}."""
     out: dict[tuple[str, str], dict[str, list[Path]]] = {}
@@ -105,7 +149,7 @@ def main(argv=None) -> int:
     ap.add_argument("--data-dir", type=Path, required=True)
     args = ap.parse_args(argv)
 
-    paired_rows, curve_rows = [], []
+    paired_rows, order_rows, curve_rows = [], [], []
     truths: dict[str, dict] = {}
     for (ds, cap), orders in sorted(runs_by_block(args.results_dir).items()):
         if not (args.data_dir / ds / "truth.tsv").is_file():
@@ -118,8 +162,10 @@ def main(argv=None) -> int:
             continue
         _, base_ok, _ = correctness(truth, primary_hits(orders["native"][0] / "map.paf"))
         for order, runs in sorted(orders.items()):
+            order_ok: list[list[int]] = []
             for run in runs:
                 _, ok, mq = correctness(truth, primary_hits(run / "map.paf"))
+                order_ok.append(ok)
                 for subset, mask in (("all", None), ("in_repeat", rep)):
                     idx = range(len(ok)) if mask is None else [i for i, m in enumerate(mask) if m]
                     n = len(idx)
@@ -146,9 +192,24 @@ def main(argv=None) -> int:
                         "mapq_ge": q, "frac_reads": round(len(sel) / n, 6),
                         "error_rate": round(wrong / len(sel), 6) if sel else None, "n_wrong": wrong,
                     })
+            if order != "native":
+                for subset, mask in (("all", None), ("in_repeat", rep)):
+                    idx = range(len(base_ok)) if mask is None else [i for i, m in enumerate(mask) if m]
+                    res = paired_over_reads(order_ok, base_ok, idx)
+                    if res["p"] is not None:
+                        res["p"] = round(res["p"], 8)
+                    order_rows.append({"dataset": ds, "mid_occ_cap": cap, "order": order, "subset": subset, **res})
             print(f"{ds} {cap} {order}: {len(runs)} run(s)", file=sys.stderr)
 
-    for name, rows in (("analysis_accuracy_paired.csv", paired_rows), ("analysis_mapq_curve.csv", curve_rows)):
+    if not paired_rows:
+        print("no dataset with truth.tsv and a native run: nothing to compare (real-read datasets "
+              "such as D3 have no per-read correctness)", file=sys.stderr)
+        return 0
+    for name, rows in (("analysis_accuracy_paired.csv", paired_rows),
+                       ("analysis_accuracy_order.csv", order_rows),
+                       ("analysis_mapq_curve.csv", curve_rows)):
+        if not rows:
+            continue
         path = args.results_dir / name
         with path.open("w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0]))

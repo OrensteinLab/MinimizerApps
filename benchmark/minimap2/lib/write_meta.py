@@ -51,6 +51,7 @@ def main(argv=None) -> int:
     ap.add_argument("--mid-occ-cap", default="", help="-f value passed at map time (empty = minimap2's own per-index default)")
     ap.add_argument("--mid-occ", default="", help="effective mid_occ minimap2 reported in its map log")
     ap.add_argument("--preset", default="map-pb", help="minimap2 -x preset used for build and map")
+    ap.add_argument("--threads", type=int, default=None, help="minimap2 -t used for build and map (lib/constants.sh THREADS)")
     ap.add_argument("--build-time", type=Path, required=True)
     ap.add_argument("--map-time", type=Path, required=True)
     ap.add_argument("--density", type=int, default=None, help="distinct minimizers reported by minimap2 -d (informational only -- NOT the density_factor numerator, see below)")
@@ -71,6 +72,7 @@ def main(argv=None) -> int:
         "mid_occ_cap": int(args.mid_occ_cap) if args.mid_occ_cap else None,
         "mid_occ": int(args.mid_occ) if args.mid_occ else None,
         "preset": args.preset,
+        "threads": args.threads,
         "build": parse_time_v(args.build_time),
         "map": parse_time_v(args.map_time),
         "distinct_minimizers": args.density,

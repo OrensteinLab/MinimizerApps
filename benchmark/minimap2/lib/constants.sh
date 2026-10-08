@@ -26,6 +26,12 @@ elif command -v /usr/bin/python3.11 >/dev/null 2>&1; then
 else
   PYTHON="${PYTHON:-python3}"
 fi
+# Without the conda env, fall back to whatever is on PATH (empty if absent:
+# cmd_pbsim_reads / export report a missing tool themselves) so `set -u`
+# callers never hit an unbound variable.
+SAMTOOLS="${SAMTOOLS:-$(command -v samtools 2>/dev/null || true)}"
+PBSIM="${PBSIM:-$(command -v pbsim 2>/dev/null || true)}"
+PBSIM1="${PBSIM1:-}"
 MINIMAP2_BIN="${MINIMAP2_BIN:-$REPO_ROOT/minimap2/minimap2}"
 
 # k defaults to the dataset preset's own (preset_default_k), as the Winnowmap
