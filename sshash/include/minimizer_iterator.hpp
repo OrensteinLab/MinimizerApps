@@ -507,8 +507,8 @@ private:
 };
 
 /*
-    The strand-symmetric mod-minimizer (util::compute_mod_minimizer), incrementally: the hashes
-    of the kmer's T = k - t + 1 t-mers live in a ring (64 slots, locus x of the current kmer at
+    The strand-symmetric mod-minimizer (util::compute_mod_minimizer), incrementally (GreedyMini:
+    rank first, see next_gm): the hashes of the kmer's T = k - t + 1 t-mers live in a ring (64 slots, locus x of the current kmer at
     slot (m_base + x) & 63), with the minimum hash and its leftmost and rightmost loci (a tie
     between them is resolved from the ring, util::mod_tie_offset). A slide
     hashes the one new t-mer; the whole ring is re-scanned only when the leftmost minimum leaves
@@ -548,6 +548,7 @@ struct mod_minimizer_iterator {
     __attribute__((noinline)) minimizer_info next(Kmer kmer) {
         Kmer kmer_rc = kmer;
         kmer_rc.reverse_complement_inplace(m_k);
+        if constexpr (is_gm_mode(Mode)) return next_gm(kmer, kmer_rc);
 
         if (!m_valid) {
             m_base = 0;
@@ -594,13 +595,152 @@ struct mod_minimizer_iterator {
     }
 
 private:
+    /*
+        GreedyMini, rank first (as strand_invariant_minimizer_iterator): the ring keeps the
+        16-bit table rank of every t-mer (one load from the Sigma plane of the kmer, rolled one
+        base per call); a full hash is computed only for a t-mer whose rank equals the minimum
+        rank (the hash of the current leftmost minimum lazily), and in a re-scan only for the
+        t-mers sharing the minimum rank. A hash is (rank, tie-break) with the rank in its top
+        bits, so the result is the one of comparing full hashes.
+    */
+    minimizer_info next_gm(Kmer const& kmer, Kmer const& kmer_rc) {
+        if (!m_valid) {
+            m_base = 0;
+            m_sigma = sigma_of(kmer);
+            for (uint64_t x = 0; x != m_T; ++x) {
+                m_rank[x] = hasher().centre_rank(m_sigma, int(x));
+            }
+            rescan_gm(kmer);
+            m_valid = true;
+        } else {
+            m_base = (m_base + 1) & 63;
+            m_sigma = hasher().roll_sigma(m_sigma, kmer.at(m_k - 1), int(m_k));
+            const uint16_t rank = hasher().centre_rank(m_sigma, int(m_T - 1));
+            m_rank[slot(m_T - 1)] = rank;
+            if (m_left == 0) {  // the leftmost minimum left the kmer
+                rescan_gm(kmer);
+            } else {
+                m_left -= 1;
+                m_right -= 1;
+                if (rank < m_min_rank) {
+                    m_min_rank = rank;
+                    m_left = m_T - 1;
+                    m_right = m_T - 1;
+                    m_min_hash_valid = false;
+                } else if (rank == m_min_rank) {
+                    const uint64_t hash = hash_of(kmer, m_T - 1);
+                    const uint64_t min_hash = current_min_hash(kmer);
+                    if (hash < min_hash) {
+                        m_min_hash = hash;
+                        m_left = m_T - 1;
+                        m_right = m_T - 1;
+                    } else if (hash == min_hash) {
+                        m_right = m_T - 1;
+                    }
+                }
+            }
+        }
+#ifndef NDEBUG
+        {
+            const uint64_t kmask = m_k >= 64 ? ~uint64_t(0) : (uint64_t(1) << m_k) - 1;
+            assert((m_sigma & kmask) == sigma_of(kmer));
+        }
+#endif
+
+        const bool fwd = util::mod_forward_preferred(kmer, kmer_rc, m_k);
+        uint64_t p;
+        if (m_left == m_right) {
+            p = util::mod_offset(m_left, m_w, m_T, fwd);
+        } else {  // a tie at the minimum hash: the hashes of the minimal-rank loci, on demand
+            const uint64_t min_hash = current_min_hash(kmer);
+            uint64_t hashes[64];
+            for (uint64_t x = m_left; x <= m_right; ++x) {
+                hashes[x] = m_rank[slot(x)] == m_min_rank ? hash_of(kmer, x)
+                                                          : constants::invalid_uint64;
+            }
+            p = util::mod_tie_offset(hashes, 0, m_T, m_w, min_hash, m_left, m_right, fwd);
+        }
+        Kmer mwin = kmer;
+        mwin.drop_chars(p);
+        minimizer_info mini_info(util::canonical_mmer_at<Kmer>(mwin, kmer_rc, m_k, m_m, p),
+                                 m_position + p, p);
+        m_position += 1;
+
+        assert(minimizer_info(mini_info.minimizer, mini_info.pos_in_kmer) ==
+               util::compute_minimizer<Kmer>(kmer, kmer_rc, m_k, m_m, hasher()));
+        return mini_info;
+    }
+
+    uint64_t sigma_of(Kmer const& kmer) const {
+        uint64_t lo = uint64_t(kmer), hi = 0;
+        if constexpr (sizeof(kmer.bits) > 8) hi = uint64_t(kmer.bits >> 64);
+        return hasher().sigma_of_kmer(lo, hi, int(m_k));
+    }
+
+    /* full GreedyMini hash of the t-mer at locus x of the kmer */
+    uint64_t hash_of(Kmer kmer, uint64_t x) const {
+        kmer.drop_chars(x);
+        kmer.take_chars(m_t);
+        return hasher().hash_gm(uint64_t(kmer));
+    }
+
+    uint64_t current_min_hash(Kmer const& kmer) {
+        if (!m_min_hash_valid) {
+            m_min_hash = hash_of(kmer, m_left);
+            m_min_hash_valid = true;
+        }
+        return m_min_hash;
+    }
+
+    /* minimum rank over the ring; full hashes only if several t-mers share it */
+    void rescan_gm(Kmer const& kmer) {
+        uint16_t min_rank = m_rank[slot(0)];
+        uint64_t first = 0, count = 1;
+        for (uint64_t x = 1; x != m_T; ++x) {
+            const uint16_t r = m_rank[slot(x)];
+            if (r < min_rank) {
+                min_rank = r;
+                first = x;
+                count = 1;
+            } else if (r == min_rank) {
+                count += 1;
+            }
+        }
+        m_min_rank = min_rank;
+        m_left = first;
+        m_right = first;
+        if (count == 1) {
+            m_min_hash_valid = false;
+            return;
+        }
+        m_min_hash = hash_of(kmer, first);
+        m_min_hash_valid = true;
+        for (uint64_t x = first + 1; x != m_T; ++x) {
+            if (m_rank[slot(x)] != min_rank) continue;
+            const uint64_t hash = hash_of(kmer, x);
+            if (hash < m_min_hash) {
+                m_min_hash = hash;
+                m_left = x;
+                m_right = x;
+            } else if (hash == m_min_hash) {
+                m_right = x;
+            }
+        }
+    }
+
     uint64_t m_k = 0, m_m = 0, m_t = 0, m_w = 0, m_T = 0;
     uint64_t m_position = 0;  // position of the next kmer in the sequence
     uint64_t m_base = 0;
     uint64_t m_min_hash = 0, m_left = 0, m_right = 0;  // loci in the current kmer
     bool m_valid = false;
     hasher_type const* m_hasher_p = nullptr;  // the hasher must outlive the iterator
-    uint64_t m_ring[64];
+    uint64_t m_ring[64];  // xor: the t-mer hashes
+    /* GreedyMini (rank first): the t-mer ranks, the rolled Sigma plane, the minimum rank and
+       the (lazily computed) full hash of the leftmost minimum */
+    uint16_t m_rank[64];
+    uint64_t m_sigma = 0;
+    uint16_t m_min_rank = 0;
+    bool m_min_hash_valid = false;
 
     hasher_type const& hasher() const { return *m_hasher_p; }
     uint64_t slot(uint64_t x) const { return (m_base + x) & 63; }

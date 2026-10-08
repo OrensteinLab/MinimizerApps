@@ -701,23 +701,51 @@ minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, cons
     uint64_t min_hash = constants::invalid_uint64;
     uint64_t x_l = 0, x_r = 0;
     uint64_t hashes[64];
-    Kmer window = kmer;
-    for (uint64_t x = 0; x != T; ++x, window.drop_char()) {
-        uint64_t hash;
-        if constexpr (is_gm_mode(Mode)) {
+    if constexpr (is_gm_mode(Mode)) {
+        /* Rank first (as compute_minimizer_ranked): a GreedyMini hash is (rank, tie-break) with
+           the rank in its top bits, so the t-mers are ranked from the Sigma plane of the whole
+           kmer (one table load each) and only those sharing the minimum rank get a full hash;
+           the others keep hashes[x] = invalid (never equal to the minimum). */
+        uint64_t lo = uint64_t(kmer), hi = 0;
+        if constexpr (sizeof(kmer.bits) > 8) hi = uint64_t(kmer.bits >> 64);
+        const uint64_t sigma = hasher.sigma_of_kmer(lo, hi, int(k));
+        uint16_t ranks[64];
+        uint16_t min_rank = 0xFFFF;
+        for (uint64_t x = 0; x != T; ++x) {
+            ranks[x] = hasher.centre_rank(sigma, int(x));
+            min_rank = ranks[x] < min_rank ? ranks[x] : min_rank;
+        }
+        bool first = true;
+        Kmer window = kmer;
+        for (uint64_t x = 0; x != T; ++x, window.drop_char()) {
+            hashes[x] = constants::invalid_uint64;
+            if (ranks[x] != min_rank) continue;
             Kmer tmer = window;
             tmer.take_chars(t);
-            hash = hasher.hash_gm(uint64_t(tmer));
-        } else {
-            hash = hasher.plain<Mode>().hash(canonical_mmer_at<Kmer>(window, kmer_rc, k, t, x));
+            const uint64_t hash = hasher.hash_gm(uint64_t(tmer));
+            hashes[x] = hash;
+            if (first or hash < min_hash) {
+                first = false;
+                min_hash = hash;
+                x_l = x;
+                x_r = x;
+            } else if (hash == min_hash) {
+                x_r = x;
+            }
         }
-        hashes[x] = hash;
-        if (x == 0 or hash < min_hash) {
-            min_hash = hash;
-            x_l = x;
-            x_r = x;
-        } else if (hash == min_hash) {
-            x_r = x;
+    } else {
+        Kmer window = kmer;
+        for (uint64_t x = 0; x != T; ++x, window.drop_char()) {
+            const uint64_t hash =
+                hasher.plain<Mode>().hash(canonical_mmer_at<Kmer>(window, kmer_rc, k, t, x));
+            hashes[x] = hash;
+            if (x == 0 or hash < min_hash) {
+                min_hash = hash;
+                x_l = x;
+                x_r = x;
+            } else if (hash == min_hash) {
+                x_r = x;
+            }
         }
     }
     const bool fwd = mod_forward_preferred(kmer, kmer_rc, k);
