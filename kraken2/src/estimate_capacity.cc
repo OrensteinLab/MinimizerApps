@@ -208,6 +208,8 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         break;
     }
   }
+  if (opts.gm_projection != GmProjection::AT0_CG1 && opts.order != Order::GM)
+    errx(EX_USAGE, "-P (--gm-projection) applies to --order greedymini only");
 
   if (opts.spaced_seed_mask != DEFAULT_SPACED_SEED_MASK)
     ExpandSpacedSeedMask(opts.spaced_seed_mask,

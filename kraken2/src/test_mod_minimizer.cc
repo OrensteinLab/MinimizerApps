@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <fstream>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -19,6 +20,8 @@
 #include <vector>
 
 using namespace kraken2;
+
+static std::string revcomp_string(const std::string &s);
 
 static int failures = 0;
 
@@ -777,20 +780,18 @@ static void test_gm_scanner_rank_raw_key_canonical() {
   const int w = k - l + 1;
   std::vector<uint64_t> expect;
   for (size_t start = 0; start + (size_t)k <= seq.size(); start++) {
-    const uint64_t mer0 = pack_dna_lmer(seq, start, l);
-    uint64_t best_rank = ranker.Rank(mer0);
-    uint64_t best_mer = mer0;
-    for (int j = 1; j < w; j++) {
+    // minimum of (Rank, DNA-lex key): equal Rank values break by the key
+    uint64_t best_rank = UINT64_MAX, key = UINT64_MAX;
+    for (int j = 0; j < w; j++) {
       const uint64_t mer = pack_dna_lmer(seq, start + (size_t)j, l);
       const uint64_t r = ranker.Rank(mer);
-      if (r < best_rank) {
+      const uint64_t c =
+          dna_canonical_representation(mer, (uint8_t)l, CURRENT_REVCOM_VERSION);
+      if (j == 0 || r < best_rank || (r == best_rank && c < key)) {
         best_rank = r;
-        best_mer = mer;
+        key = c;
       }
     }
-    const uint64_t key =
-        dna_canonical_representation(best_mer, (uint8_t)l,
-                                     CURRENT_REVCOM_VERSION);
     check(key <= dna_reverse_complement(key, (uint8_t)l, CURRENT_REVCOM_VERSION),
           "expected GM key is DNA-lex");
     expect.push_back(key);
@@ -831,24 +832,25 @@ static std::vector<uint64_t> expect_gm_minimizer_keys(
       (l >= 32) ? ~0ULL : ((1ULL << (2 * l)) - 1ULL);
   GMRanker ranker(l, 2, 0, lmer_mask, true, table, spaced, revcom_version);
   const int w = k - l + 1;
+  auto hash_key = [&](uint64_t mer) {
+    uint64_t key = dna_canonical_representation(mer, (uint8_t)l, revcom_version);
+    return spaced ? (key & spaced) : key;
+  };
   std::vector<uint64_t> expect;
   for (size_t start = 0; start + (size_t)k <= seq.size(); start++) {
-    const uint64_t mer0 = pack_dna_lmer(seq, start, l);
-    uint64_t best_rank = ranker.Rank(mer0);
-    uint64_t best_mer = mer0;
-    for (int j = 1; j < w; j++) {
+    // minimum of (Rank, hash key) (toggle 0): equal Rank values, e.g. all
+    // infinite, are broken by the strand-invariant key
+    uint64_t best_rank = UINT64_MAX, best_key = UINT64_MAX;
+    for (int j = 0; j < w; j++) {
       const uint64_t mer = pack_dna_lmer(seq, start + (size_t)j, l);
       const uint64_t r = ranker.Rank(mer);
-      if (r < best_rank) {
+      const uint64_t key = hash_key(mer);
+      if (j == 0 || r < best_rank || (r == best_rank && key < best_key)) {
         best_rank = r;
-        best_mer = mer;
+        best_key = key;
       }
     }
-    uint64_t key =
-        dna_canonical_representation(best_mer, (uint8_t)l, revcom_version);
-    if (spaced)
-      key &= spaced;
-    expect.push_back(key);
+    expect.push_back(best_key);
   }
   return expect;
 }
@@ -972,6 +974,94 @@ static void test_gm_rank_first_matches_rank_path() {
                         << " mode=" << mode << " revcom=" << revcom << "\n";
           }
         }
+      }
+    }
+  }
+}
+
+// MINIMIZER+GM: a read and its reverse complement select the same minimizer
+// for every k-mer, also in windows where no l-mer has a finite rank (non-UHS
+// l-mers break ties by a strand-invariant key, not by position). Real table
+// (centre extension, rank-first and Rank() paths) and random mirror-symmetric
+// tables with many infinite ranks (l == gm_k and centre); random and
+// low-complexity sequences.
+static std::vector<uint64_t> gm_strand_keys(MinimizerScanner &sc,
+                                            const std::string &seq) {
+  sc.LoadSequence(seq);
+  std::vector<uint64_t> out;
+  while (uint64_t *mm = sc.NextMinimizer())
+    out.push_back(*mm);
+  return out;
+}
+
+static std::string gm_strand_test_seq(std::mt19937_64 &rng, int kind) {
+  static const char *alphabets[] = {"ACGT", "AACG", "AT", "CG", "AAAC"};
+  const size_t n = 80 + rng() % 500;
+  std::string s;
+  if (kind == 5) {  // short tandem repeat with point mutations
+    std::string unit;
+    for (size_t i = 0, len = 1 + rng() % 6; i < len; i++)
+      unit.push_back("ACGT"[rng() & 3ULL]);
+    while (s.size() < n)
+      s += unit;
+    s.resize(n);
+    for (size_t i = 0; i < n / 40; i++)
+      s[rng() % n] = "ACGT"[rng() & 3ULL];
+    return s;
+  }
+  const char *al = alphabets[kind];
+  const size_t m = std::string(al).size();
+  for (size_t i = 0; i < n; i++)
+    s.push_back(al[rng() % m]);
+  return s;
+}
+
+static void test_gm_minimizer_strand_symmetric() {
+  std::mt19937_64 rng(57);
+  struct Case {
+    std::shared_ptr<const GreedyMiniTable> table;
+    int k, l;
+  };
+  std::vector<Case> cases;
+  const char *paths[] = {"../../orders/GreedyMini/w5_k15_canonical.gm",
+                         "../orders/GreedyMini/w5_k15_canonical.gm",
+                         "orders/GreedyMini/w5_k15_canonical.gm"};
+  for (const char *path : paths) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+      continue;
+    auto real = std::make_shared<const GreedyMiniTable>(
+        MinimizerScanner::load_gm_file(path));
+    cases.push_back({real, 35, 31});
+    cases.push_back({real, 21, 15});
+    break;
+  }
+  for (int gm_k : {4, 6, 9}) {
+    auto table = random_symmetric_table(gm_k, rng);
+    cases.push_back({table, gm_k + 4, gm_k});
+    cases.push_back({table, gm_k + 9, gm_k + 4});
+  }
+  for (const Case &c : cases) {
+    for (const uint64_t toggle : {(uint64_t)0, DEFAULT_TOGGLE_MASK}) {
+      MinimizerScanner sc(c.k, c.l, 0, true, toggle, CURRENT_REVCOM_VERSION,
+                          SketchingScheme::MINIMIZER, Order::GM, "", c.table);
+      for (const bool rank_first : {true, false}) {
+        sc.SetRankFirst(rank_first);
+        size_t bad = 0;
+        for (int it = 0; it < 120; it++) {
+          const std::string seq = gm_strand_test_seq(rng, it % 6);
+          const auto f = gm_strand_keys(sc, seq);
+          auto r = gm_strand_keys(sc, revcomp_string(seq));
+          std::reverse(r.begin(), r.end());
+          if (f != r)
+            bad++;
+        }
+        check(bad == 0, "MINIMIZER+GM: read and reverse complement select "
+                        "the same minimizers");
+        if (bad)
+          std::cerr << "  gm_k=" << c.table->gm_k() << " k=" << c.k
+                    << " l=" << c.l << " toggle=" << (toggle != 0)
+                    << " rank_first=" << rank_first << " bad=" << bad << "\n";
       }
     }
   }
@@ -1316,6 +1406,7 @@ int main() {
   test_gm_scanner_spaced_seed();
   test_gm_scanner_revcom_v0();
   test_gm_rank_first_matches_rank_path();
+  test_gm_minimizer_strand_symmetric();
   test_mod_gm_matches_naive();
   test_mod_revcom_v0_rejected();
   test_mod_kinds_and_logs();

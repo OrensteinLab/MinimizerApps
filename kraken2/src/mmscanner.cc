@@ -413,13 +413,60 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerMod() {
   }
 }
 
+// GreedyMini, the queue back and lmer_ have equal finite order values (the
+// order is not injective on canonical l-mers: l == gm_k packs Gamma but not
+// Sigma; a spaced seed masks the tie-break fields): whether the back stays
+// ahead. Broken like the default xor order, by hash key ^ toggle: strand
+// invariant, so a read and its reverse complement select the same minimizer
+// (keeping the leftmost would depend on the scan direction). Equal keys keep
+// the back (leftmost), which returns the same key anyway.
+bool MinimizerScanner::KeyKeepsBack(uint64_t *key, bool *have_key) {
+  if (! *have_key) {
+    *key = dna_hash_key(lmer_) ^ toggle_mask_;
+    *have_key = true;
+  }
+  return (dna_hash_key(queue_.back().candidate) ^ toggle_mask_) <= *key;
+}
+
+// GreedyMini, a window with no finite rank (all its l-mers outside the UHS):
+// the queue then holds every l-mer of the window (an infinite l-mer is only
+// popped by a later finite one), and the minimizer is the one with the
+// smallest hash key ^ toggle, the KeyKeepsBack order. Only such windows pay
+// for it; infinite l-mers never pop each other in the queue.
+uint64_t MinimizerScanner::InfiniteWindowMinimizer() {
+  uint64_t best = UINT64_MAX, best_key = 0;
+  for (const MinimizerData &d : queue_) {
+    const uint64_t key = dna_hash_key(d.candidate);
+    if ((key ^ toggle_mask_) < best) {
+      best = key ^ toggle_mask_;
+      best_key = key;
+    }
+  }
+  return best_key;
+}
+
+// GreedyMini Rank() path: pop the queue back while it is worse than lmer_
+// with packed value `rank` (UINT64_MAX = infinite, never popped by another
+// infinite l-mer); equal finite values by KeyKeepsBack.
+void MinimizerScanner::PopDominatedGM(uint64_t rank) {
+  uint64_t key = 0;
+  bool have_key = false;
+  while (! queue_.empty()) {
+    const uint64_t back = queue_.back().rank;
+    if (back < rank || (back == rank && (rank == UINT64_MAX ||
+                                         KeyKeepsBack(&key, &have_key))))
+      break;
+    queue_.pop_back();
+  }
+}
+
 // Pop the queue back while it is worse than the l-mer lmer_ with table rank
-// `rank` (the leftmost minimum stays on ties). Equal finite ranks compare the
-// full packed values, which is what Rank() would have returned; infinite
-// ranks are all equal.
+// `rank`. Equal finite ranks compare the full packed values, which is what
+// Rank() would have returned, and equal values KeyKeepsBack; infinite ranks
+// all tie here (InfiniteWindowMinimizer orders them), as in PopDominatedGM.
 void MinimizerScanner::PopDominatedRankFirst(uint64_t rank) {
-  uint64_t value = 0;
-  bool have_value = false;
+  uint64_t value = 0, key = 0;
+  bool have_value = false, have_key = false;
   while (! queue_.empty()) {
     const uint64_t back = queue_.back().rank;
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
@@ -437,7 +484,9 @@ void MinimizerScanner::PopDominatedRankFirst(uint64_t rank) {
         value = gm_rf_->value(lmer_);
         have_value = true;
       }
-      if (gm_rf_->value(queue_.back().candidate) <= value)
+      const uint64_t back_value = gm_rf_->value(queue_.back().candidate);
+      if (back_value < value ||
+          (back_value == value && KeyKeepsBack(&key, &have_key)))
         break;
     }
     queue_.pop_back();
@@ -594,6 +643,8 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
 #endif
     if (gm_rf_)
       PopDominatedRankFirst(rank);
+    else if (order_ == Order::GM)
+      PopDominatedGM(rank);
     else
       while (! queue_.empty() && queue_.back().rank > rank)
         queue_.pop_back();
@@ -632,7 +683,10 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
   }  // end while ! changed_minimizer
   assert(! queue_.empty());
   if (order_ == Order::GM && dna_) {
-    if (changed_minimizer)
+    const uint64_t inf = gm_rf_ ? (uint64_t)GMRanker::kInfRank : UINT64_MAX;
+    if (queue_.front().rank == inf)
+      last_minimizer_ = InfiniteWindowMinimizer();
+    else if (changed_minimizer)
       last_minimizer_ = dna_hash_key(queue_.front().candidate);
   } else {
     last_minimizer_ = queue_.front().candidate;

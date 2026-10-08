@@ -748,11 +748,14 @@ def database_build_complete(args):
                 return False
         else:
             return False
-        # stored key is sketching:order:gmN; the requested key's first two
-        # parts (sketching:order) must match.
-        req_prefix = ":".join(requested.split(":")[:2])
-        sto_prefix = ":".join(stored.split(":")[:2]) if stored else ""
-        if req_prefix != sto_prefix:
+        # stored key is sketching:order:gmN:projection; the requested key's
+        # first two parts (sketching:order) and its last part (projection)
+        # must match.
+        req_parts = requested.split(":")
+        sto_parts = stored.split(":") if stored else []
+        if len(sto_parts) < 3 or req_parts[:2] != sto_parts[:2]:
+            return False
+        if req_parts[-1] != sto_parts[-1]:
             return False
     elif stored != requested:
         return False

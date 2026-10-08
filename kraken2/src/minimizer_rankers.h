@@ -22,12 +22,14 @@
  * Sigma plane + one table load per l-mer) and asks for the full packed value
  * (value(), what Rank() returns) only when two finite ranks tie.
  *
- * Spaced seed (if any): the rank lookup always sees the UNMASKED centre (a
- * mask that reaches into y would cost the table's density; kraken2's default
- * 7 spaces does at l = 31); each strand's word is ANDed with the mask
- * (never RC(x & mask)) only for the tie-break fields x, z, Gamma, and the order
- * is the smaller of the two strands' packed values. The mask never changes
- * which table entry is looked up.
+ * Spaced seed (if any), centre path (l > gm_k): the rank lookup always sees
+ * the UNMASKED centre (a mask that reaches into y would cost the table's
+ * density; kraken2's default 7 spaces does at l = 31); each strand's word is
+ * ANDed with the mask (never RC(x & mask)) only for the tie-break fields x, z,
+ * Gamma, and the order is the smaller of the two strands' packed values, so
+ * the mask never changes which table entry is looked up. With l == gm_k
+ * (probe_strand) the table key is taken from the spaced, masked word, so
+ * there the mask does change the entry looked up.
  *
  * With l == gm_k the table ranks the l-mer itself (Gamma breaks ties). The
  * GreedyMini order is DNA only: protein databases are refused.

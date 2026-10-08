@@ -39,9 +39,9 @@
  *  - compressed (default; kraken2, l up to 31): the layout above, an infinite
  *    centre gives UINT64_MAX. Windows with an infinite centre therefore all
  *    tie (the order is not injective on them); a consumer that needs a total
- *    order there must break ties itself (kraken2's scanner keeps the leftmost
- *    minimum; its windows always contain a finite l-mer, so infinite l-mers
- *    never win and the ties are irrelevant).
+ *    order there must break ties itself (kraken2's scanner breaks equal
+ *    values, and a window of infinite l-mers, by the strand-invariant
+ *    xor key, so its selection stays strand symmetric).
  *  - injective (sshash; needs 16 + 2l <= 64, i.e. l <= 24): the order is the
  *    lexicographic (rank_or_inf, min over the two frames of
  *    (Sigma << l | Gamma ^ toggle)), packed as

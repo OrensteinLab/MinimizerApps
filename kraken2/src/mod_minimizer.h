@@ -422,10 +422,12 @@ class ModSampler {
   }
 
   // Window minimum over the single monotone deque. The entries equal to the
-  // front rank are exactly the window t-mers of minimal rank; among them the
-  // mod-sampling choice is the smallest offset p = (pos - win) mod w (ties
-  // between residues -> smallest p), identical to combining w residue deques.
-  // Non-finite ranks (UINT64_MAX, non-UHS t-mers) are never candidates.
+  // front rank are exactly the window t-mers of minimal rank. DNA picks among
+  // them with canonical_slot (leftmost or mirror-rule rightmost, by the
+  // window's preferred strand). Protein uses plain mod-sampling: the smallest
+  // offset p = (pos - win) mod w (ties between residues -> smallest p),
+  // identical to combining w residue deques. Non-finite ranks (UINT64_MAX,
+  // non-UHS t-mers) are never candidates.
   MOD_ALWAYS_INLINE bool finish_window(ssize_t win, uint64_t *out_lmer) {
     if (win < 0 || lmers_stored_ < w_)
       return false;

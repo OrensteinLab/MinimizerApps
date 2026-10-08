@@ -177,6 +177,9 @@ class MinimizerScanner {
   uint64_t *NextMinimizerGeneral();  // every other scheme (Mod included)
   uint64_t *NextMinimizerXor();  // default path: Minimizer + RandomXor + DNA
   void PopDominatedRankFirst(uint64_t rank);
+  void PopDominatedGM(uint64_t rank);
+  bool KeyKeepsBack(uint64_t *key, bool *have_key);
+  uint64_t InfiniteWindowMinimizer();
 
   bool gm_flip_;  // GreedyMini at1-cg0 projection (declared first: initialized first)
   const std::string *str_;  // pointer to sequence
