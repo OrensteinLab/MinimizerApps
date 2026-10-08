@@ -47,7 +47,7 @@ enum class custom_order_mode : uint8_t {
     GREEDYMINI = 3,    // GreedyMini
     /* strand-symmetric mod-minimizer (util::compute_mod_minimizer); the order ranks t-mers */
     MOD_XOR_HASH = 4,   // t-mers by RandomXor
-    MOD_GREEDYMINI = 5  // t-mers by GreedyMini (a table with gm_k = t)
+    MOD_GREEDYMINI = 5  // t-mers by GreedyMini (gm_k = t, or gm_k < t by the centre extension)
 };
 
 /* GreedyMini ranks the hashed substrings (m-mers, or t-mers for the mod-minimizer) */

@@ -175,7 +175,8 @@ indexes are refused.
 
 *Mod-minimizer orders.* `-O mod-xor-hash` and `-O mod-greedymini` (with `--mod-t T`) sample by
 strand-symmetric mod-sampling: the k-mer's `T = k - t + 1` t-mers are ranked (canonical t-mer
-XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`); the k-mer prefers the
+XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`, or of a smaller table
+extended to the t-mer by its centre as above, `t - gm_k` even); the k-mer prefers the
 strand with more G/T (a tie, even k only, by the numeric order of the k-mer and its reverse
 complement); a minimal t-mer at `x` samples the m-mer at `x mod w` on a forward-preferred k-mer
 and at `(w-1) - (((T-1) - x) mod w)` otherwise, so a k-mer and its reverse complement sample
