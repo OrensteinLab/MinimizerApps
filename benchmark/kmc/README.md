@@ -146,6 +146,10 @@ Experiment files live in `experiments/`. Each file has shared `defaults` plus a 
 Per-config keys: `threads`, `bins`, `mem`, `strict_mem`, `datasets`, `k`, `input`,
 `signature_order`, `order_label`, `n_seeds`, `force`, `gm_lut_mode`, `run_tag`, …
 
+`GM_PROJECTION=at1-cg0` (environment) runs `-O gm` with the flipped DNA->binary
+projection (kmc `-oat1`; needs `GM_LUT_MODE=binary`): scheme directory
+`greedymini_binary_at1`, order label `gm_<table>_at1_s<seed>`.
+
 Example (`experiments/sweep_config.yaml` excerpt):
 
 ```yaml

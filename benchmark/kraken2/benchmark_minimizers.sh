@@ -196,8 +196,8 @@ run_one() {
     local sch
     for sch in "${schemes[@]}"; do
         case "${sch}" in
-            greedymini) args+=(-g "${GM_FILE}") ;;
-            mod-minimizer-greedymini) args+=(-M "${MOD_GM_FILE}") ;;
+            greedymini|greedymini-at1) args+=(-g "${GM_FILE}") ;;
+            mod-minimizer-greedymini|mod-minimizer-greedymini-at1) args+=(-M "${MOD_GM_FILE}") ;;
         esac
     done
     [[ -n "${TIMING_FILE}" ]] && args+=(-F "${TIMING_FILE}")

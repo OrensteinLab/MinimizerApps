@@ -7,7 +7,7 @@
 
 _bench_iface_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BENCH_SCHEME_CHOICES="xor | xor-pcg | greedymini | mod-minimizer-xor | mod-minimizer-greedymini"
+BENCH_SCHEME_CHOICES="xor | xor-pcg | greedymini | mod-minimizer-xor | mod-minimizer-greedymini | greedymini-at1 | mod-minimizer-greedymini-at1"
 
 bench_iface_init() {
     local gm_dir="${CODEBASE}/../orders/GreedyMini"
@@ -64,7 +64,7 @@ bench_append_schemes() {
     for name in "${names[@]}"; do
         [[ -z "${name}" ]] && continue
         case "${name}" in
-            xor|xor-pcg|greedymini|mod-minimizer-xor|mod-minimizer-greedymini) ;;
+            xor|xor-pcg|greedymini|mod-minimizer-xor|mod-minimizer-greedymini|greedymini-at1|mod-minimizer-greedymini-at1) ;;
             *)
                 echo "Error: Unknown scheme '${name}'." >&2
                 bench_scheme_help_line >&2
@@ -284,6 +284,19 @@ bench_configure_scheme() {
             SCHEME_ARGS="--sketching mod-minimizer --order greedymini --greedymini-file ${MOD_GM_FILE}"
             SCHEME_NEEDS_GM=1
             ;;
+        # the greedymini orders with the flipped DNA->binary projection (A,T -> 1, C,G -> 0)
+        greedymini-at1)
+            SCHEME="greedymini-at1"
+            SCHEME_BASE="greedymini-at1_$(basename "${GM_FILE}" .gm)"
+            SCHEME_ARGS="--sketching minimizer --order greedymini --greedymini-file ${GM_FILE} --gm-projection at1-cg0"
+            SCHEME_NEEDS_GM=1
+            ;;
+        mod-minimizer-greedymini-at1)
+            SCHEME="mod-minimizer-greedymini-at1"
+            SCHEME_BASE="mod-minimizer-greedymini-at1_$(basename "${MOD_GM_FILE}" .gm)"
+            SCHEME_ARGS="--sketching mod-minimizer --order greedymini --greedymini-file ${MOD_GM_FILE} --gm-projection at1-cg0"
+            SCHEME_NEEDS_GM=1
+            ;;
         *)
             echo "Error: Unknown scheme '${scheme}'." >&2
             bench_scheme_help_line >&2
@@ -299,8 +312,8 @@ bench_scheme_gm_needs() {
     local scheme
     for scheme in "${DEFAULT_SCHEMES[@]}"; do
         case "${scheme}" in
-            greedymini) NEED_GM=1 ;;
-            mod-minimizer-greedymini) NEED_MOD_GM=1 ;;
+            greedymini|greedymini-at1) NEED_GM=1 ;;
+            mod-minimizer-greedymini|mod-minimizer-greedymini-at1) NEED_MOD_GM=1 ;;
         esac
     done
 }

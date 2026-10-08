@@ -18,7 +18,9 @@ gm_table_stem() {
 }
 
 gm_label_for_k() {
-  echo "gm_$(gm_table_stem "$1")"
+  local suffix=""
+  [[ "${GM_PROJECTION:-at0-cg1}" == "at1-cg0" ]] && suffix="_at1"
+  echo "gm_$(gm_table_stem "$1")${suffix}"
 }
 
 resolve_gm_path() {

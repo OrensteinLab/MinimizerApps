@@ -206,7 +206,8 @@ def family(order):
     return order.split("_")[0]
 
 
-GM_FAMILIES = ("greedymini", "mod-minimizer-greedymini")
+GM_FAMILIES = ("greedymini", "mod-minimizer-greedymini", "greedymini-at1",
+               "mod-minimizer-greedymini-at1")
 
 
 def short_order(order):
@@ -851,6 +852,13 @@ ORDER_INFO = {
     "mod-minimizer-greedymini": ("mod-minimizer", "greedymini",
                                  "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",
                                  "strand-symmetric mod-minimizer on a GreedyMini table"),
+    "greedymini-at1": ("minimizer", "greedymini",
+                       "--sketching minimizer --order greedymini --greedymini-file <table>.gm --gm-projection at1-cg0",
+                       "greedymini with the flipped DNA->binary projection (A,T -> 1, C,G -> 0)"),
+    "mod-minimizer-greedymini-at1": ("mod-minimizer", "greedymini",
+                                     "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm "
+                                     "--gm-projection at1-cg0",
+                                     "mod-minimizer-greedymini with the flipped DNA->binary projection"),
 }
 
 
@@ -1192,7 +1200,7 @@ COMMON_DOC = [
     ("all", CAT_ID, "library", "Kraken library id (only libraries with runs are exported, here strain_exclusion; see `libraries`)"),
     ("all", CAT_ID, "dataset", "query set: strain-exclusion | fda-argos | cami | speed (see `datasets`)"),
     ("classify/classify_runs/profile/vs_reference/accuracy_*", CAT_ID, "minimum_hit_groups", "the `--minimum-hit-groups` value of the classify run: 0 = Kraken 2 paper setting (no hit-group threshold; this is the setting that must reproduce the published accuracy, see `paper_check`), 2 = the k2 default. Every (seed, dataset, order) is classified once per value. Rows are sorted dataset -> minimum_hit_groups -> order, so for one dataset and value the orders are consecutive and every `_ratio` is against xor at the same dataset and minimum_hit_groups. `build` / `build_runs` have no such column: building does not depend on it"),
-    ("all", CAT_ID, "order", "minimizer scheme/order: xor, xor-pcg, greedymini, mod-minimizer-xor, mod-minimizer-greedymini (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
+    ("all", CAT_ID, "order", "minimizer scheme/order: xor, xor-pcg, greedymini, mod-minimizer-xor, mod-minimizer-greedymini (+ greedymini-at1, mod-minimizer-greedymini-at1: --gm-projection at1-cg0) (the run directory name without the GreedyMini table, which is the `gm_table` column of `orders`)"),
     ("classify_runs/build_runs", CAT_ID, "run_id", "<library>/<order>/<seed_idx>"),
     ("classify_runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
     ("build/classify/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row (the replicates: each seed contributes one classify run per dataset and minimum_hit_groups)"),

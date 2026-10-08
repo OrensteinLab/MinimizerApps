@@ -326,6 +326,8 @@ used if the new path is missing.
 | `greedymini` | `greedymini_w5_k15_canonical` | `--sketching minimizer --order greedymini --greedymini-file w5_k15_*.gm` |
 | `mod-minimizer-xor` | `mod-minimizer-xor` | `--sketching mod-minimizer --order xor` |
 | `mod-minimizer-greedymini` | `mod-minimizer-greedymini_w5_k6_canonical` | `--sketching mod-minimizer --order greedymini --greedymini-file w5_k6_*.gm` |
+| `greedymini-at1` | `greedymini-at1_w5_k15_canonical` | as `greedymini`, plus `--gm-projection at1-cg0` (A,T -> 1, C,G -> 0) |
+| `mod-minimizer-greedymini-at1` | `mod-minimizer-greedymini-at1_w5_k6_canonical` | as `mod-minimizer-greedymini`, plus `--gm-projection at1-cg0` |
 
 `mod-minimizer` is strand-symmetric mod-sampling (this fork, not a published
 scheme; `kraken2/src/mod_minimizer.h`): mod-sampling (Groot Koerkamp & Pibiri,

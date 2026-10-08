@@ -67,9 +67,12 @@ scheme_dir_name() {
     hash) echo "hash" ;;
     pcg) echo "pcg" ;;
     gm)
+      # GM_PROJECTION=at1-cg0: the flipped DNA->binary projection (kmc -oat1), its own scheme dir
+      local suffix=""
+      [[ "${GM_PROJECTION:-at0-cg1}" == "at1-cg0" ]] && suffix="_at1"
       case "${GM_LUT_MODE:-dna}" in
-        binary) echo "greedymini_binary" ;;
-        *) echo "greedymini_dna" ;;
+        binary) echo "greedymini_binary${suffix}" ;;
+        *) echo "greedymini_dna${suffix}" ;;
       esac
       ;;
     *) die "unknown signature order: $1" ;;
@@ -133,7 +136,12 @@ run_one() {
     local gm_lut="${GM_LUT_MODE:-dna}" gm_file="$custom_order" embedded
     [[ -n "$gm_file" ]] || gm_file="$(resolve_gm_path "$k" "${seed:-0}")"
     [[ -f "$gm_file" ]] || die "GM table not found for k=$k p=$(signature_len_effective) seed=${seed:-0} lut=$gm_lut: $gm_file"
-    if [[ "$gm_lut" == "dna" ]] && embedded="$(bench_py gm dna-seed "$gm_file" 2>/dev/null)"; then
+    if [[ "${GM_PROJECTION:-at0-cg1}" == "at1-cg0" ]]; then
+      # -oat1 permutes a binary-alphabet table: a prebuilt _dna.gm cannot be flipped
+      [[ "$gm_lut" == "binary" ]] || die "GM_PROJECTION=at1-cg0 needs GM_LUT_MODE=binary (kmc -oat1 permutes the binary .gm)"
+      [[ -n "$seed" ]] || die "GM binary .gm requires a seed"
+      kmc_cmd+=("-co$gm_file" "-ol$order_label" "-os$((seed))" "-oat1")
+    elif [[ "$gm_lut" == "dna" ]] && embedded="$(bench_py gm dna-seed "$gm_file" 2>/dev/null)"; then
       seed="$embedded"
       kmc_cmd+=("-co$gm_file" "-ol$order_label")
     else

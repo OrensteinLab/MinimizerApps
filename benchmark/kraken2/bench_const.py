@@ -17,6 +17,8 @@ SCHEME_ORDER = {
     "greedymini": 2,
     "mod-minimizer-xor": 3,
     "mod-minimizer-greedymini": 4,
+    "greedymini-at1": 5,
+    "mod-minimizer-greedymini-at1": 6,
 }
 
 # Same 64-bit binary strings as historical run_benchmark.sh DEFAULT_SEEDS.

@@ -58,6 +58,8 @@ SCHEME_COLORS = {
     "greedymini": "#F58518",
     "mod-minimizer-xor": "#E45756",
     "mod-minimizer-greedymini": "#72B7B2",
+    "greedymini-at1": "#FFBF79",
+    "mod-minimizer-greedymini-at1": "#A6D8D4",
 }
 
 
