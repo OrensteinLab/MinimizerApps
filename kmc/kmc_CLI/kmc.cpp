@@ -42,6 +42,8 @@ void usage()
 		<< "  -co<file> - custom signature order (.gm binary or _dna.gm DNA table); default: KMC lex order\n"
 		<< "  -ode      - with -co binary .gm: use a 4^p DNA-expanded sort table instead of the\n"
 		<< "              default 2^p rank LUT + runtime projection\n"
+		<< "  -oat1     - with -co binary .gm: DNA->binary projection A,T -> 1, C,G -> 0 (at1-cg0)\n"
+		<< "              instead of the default A,T -> 0, C,G -> 1\n"
 		<< "  -or hash|pcg - random signature order (xor seed, or xor seed then PCG); default: KMC lex order\n"
 		<< "  -os<seed> - seed for -co (tie-breaking) or -or (ranking); default: 0\n"
 		<< "  -ol<label> - label for custom/random order (logs, JSON, sidecar); default: table basename\n"
@@ -158,6 +160,8 @@ bool parse_parameters(int argc, char* argv[], Params& params)
 		}
 		else if (strcmp(argv[i], "-ode") == 0)
 			stage1Params.SetCustomOrderDnaExpandedLut(true);
+		else if (strcmp(argv[i], "-oat1") == 0)
+			stage1Params.SetCustomOrderAt1(true);
 		else if (strncmp(argv[i], "-or", 3) == 0)
 		{
 			if (argv[i][3] == '\0')
@@ -333,6 +337,11 @@ bool parse_parameters(int argc, char* argv[], Params& params)
 		return false;
 	}
 	
+	if (stage1Params.GetCustomOrderAt1() && stage1Params.GetCustomOrderFile().empty())
+	{
+		cerr << "Error: -oat1 requires -co\n";
+		return false;
+	}
 	if (!stage1Params.GetCustomOrderFile().empty() && !stage1Params.GetCustomOrderMode().empty())
 	{
 		cerr << "Error: -co and -or are mutually exclusive\n";
@@ -451,7 +460,9 @@ void save_stats_in_json_file(const Params& params, const KMC::Stage1Results& sta
 		{
 			const CCustomOrder::Info co_info = CCustomOrder::GetInfo();
 			stats << "\t\"signature_order_file\": \"" << params.stage1Params.GetCustomOrderFile() << "\",\n"
-				<< "\t\"signature_order_mode\": \"" << co_info.mode_name << "\",\n";
+				<< "\t\"signature_order_mode\": \"" << co_info.mode_name << "\",\n"
+				<< "\t\"signature_order_projection\": \""
+				<< (params.stage1Params.GetCustomOrderAt1() ? "at1-cg0" : "at0-cg1") << "\",\n";
 		}
 		else
 			stats << "\t\"signature_order_mode\": \"" << params.stage1Params.GetCustomOrderMode() << "\",\n";

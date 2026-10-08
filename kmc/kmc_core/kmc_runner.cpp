@@ -249,6 +249,11 @@ namespace KMC
 		this->customOrderDnaExpandedLut = customOrderDnaExpandedLut;
 		return *this;
 	}
+	Stage1Params& Stage1Params::SetCustomOrderAt1(bool customOrderAt1)
+	{
+		this->customOrderAt1 = customOrderAt1;
+		return *this;
+	}
 
 	Stage1Params& Stage1Params::SetHomopolymerCompressed(bool homopolymerCompressed)
 	{

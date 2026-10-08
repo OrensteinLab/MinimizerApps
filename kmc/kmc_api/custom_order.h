@@ -40,6 +40,9 @@ public:
 		std::string label;
 		uint32_t signature_len = 0;
 		uint64_t seed = 0;
+		// GreedyMini DNA -> binary projection A,T -> 1, C,G -> 0 (the
+		// at1-cg0 projection of sshash / minimap2 / kraken2); binary .gm only
+		bool gm_at1 = false;
 	};
 
 	struct Info
@@ -68,7 +71,7 @@ private:
 	static void activate_gm_binary_lut(uint32_t p, uint32_t tie_seed);
 	static const char* mode_name(Mode mode);
 	static std::string default_label(const std::string& path);
-	static void install_table(const std::string& path, const std::string& label, uint32_t signature_len, uint64_t seed, LutBackend lut_backend);
+	static void install_table(const std::string& path, const std::string& label, uint32_t signature_len, uint64_t seed, LutBackend lut_backend, bool gm_at1);
 	static void install_random(Mode mode, const std::string& label, uint32_t signature_len, uint64_t seed);
 };
 

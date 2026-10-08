@@ -19,7 +19,9 @@ Custom minimizer
 This fork adds custom k-mer signature orders (`-or`, `-co`) on top of
 upstream KMC's own default order, including a shared GreedyMini-based
 low-density order also used by this monorepo's
-[kraken2 fork](../kraken2/README.md#custom-minimizer). See
+[kraken2 fork](../kraken2/README.md#custom-minimizer). With a binary `.gm`
+table, `-oat1` flips its DNA->binary projection (A,T -> 1, C,G -> 0 instead of
+A,T -> 0, C,G -> 1). See
 [`../orders/README.md`](../orders/README.md) for the option/CLI reference
 and shared implementation.
 

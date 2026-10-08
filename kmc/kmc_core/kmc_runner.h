@@ -119,6 +119,7 @@ namespace KMC
 		std::string customOrderMode;
 		uint64_t customOrderSeed = 0;
 		bool customOrderDnaExpandedLut = false;
+		bool customOrderAt1 = false;  // GreedyMini projection A,T -> 1, C,G -> 0
 		bool homopolymerCompressed = false;
 		InputFileType inputFileType = InputFileType::FASTQ;
 		bool canonicalKmers = true;
@@ -146,6 +147,7 @@ namespace KMC
 		Stage1Params& SetCustomOrderMode(const std::string& customOrderMode);
 		Stage1Params& SetCustomOrderSeed(uint64_t customOrderSeed);
 		Stage1Params& SetCustomOrderDnaExpandedLut(bool customOrderDnaExpandedLut);
+		Stage1Params& SetCustomOrderAt1(bool customOrderAt1);
 		Stage1Params& SetHomopolymerCompressed(bool homopolymerCompressed);
 		Stage1Params& SetInputFileType(InputFileType inputFileType);
 		Stage1Params& SetCanonicalKmers(bool canonicalKmers);
@@ -173,6 +175,7 @@ namespace KMC
 		const std::string& GetCustomOrderMode() const noexcept { return customOrderMode; }
 		uint64_t GetCustomOrderSeed() const noexcept { return customOrderSeed; }
 		bool GetCustomOrderDnaExpandedLut() const noexcept { return customOrderDnaExpandedLut; }
+		bool GetCustomOrderAt1() const noexcept { return customOrderAt1; }
 		bool GetHomopolymerCompressed() const noexcept { return homopolymerCompressed; }
 		InputFileType GetInputFileType() const noexcept { return inputFileType; }
 		bool GetCanonicalKmers() const noexcept { return canonicalKmers; }

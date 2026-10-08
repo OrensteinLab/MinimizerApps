@@ -162,6 +162,7 @@ template <unsigned SIZE> void CKMC<SIZE>::SetParamsStage1(const KMC::Stage1Param
 		co.lut_backend = stage1Params.GetCustomOrderDnaExpandedLut()
 			? CCustomOrder::LutBackend::DnaExpanded
 			: CCustomOrder::LutBackend::BinaryRuntime;
+		co.gm_at1 = stage1Params.GetCustomOrderAt1();
 		if (!co.file.empty())
 			co.mode = CCustomOrder::Mode::TABLE;
 		else if (!Params.custom_order_mode.empty())

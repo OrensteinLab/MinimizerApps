@@ -280,7 +280,7 @@ void CCustomOrder::activate_gm_binary_lut(uint32_t p, uint32_t tie_seed)
 	g_gm_binary_lut = true;
 }
 
-void CCustomOrder::install_table(const std::string& path, const std::string& label, uint32_t signature_len, uint64_t seed, LutBackend lut_backend)
+void CCustomOrder::install_table(const std::string& path, const std::string& label, uint32_t signature_len, uint64_t seed, LutBackend lut_backend, bool gm_at1)
 {
 	g_file = path;
 	g_label = label;
@@ -295,6 +295,8 @@ void CCustomOrder::install_table(const std::string& path, const std::string& lab
 		// source table; a _dna.gm file is already DNA-native, so it always installs
 		// via the DNA-expanded path regardless of the requested backend (relevant
 		// now that BinaryRuntime is the ambient default rather than an explicit ask).
+		if (gm_at1)
+			throw std::runtime_error("-oat1 needs a binary-alphabet .gm table, not a DNA table (" + path + ")");
 		uint32_t p = 0;
 		load_dna_gm_file(path, g_seed, p);
 		g_gm_binary_ranks.clear();
@@ -312,6 +314,17 @@ void CCustomOrder::install_table(const std::string& path, const std::string& lab
 	if (p == 0 || ((uint64_t)1 << p) != g_gm_binary_ranks.size())
 		throw std::runtime_error("Custom order table size is not a power of 2");
 	check_k(p, signature_len);
+	if (gm_at1)
+	{
+		// The at1-cg0 projection complements every key (A,T -> 1, C,G -> 0), so
+		// rank the projection x by the table's rank of ~x: permute the table once.
+		// Both backends (binary runtime, DNA-expanded) and the sidecar use it.
+		const uint64_t key_mask = ((uint64_t)1 << p) - 1;
+		std::vector<uint64_t> flipped(g_gm_binary_ranks.size());
+		for (uint64_t key = 0; key < flipped.size(); ++key)
+			flipped[key] = g_gm_binary_ranks[key ^ key_mask];
+		g_gm_binary_ranks.swap(flipped);
+	}
 
 	if (lut_backend == LutBackend::BinaryRuntime)
 	{
@@ -353,7 +366,7 @@ void CCustomOrder::Install(const Config& cfg)
 		if (cfg.file.empty())
 			throw std::runtime_error("Custom order TABLE mode requires a file");
 		const std::string label = cfg.label.empty() ? default_label(cfg.file) : cfg.label;
-		install_table(cfg.file, label, cfg.signature_len, cfg.seed, cfg.lut_backend);
+		install_table(cfg.file, label, cfg.signature_len, cfg.seed, cfg.lut_backend, cfg.gm_at1);
 		break;
 	}
 	case Mode::HASH:
