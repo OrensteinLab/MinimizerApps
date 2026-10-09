@@ -20,8 +20,7 @@ two orders can be compared on the *same* reads:
   correct_i) - native correct_i; the difference is mean(d) with
   SE = sd(d) / sqrt(n), and p is the paired t-test on d over reads (df =
   n - 1; n is in the hundreds to ~100k, so the CLT holds even for the
-  {-1, ..., 1}-valued d_i). A seed-independent order (one run:
-  greedymini / greedymini-at1, or any order run with a single seed) is the usual
+  {-1, ..., 1}-valued d_i). An order run with a single seed is the usual
   paired 0/1 comparison, tested with the exact McNemar test instead.
 - MAPQ curve: for each threshold q, the fraction of reads with a primary at
   MAPQ >= q and the error rate among them (minimap2's own operating-point

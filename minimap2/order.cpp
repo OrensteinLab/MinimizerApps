@@ -119,7 +119,8 @@ bool needs_gm_kind(mm_order_kind_t k) {
 // sshash's custom_order_hasher use it. With k = gm_k + 2i the k-mer is
 // x y z (|x| = |z| = i, |y| = gm_k): rank the binary (AT/CG) projection of
 // the centre y by the table, then break ties by the smaller of the two
-// strands' Sigma planes, then by Gamma -- the injective packing, a total
+// strands' (Sigma, Gamma ^ toggle), toggle = the low k bits of --order-seed
+// (as kraken2's and sshash's greedymini seeds) -- the injective packing, a total
 // order on canonical k-mers that is strand invariant (the reverse
 // complement's centre is the mirror of y, and the table is mirror
 // symmetric). A centre outside the UHS has rank 0xFFFF in the top field, so
@@ -538,7 +539,9 @@ bool build_gm_order(mm_order_t *ord, int l, char *errbuf, size_t errbuf_len) {
 		return false;
 	}
 	try {
-		ord->gm_order = std::make_shared<const gm_centre::Order>(ord->gm, l, 0, /*injective=*/true);
+		// the seed toggles the Gamma tie-break (its low l bits), as kraken2's
+		// and sshash's greedymini seeds do; seed 0 is the untoggled order
+		ord->gm_order = std::make_shared<const gm_centre::Order>(ord->gm, l, ord->seed, /*injective=*/true);
 	} catch (const std::exception &e) {
 		set_err(errbuf, errbuf_len, e.what());
 		return false;
@@ -636,7 +639,7 @@ extern "C" int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_
 {
 	if (!ord || !conf || ord->kind != conf->kind) return 0;
 	if (needs_gm_kind(ord->kind)) {
-		if (ord->gm_projection != conf->gm_projection) return 0;
+		if (ord->gm_projection != conf->gm_projection || ord->seed != conf->seed) return 0;
 		if (conf->greedymini_file && *conf->greedymini_file) {
 			try {
 				const std::shared_ptr<const GreedyMiniTable> gm = load_gm_table(conf->greedymini_file);

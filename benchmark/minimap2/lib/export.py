@@ -34,8 +34,8 @@ samtools faidx, truth.tsv, repeats.bed) rather than hand-maintained, so it
 can't go stale.
 
 summary: one row per (dataset, k, w, order) -- mean/std of every numeric
-metric across seeds (n_seeds=1 for native/greedymini, which don't vary with
-seed; see lib/orders.sh's order_is_seed_dependent).
+metric across seeds (n_seeds=1 for native, which doesn't vary with seed; see
+lib/orders.sh's order_is_seed_dependent).
 
 orders: one row per order; per dataset, the expected (theoretical) and the
 particular (measured) density_factor side by side. expected_density.py
@@ -631,8 +631,8 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("all", "order", "minimizer order: native (minimap2's own hash) | xor | xor-pcg-hash | greedymini | greedymini-at1 (flipped AT/CG projection) | mod-minimizer-xor -- see orders sheet"),
         row("runs", "mod_t", "t-mer length of mod-minimizer's inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); blank for non-mod orders, merged across each order's seeds"),
         row("runs", "threads", "minimap2 -t for build and map (meta.json; older runs: the build log's CMD line)"),
-        row("runs", "seed / seed_idx", "order seed (XOR key) and its index in config.yaml's shared seed list; native and greedymini(-at1) are seed-independent, so run once (seed_idx 0)"),
-        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native/greedymini/greedymini-at1, 5 otherwise)"),
+        row("runs", "seed / seed_idx", "order seed (XOR key; for greedymini(-at1) the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so run once (seed_idx 0)"),
+        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native, 5 otherwise)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "reads in the dataset / of those, simulated reads whose true origin overlaps repeats.bed (chm13_chrX: the DXZ1 centromeric array, the paper's Table 3; grch38_wg: a chr9 segmental duplication pair, our addition; chm13_rel3_ont: none)"),
         # --- density
         row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the orders sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),

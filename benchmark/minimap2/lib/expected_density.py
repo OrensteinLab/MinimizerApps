@@ -98,11 +98,9 @@ def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, flip: boo
     """order.cpp's RankState<MM_ORDER_GREEDYMINI>: the shared GreedyMini centre extension
     of the gm_k table to length l (l = gm_k + 2i), injective packing --
     benchmark/common/density.py greedymini_centre_hash, checked against the
-    compiled order by minimap2/validate_greedymini.py. `seed` is unused
-    (greedymini's ranks come from its table) -- kept only for hash_fn
-    signature parity with xor_hash/xor_pcg_hash. `flip` = --gm-projection
-    at1-cg0."""
-    return greedymini_centre_hash(lmer, l, gm_ranks, gm_k_from_table(gm_ranks), flip)
+    compiled order by minimap2/validate_greedymini.py. `seed` = --order-seed,
+    the Gamma tie-break toggle. `flip` = --gm-projection at1-cg0."""
+    return greedymini_centre_hash(lmer, l, gm_ranks, gm_k_from_table(gm_ranks), flip, seed)
 
 
 def _hash_fn(base_order: str, length: int, gm_ranks: list[int] | None):
@@ -234,13 +232,16 @@ def expected_cache_key(
     """Identity of every cache input not already in the file name (k, w, t,
     HPC): the GreedyMini table (resolved path + content sha256; 'missing' when
     absent, so building the table later invalidates a cache computed without
-    it), the seed list, the Monte Carlo sizes and RNG seed."""
+    it), the seed list, the Monte Carlo sizes and RNG seed, and a version of
+    the order hashes."""
     gm = "none"
     if gm_file is not None:
         gm_path = Path(gm_file).resolve()
         digest = hashlib.sha256(gm_path.read_bytes()).hexdigest() if gm_path.is_file() else "missing"
         gm = f"{gm_path}:{digest}"
     ident = {
+        # bump when an order's hash changes (2: greedymini --order-seed toggles Gamma)
+        "hash_version": 2,
         "gm": gm,
         "seeds": [hex(s) for s in seeds],
         "n_bases": n_bases,

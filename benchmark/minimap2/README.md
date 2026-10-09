@@ -140,7 +140,7 @@ never clobbered by `.env`.
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `run <order> [seed] [seed_idx]`, `sweep [orders...]`, `export [--datasets a,b]`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
 | `lib/constants.sh` | Defaults (k = the dataset preset's own via `preset_default_k`, `w=10`, mod_t = 4 + (k-4) % w; `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
-| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native`, `greedymini`, `greedymini-at1`) |
+| `lib/orders.sh` | Order name -> CLI flags (`ALL_ORDERS` == `DEFAULT_ORDERS`); `order_is_seed_dependent` marks which orders `sweep` runs across the full seed list vs. once (`native` only; greedymini's seed toggles its Gamma tie-break) |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (order, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<order>/<seed_idx>/`) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring (mapped fraction only for real reads) |

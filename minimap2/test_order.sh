@@ -253,6 +253,19 @@ for o in xor xor-pcg-hash; do
 	if [ "$n" -gt 0 ]; then ok "$o seed ~0: poly-A still selected ($n)"; else bad "$o seed ~0: poly-A never selected"; fi
 done
 
+echo "== 14. greedymini --order-seed: the Gamma tie-break toggle =="
+fs="--minimizer-order greedymini --greedymini-file $GM_FILE --order-seed $SEED -k 19"
+$BIN -a $fs "$REF" "$QRY" > "$TMP/gms.sam" 2>/dev/null
+$BIN -d "$TMP/gms.mmi" $fs "$REF" >/dev/null 2>&1
+$BIN -a "$TMP/gms.mmi" "$QRY" > "$TMP/gms_r.sam" 2>/dev/null
+if [ -s "$TMP/gms.sam" ] && diff -q <(grep -v '^@PG' "$TMP/gms.sam") <(grep -v '^@PG' "$TMP/gms_r.sam") >/dev/null; then ok "seeded greedymini .mmi round-trip"; else bad "seeded greedymini .mmi round-trip"; fi
+grep -v '>' "$REF" | tr -d '\n' > "$TMP/ref.seq"
+n0=$(./sketch_dump greedymini 10 15 0 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
+n1=$(./sketch_dump greedymini 10 15 0x9E3779B97F4A7C15 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
+if [ "$n0" != "$n1" ]; then ok "--order-seed changes the greedymini selection"; else bad "--order-seed did not change the greedymini selection"; fi
+$BIN -a --minimizer-order greedymini --greedymini-file "$GM_FILE" --order-seed 7 "$TMP/gms.mmi" "$QRY" >/dev/null 2>"$TMP/gms_w.err"
+if grep -q 'Minimizer order options' "$TMP/gms_w.err"; then ok "a different greedymini seed than the prebuilt index's: warned"; else bad "no warning for a different greedymini seed"; fi
+
 echo
 echo "== summary: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

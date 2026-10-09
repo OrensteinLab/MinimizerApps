@@ -408,8 +408,9 @@ int main(int argc, char *argv[])
 		fprintf(fp_help, "    -d FILE      dump index to FILE []\n");
 		fprintf(fp_help, "    --minimizer-order STR  order used to pick each window's minimizer: native (default),\n");
 		fprintf(fp_help, "                 xor, xor-pcg-hash, greedymini, mod-minimizer-xor\n");
-		fprintf(fp_help, "    --order-seed INT       seed for xor/xor-pcg-hash/mod-minimizer-xor [0]\n");
-		fprintf(fp_help, "    --greedymini-file FILE .gm rank table for greedymini (gm_k must equal -k)\n");
+		fprintf(fp_help, "    --order-seed INT       seed for xor/xor-pcg-hash/mod-minimizer-xor; for greedymini\n");
+		fprintf(fp_help, "                           the Gamma tie-break toggle [0]\n");
+		fprintf(fp_help, "    --greedymini-file FILE .gm rank table for greedymini (-k = gm_k + 2i, -k <= 23)\n");
 		fprintf(fp_help, "    --gm-projection STR    greedymini AT/CG projection: at0-cg1 (default) or at1-cg0\n");
 		fprintf(fp_help, "    --mod-t INT            t-mer length for mod-minimizer-xor (0 < t < -k)\n");
 		fprintf(fp_help, "  Mapping:\n");

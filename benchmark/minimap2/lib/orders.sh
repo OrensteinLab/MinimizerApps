@@ -33,16 +33,16 @@ order_gm_file() {
 
 # Fills the global array ORDER_FLAGS with the minimap2 CLI args for one
 # (order, seed, mod_t) combination. `native` needs no flags at all; a
-# greedymini-backed order needs --greedymini-file instead of --order-seed
-# (the table's own ranks are already deterministic), and greedymini-at1
-# also --gm-projection at1-cg0; a mod-minimizer-* order additionally needs
-# --mod-t.
+# greedymini-backed order needs --greedymini-file, its --order-seed toggles
+# the Gamma tie-break (as kraken2's and sshash's greedymini seeds), and
+# greedymini-at1 also --gm-projection at1-cg0; a mod-minimizer-* order
+# additionally needs --mod-t.
 build_order_flags() {
   local order="$1" seed="$2" mod_t="$3"
   ORDER_FLAGS=()
   [ "$order" = "native" ] && return 0
   if order_needs_gm "$order"; then
-    ORDER_FLAGS+=(--minimizer-order greedymini --greedymini-file "$(order_gm_file "$order")")
+    ORDER_FLAGS+=(--minimizer-order greedymini --greedymini-file "$(order_gm_file "$order")" --order-seed "$seed")
     [ "$order" = "greedymini-at1" ] && ORDER_FLAGS+=(--gm-projection at1-cg0)
     return 0
   fi
@@ -54,12 +54,9 @@ build_order_flags() {
 
 order_dir_name() { echo "$1"; }
 
-# native has no order-dependent behavior at all; greedymini's ranks come
-# from its table file, not a seed. Every other order takes --order-seed and
-# should be swept across the full seed list, not just one.
+# native has no order-dependent behavior at all. Every other order takes
+# --order-seed (greedymini: the Gamma tie-break toggle) and is swept across
+# the full seed list, not just one.
 order_is_seed_dependent() {
-  case "$1" in
-    native) return 1 ;;
-    *) ! order_needs_gm "$1" ;;
-  esac
+  [ "$1" != native ]
 }

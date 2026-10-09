@@ -77,7 +77,9 @@ different order. Custom orders take `-k` up to 28, as native minimap2 does.
   (`common/minimizer-orders/greedymini_centre.h`, injective packing): with
   `-k = gm_k + 2i` the table ranks the middle `gm_k` bases' AT/CG projection,
   then the k-mer's Sigma and Gamma planes break ties (min over both strands),
-  a strand-invariant total order on canonical k-mers. `-k - gm_k` must be
+  a strand-invariant total order on canonical k-mers; `--order-seed` XORs
+  its low k bits into Gamma (as kraken2's and sshash's greedymini seeds).
+  `-k - gm_k` must be
   even and `-k <= 23` (the packed value must stay below UINT64_MAX).
   `validate_greedymini.py` checks the compiled rank and sketch against two
   independent Python versions.

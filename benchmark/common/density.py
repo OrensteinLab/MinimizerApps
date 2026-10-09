@@ -208,11 +208,13 @@ def _reverse_low_bits(v: int, n: int) -> int:
     return int(format(v, f"0{n}b")[::-1], 2) if n else 0
 
 
-def greedymini_centre_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, flip: bool = False) -> int:
+def greedymini_centre_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, flip: bool = False,
+                           toggle: int = 0) -> int:
     """Value of an ACGT=0123 l-mer: rank of the centre key's Sigma plane in the
-    table, then min over the two strands of (Sigma << l | Gamma). Sigma = AT vs
-    CG (bit0 ^ bit1, complemented when `flip`: --gm-projection at1-cg0),
-    Gamma = bit 1. Strand invariant; a total order on canonical l-mers."""
+    table, then min over the two strands of (Sigma << l | Gamma ^ toggle). Sigma =
+    AT vs CG (bit0 ^ bit1, complemented when `flip`: --gm-projection at1-cg0),
+    Gamma = bit 1, toggle = the low l bits of minimap2's --order-seed. Strand
+    invariant; a total order on canonical l-mers."""
     i = (l - gm_k) // 2
     mask = (1 << l) - 1
     sigma = _pext(lmer ^ (lmer >> 1), EVENS64 & ((1 << (2 * l)) - 1))
@@ -222,7 +224,8 @@ def greedymini_centre_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, fl
     rank = gm_ranks[(sigma >> i) & ((1 << gm_k) - 1)]
     sigma_rc = _reverse_low_bits(sigma, l)
     gamma_rc = _reverse_low_bits(gamma, l) ^ mask
-    return (rank << (2 * l)) | min((sigma << l) | gamma, (sigma_rc << l) | gamma_rc)
+    t = toggle & mask
+    return (rank << (2 * l)) | min((sigma << l) | (gamma ^ t), (sigma_rc << l) | (gamma_rc ^ t))
 
 
 # ---------------------------------------------------------------------------
