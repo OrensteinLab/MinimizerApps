@@ -195,7 +195,13 @@ inline uint32_t validate_table(const GreedyMiniTable &table, int l,
   check_length(l, gm_k);
   const size_t n = table.size();
   const uint16_t *r = table.data();
-  std::vector<int64_t> canon_of_rank(n, -1);
+  // Keys per finite rank (saturating at 3), for the rank-pair check: with
+  // the table mirror symmetric, every rank is held by exactly a key and its
+  // mirror iff its count is 1 for a palindromic key and 2 otherwise. Only
+  // allocated when checked (one byte per key, so no large temporary).
+  std::vector<uint8_t> keys_of_rank;
+  if (require_rank_pairs)
+    keys_of_rank.assign(GreedyMiniTable::kInfRank, 0);
   uint32_t max_rank = 0;
   for (size_t key = 0; key < n; key++) {
     const size_t mir = mirror_key((uint32_t)key, gm_k);
@@ -204,15 +210,20 @@ inline uint32_t validate_table(const GreedyMiniTable &table, int l,
           "GreedyMini centre extension needs a mirror-symmetric (canonical) "
           "table: rank[" + std::to_string(key) + "] != rank[" +
           std::to_string(mir) + "]");
-    if (r[key] == GreedyMiniTable::kInfRank || !require_rank_pairs)
-      continue;
-    const int64_t canon = (int64_t)(key < mir ? key : mir);
-    if (canon_of_rank[r[key]] >= 0 && canon_of_rank[r[key]] != canon)
-      throw std::invalid_argument(
-          "GreedyMini centre extension needs every rank shared by a key and "
-          "its mirror only (rank " + std::to_string(r[key]) + ")");
-    canon_of_rank[r[key]] = canon;
+    if (r[key] != GreedyMiniTable::kInfRank && require_rank_pairs &&
+        keys_of_rank[r[key]] < 3)
+      keys_of_rank[r[key]]++;
   }
+  if (require_rank_pairs)
+    for (size_t key = 0; key < n; key++) {
+      if (r[key] == GreedyMiniTable::kInfRank)
+        continue;
+      const size_t mir = mirror_key((uint32_t)key, gm_k);
+      if (keys_of_rank[r[key]] != (key == mir ? 1 : 2))
+        throw std::invalid_argument(
+            "GreedyMini centre extension needs every rank shared by a key and "
+            "its mirror only (rank " + std::to_string(r[key]) + ")");
+    }
   for (size_t key = 0; key < n; key++)
     if (r[key] != GreedyMiniTable::kInfRank && r[key] > max_rank)
       max_rank = r[key];
@@ -301,7 +312,7 @@ class Order {
   uint64_t value_of_planes(uint64_t sigma, uint64_t gamma) const {
     const uint32_t key = centre_key(sigma, i_, gm_k_);
     const uint16_t r = ranks_[key];
-    if (r == GreedyMiniTable::kInfRank && !injective_)
+    if (!injective_ && r == GreedyMiniTable::kInfRank)  // see value_of_both_strands
       return UINT64_MAX;
     const uint64_t sigma_rc = reverse_low_bits(sigma, l_);
     const uint64_t gamma_rc = reverse_low_bits(gamma, l_) ^ l_mask_;
@@ -320,7 +331,9 @@ class Order {
                                  uint64_t sigma_rc, uint64_t gamma_rc) const {
     const uint32_t key = centre_key(sigma, i_, gm_k_);
     const uint16_t r = ranks_[key];
-    if (r == GreedyMiniTable::kInfRank && !injective_)
+    // injective_ first: constant per Order, so an injective scan does not
+    // branch on whether the centre is in the UHS (unpredictable per l-mer)
+    if (!injective_ && r == GreedyMiniTable::kInfRank)
       return UINT64_MAX;
     const uint64_t pa = pack(sigma, gamma, r, key);
     const uint64_t pb = pack(sigma_rc, gamma_rc, r, mirror_key(key, gm_k_));

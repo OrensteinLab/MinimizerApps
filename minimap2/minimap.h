@@ -82,7 +82,7 @@ typedef struct { size_t n, m; mm128_t *a; } mm128_v;
 // the index (mm128_t::x) is always derived the same injective way mm_sketch()
 // already does for the native order (see order.cpp's design comment).
 typedef enum {
-	// Values are persisted in .mmi files (order.cpp mm_order_serialize): keep
+	// Values are persisted in .mmi files (order.cpp mm_order_dump): keep
 	// them stable. 4 was the removed forward (not strand-symmetric)
 	// mod-minimizer-xor, 5 the removed mod-minimizer-pcg-xor-hash.
 	MM_ORDER_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()

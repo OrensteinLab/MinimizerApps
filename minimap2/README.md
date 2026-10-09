@@ -82,15 +82,19 @@ different order. Custom orders take `-k` up to 28, as native minimap2 does.
   `validate_greedymini.py` checks the compiled rank and sketch against two
   independent Python versions.
 - `mod-minimizer-xor` is a strand-symmetric variant of mod-sampling (Groot
-  Koerkamp & Pibiri, WABI 2024), not a published scheme: each window of
+  Koerkamp & Pibiri, WABI 2024) with simd-minimizers' canonical definition
+  (Groot Koerkamp & Martayan, bioRxiv 2025.01.27.634998; the rule is shared
+  with kraken2 and sshash in `common/minimizer-orders/mod_minimizer_rule.h`): each window of
   `w+k-1` bases prefers the strand with more G/T (tie: the lexicographically
   smaller strand); a forward-preferred window samples offset `x_L mod w`
   (`x_L` = leftmost minimal t-mer, the paper's rule), a reverse-preferred one
   `(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T =
   w+k-t`). A read and its reverse complement thus select the same loci,
-  which plain mod-sampling does not guarantee. The scan uses kraken2's single
-  monotone deque over all live t-mers and emits a selected k-mer when it
-  leaves the window (output stays in position order); `validate_mod_minimizer.py`
+  which plain mod-sampling does not guarantee. The scan keeps the window
+  minimum and its leftmost/rightmost t-mers by conditional moves and rescans
+  only when the minimum leaves the window (as native `mm_sketch()` does), and
+  emits a selected k-mer when it leaves the window (output stays in position
+  order); `validate_mod_minimizer.py`
   checks it against a brute force of the definition. A window whose sampled
   k-mer is its own reverse complement (even `-k` only), or spans 256 or more
   bases under `-H`, emits no minimizer; native minimap2 instead skips such a

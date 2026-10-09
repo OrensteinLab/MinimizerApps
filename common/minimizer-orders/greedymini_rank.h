@@ -179,30 +179,35 @@ class GreedyMiniTable {
   }
 
   void load_from_raw(const std::vector<uint64_t> &raw_gm) {
-    if (raw_gm.empty())
+    reset(raw_gm.size());
+    for (size_t i = 0; i < raw_gm.size(); i++)
+      set_raw(i, raw_gm[i]);
+  }
+
+  // Incremental load (load_gm_table streams the file through it): reset(n),
+  // then set_raw(i, entry) for every i < n, entries in the .gm encoding.
+  void reset(size_t n) {
+    if (n == 0)
       throw std::invalid_argument("empty GreedyMini table");
-    const size_t n = raw_gm.size();
     const int log2n = gm_k_from_size(n);
     if (((size_t)1 << log2n) != n)
       throw std::invalid_argument("GreedyMini table size is not a power of 2");
-
     gm_k_ = log2n;  // binary bits
-
-    // Sentinel = table length (2^gm_k).
-    const uint64_t inf_sentinel = (uint64_t)n;
     ranks_.assign(n, kInfRank);
     uhs_size_ = 0;
-    for (size_t i = 0; i < n; i++) {
-      const uint64_t r = raw_gm[i];
-      if (r < inf_sentinel) {
-        if (r >= kInfRank)
-          throw std::invalid_argument("UHS rank does not fit in uint16");
-        ranks_[i] = (uint16_t)r;
-        uhs_size_++;
-      } else if (r != inf_sentinel) {
-        throw std::invalid_argument(
-            "GreedyMini entry is neither UHS rank nor infinity sentinel");
-      }
+  }
+
+  void set_raw(size_t i, uint64_t r) {
+    // Sentinel = table length (2^gm_k).
+    const uint64_t inf_sentinel = (uint64_t)ranks_.size();
+    if (r < inf_sentinel) {
+      if (r >= kInfRank)
+        throw std::invalid_argument("UHS rank does not fit in uint16");
+      ranks_[i] = (uint16_t)r;
+      uhs_size_++;
+    } else if (r != inf_sentinel) {
+      throw std::invalid_argument(
+          "GreedyMini entry is neither UHS rank nor infinity sentinel");
     }
   }
 
@@ -254,12 +259,33 @@ inline void write_gm_file_raw(const std::string &filename,
     throw std::runtime_error("Error writing GreedyMini table: " + filename);
 }
 
+// Reads the file in chunks straight into the uint16 table: no full-size
+// uint64 copy, so loading allocates (and frees) nothing large -- in minimap2 a
+// freed block above glibc's mmap threshold raises the threshold for the rest
+// of the run, which inflated the index build's peak memory.
 inline std::shared_ptr<const GreedyMiniTable>
 load_gm_table(const std::string &filename) {
-  auto raw = load_gm_file_raw(filename);
-  if (raw.empty())
+  std::ifstream file(filename, std::ios::binary);
+  if (!file.is_open())
     return nullptr;
-  return std::make_shared<const GreedyMiniTable>(raw);
+  size_t size = 0;
+  file.read(reinterpret_cast<char *>(&size), sizeof(size));
+  if (!file || size == 0)
+    return nullptr;
+  auto table = std::make_shared<GreedyMiniTable>();
+  table->reset(size);
+  uint64_t chunk[4096];
+  for (size_t i = 0; i < size;) {
+    const size_t c = size - i < 4096 ? size - i : 4096;
+    file.read(reinterpret_cast<char *>(chunk),
+              static_cast<std::streamsize>(c * sizeof(uint64_t)));
+    if (!file)
+      return nullptr;
+    for (size_t j = 0; j < c; j++)
+      table->set_raw(i + j, chunk[j]);
+    i += c;
+  }
+  return table;
 }
 
 // Export compact table back to classic .gm encoding (UHS ranks / n sentinel).

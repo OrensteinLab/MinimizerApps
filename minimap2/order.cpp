@@ -56,6 +56,7 @@
 #include "../common/minimizer-orders/pcg_rxs_m_xs.h"
 #include "../common/minimizer-orders/greedymini_rank.h"
 #include "../common/minimizer-orders/greedymini_centre.h"
+#include "../common/minimizer-orders/mod_minimizer_rule.h"
 
 #include <algorithm>
 #include <cassert>
@@ -315,9 +316,10 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // position mod w does not commute with mirroring the window), so a read and
 // its reverse complement select different loci (~5% at t = 5 on human DNA).
 //
-// This variant (not a published scheme; the mod-sampling counterpart of
-// simd-minimizers' canonical minimizer, Groot Koerkamp & Martayan SEA 2025)
-// gives each window a preferred strand: the one with more G/T bases, a tie
+// This variant (the rule of common/minimizer-orders/mod_minimizer_rule.h:
+// the canonical definition of simd-minimizers, Groot Koerkamp & Martayan,
+// bioRxiv 2025.01.27.634998, applied to mod-sampling) gives each window a
+// preferred strand: the one with more G/T bases, a tie
 // (even L) broken by W <= revcomp(W) lexicographically. A forward-preferred
 // window samples offset x_L mod w; a reverse-preferred one applies the same
 // rule from the other end: x_R = rightmost minimal t-mer, offset
@@ -327,10 +329,14 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // mod-sampling (benchmark/minimap2/analysis/canonical_mod.py; validate_mod_minimizer.py checks
 // the code against a brute force of this definition).
 //
-// Streaming layout as kraken2::ModSampler (kraken2/src/mod_minimizer.h): one
-// monotone deque over every live t-mer (power-of-two ring; a push pops only
-// strictly larger ranks, so equal minimal ranks sit at the front in position
-// order), residue classes by wrap-around counters. The sampled position can
+// Streaming: the live t-mers' ranks and residue classes in a power-of-two
+// ring indexed by ordinal, with the window minimum and its leftmost and
+// rightmost ordinals updated per push by conditional moves; the window is
+// rescanned (also branch-free) only when the leftmost minimum leaves it, as
+// native mm_sketch() does. (A monotone deque, as kraken2::ModSampler uses,
+// mispredicts about one branch per base on random ranks: its pop count is
+// data dependent; this costs ~2 rank compares per base and few mispredicts.)
+// Residue classes by wrap-around counters. The sampled position can
 // move back as the window slides, so a selected k-mer is only marked pending
 // in its residue slot and emitted when it leaves the window (no later window
 // can select it): output stays in position order, each k-mer once, no sort.
@@ -346,13 +352,21 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	const uint64_t k_mask = (1ULL << (2 * k)) - 1, k_shift1 = (uint64_t)(2 * (k - 1));
 	const uint64_t seed = ord->seed;
 
-	// At most tmer_span live t-mers (plus the one being pushed).
+	// The window's tmer_span t-mers, by ordinal: rank and residue class.
 	uint32_t cap = 1;
-	while (cap < (uint32_t)tmer_span + 2) cap <<= 1;
-	const uint32_t dq_mask = cap - 1;
-	struct Ent { uint64_t rank; ssize_t pos; int cls; }; // cls = pos mod w
-	std::vector<Ent> dq(cap);
-	uint32_t dq_head = 0, dq_tail = 0; // free-running; slot = index & dq_mask
+	while (cap < (uint32_t)tmer_span) cap <<= 1;
+	const uint32_t rmask = cap - 1;
+	std::vector<uint64_t> trank(cap);
+	std::vector<uint8_t> tcls(cap); // ordinal mod w
+	uint64_t min_rank = 0; // minimum over the t-mers since the last rescan
+	ssize_t x_l = 0, x_r = 0; // its leftmost / rightmost ordinal
+	// Equal ranks keep the leftmost x_l and move the rightmost x_r.
+	auto take = [&](uint64_t rank, ssize_t x) {
+		const bool lt = rank < min_rank, le = rank <= min_rank;
+		x_l = lt ? x : x_l;
+		x_r = le ? x : x_r;
+		min_rank = lt ? rank : min_rank;
+	};
 
 	struct LEntry { uint64_t kmer; uint32_t span; uint64_t y; int valid; };
 	std::vector<LEntry> lring(w); // indexed by k-mer ordinal mod w
@@ -384,9 +398,8 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	// mirror rule: offset p = (w-1) - (((T-1) - x_R) mod w), slot (win + p) mod w;
 	// with x_R mod w = cls_R - win (mod w) the window index cancels:
 	// slot = (cls_R + (w-1) - (T-1)) mod w
-	const int tm1_mod = (tmer_span - 1) % w;
 	for (int a = 0; a < w; ++a)
-		mirror_slot[(size_t)a] = (uint8_t)((a + (w - 1) - tm1_mod) % w);
+		mirror_slot[(size_t)a] = (uint8_t)mod_rule::mirror_slot(a, w, tmer_span);
 	auto emit = [&](const LEntry &e) {
 		mm128_t out;
 		out.x = (mm_hash64(e.kmer, k_mask) << 8) | e.span;
@@ -407,7 +420,6 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		if (c >= 4) { // ambiguous base: reset everything, same as native
 			flush_pending();
 			gt = 0; wb_pos = 0; win_fw = win_rc = 0;
-			dq_head = dq_tail = 0;
 			for (int a = 0; a < w; ++a) lring[a].valid = 0;
 			run_pos = -1; t_cls = l_cls = 0; kmer_span = 0;
 			tq.count = tq.front = 0;
@@ -447,11 +459,11 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		const ssize_t ot = run_pos - t + 1; // ordinal of the t-mer ending here
 		if (ot >= 0) {
 			const uint64_t rank = (tmer_fwd < tmer_rc ? tmer_fwd : tmer_rc) ^ seed;
-			while (dq_tail != dq_head && dq[(dq_tail - 1) & dq_mask].rank > rank) --dq_tail;
-			Ent &e = dq[dq_tail & dq_mask];
-			e.rank = rank; e.pos = ot; e.cls = t_cls;
-			++dq_tail;
+			trank[(size_t)(ot & rmask)] = rank;
+			tcls[(size_t)(ot & rmask)] = (uint8_t)t_cls;
 			if (++t_cls == w) t_cls = 0;
+			if (ot == 0) min_rank = rank, x_l = x_r = 0; // first t-mer of the run
+			else take(rank, ot);
 		}
 
 		const ssize_t ol = run_pos - k + 1; // ordinal of the k-mer ending here
@@ -478,36 +490,24 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		const ssize_t win = ol - w + 1;
 		if (win < 0) continue;
 
-		while (dq[dq_head & dq_mask].pos < win) ++dq_head; // never empties: ot >= win
-		const Ent &best = dq[dq_head & dq_mask];
+		if (x_l < win) { // the leftmost minimum left the window: rescan [win, ot]
+			min_rank = trank[(size_t)(win & rmask)], x_l = x_r = win;
+			for (ssize_t x = win + 1; x <= ot; ++x) take(trank[(size_t)(x & rmask)], x);
+		}
 		// Preferred strand, branch-free when L <= 32 (the choice is close to a
 		// fair coin per window, so a branch would mispredict half the time).
 		bool fwd;
-		if (win_word) {
-			const int g2 = 2 * __builtin_popcountll(win_fw & win_hi);
-			fwd = (g2 > L) | ((g2 == L) & (win_fw <= win_rc));
-		} else {
-			fwd = 2 * gt > L;
-			if (2 * gt == L) { // tie: W <= revcomp(W), base by base
-				// the window's first base sits in ring slot wb_pos (oldest)
-				int cmp = 0;
-				for (int j = 0; j < L && cmp == 0; ++j) {
-					const int a = wbase[(size_t)((wb_pos + j) % L)];
-					const int b = 3 - wbase[(size_t)((wb_pos + L - 1 - j) % L)];
-					cmp = a < b ? -1 : a > b ? 1 : 0;
-				}
-				fwd = cmp <= 0;
-			}
+		if (win_word) { // the words compare as the base sequences do
+			fwd = mod_rule::prefer_forward_eager(2 * __builtin_popcountll(win_fw & win_hi) - L, win_fw <= win_rc);
+		} else { // the window's first base sits in ring slot wb_pos (oldest)
+			fwd = mod_rule::prefer_forward(2 * gt - L, [&]() {
+				return mod_rule::window_le_revcomp(L, [&](int j) { return (int)wbase[(size_t)((wb_pos + j) % L)]; });
+			});
 		}
-		// Forward: the leftmost minimum's k-mer is in residue slot best.cls
-		// ((win + (x_L mod w)) mod w == best.cls). Reverse: the rightmost
-		// minimal t-mer x_R (equal minimal ranks are contiguous at the deque
-		// front, in position order) -> mirror_slot.
-		uint32_t r = dq_head;
-		while (r + 1 != dq_tail && dq[(r + 1) & dq_mask].rank == best.rank) ++r;
-		const int rslot = mirror_slot[(size_t)dq[r & dq_mask].cls];
-		const int fmask = -(int)fwd; // all ones when forward-preferred
-		const int sel_slot = rslot ^ ((best.cls ^ rslot) & fmask);
+		// Forward: the leftmost minimum's k-mer is in the residue slot of x_l
+		// ((win + (x_l mod w)) mod w == x_l mod w). Reverse: the rightmost
+		// minimal t-mer x_r -> mirror_slot of its class.
+		const int sel_slot = mod_rule::select_slot(tcls[(size_t)(x_l & rmask)], mirror_slot[tcls[(size_t)(x_r & rmask)]], fwd);
 		pending[(size_t)sel_slot] |= (uint8_t)lring[(size_t)sel_slot].valid;
 	}
 	flush_pending();
@@ -640,7 +640,8 @@ extern "C" int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_
 		if (conf->greedymini_file && *conf->greedymini_file) {
 			try {
 				const std::shared_ptr<const GreedyMiniTable> gm = load_gm_table(conf->greedymini_file);
-				if (!gm || gm_table_to_raw(*gm) != gm_table_to_raw(*ord->gm)) return 0;
+				if (!gm || gm->size() != ord->gm->size()
+				    || std::memcmp(gm->data(), ord->gm->data(), gm->size() * sizeof(uint16_t)) != 0) return 0;
 			} catch (const std::exception &) {
 				return 0;
 			}
@@ -681,63 +682,85 @@ extern "C" void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *s
 	}
 }
 
+// .mmi order section: [u64 len][blob], blob = u32 kind, u64 seed, i32 t,
+// u8 has_gm, (u64 n, n x u64 table entries in the .gm encoding when has_gm),
+// u8 projection, i32 gm_l (the two trailing fields were appended later; a
+// blob without them loads as at0-cg1 / a pre-centre-extension index). Both
+// directions stream the table in chunks: a full-size temporary buffer, once
+// freed, would raise glibc's mmap threshold for the rest of the run and
+// inflate the peak memory of an index build or of mapping.
+
 namespace {
 
-void append_bytes(std::vector<uint8_t> &buf, const void *data, size_t n) {
-	const uint8_t *b = (const uint8_t *)data;
-	buf.insert(buf.end(), b, b + n);
+const size_t kChunk = 4096; // table entries per fwrite/fread
+
+uint64_t blob_len(const mm_order_t *ord) {
+	uint64_t len = sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int32_t) + sizeof(uint8_t);
+	if (ord->gm) len += sizeof(uint64_t) + (uint64_t)ord->gm->size() * sizeof(uint64_t);
+	return len + sizeof(uint8_t) + sizeof(int32_t);
 }
-template <typename T> void append_pod(std::vector<uint8_t> &buf, const T &v) { append_bytes(buf, &v, sizeof(v)); }
+
+// Reads exactly the section's `left` bytes, field by field.
+struct SectionReader {
+	FILE *fp;
+	uint64_t left;
+	bool get(void *dst, size_t n) {
+		if (n > left || std::fread(dst, 1, n, fp) != n) return false;
+		left -= n;
+		return true;
+	}
+	bool skip_rest() { // unknown trailing fields of a newer writer
+		uint8_t tmp[256];
+		while (left > 0) if (!get(tmp, left < sizeof tmp ? (size_t)left : sizeof tmp)) return false;
+		return true;
+	}
+};
 
 } // namespace
 
-extern "C" int mm_order_serialize(const mm_order_t *ord, uint8_t **out, uint64_t *out_len)
+extern "C" int mm_order_dump(const mm_order_t *ord, FILE *fp)
 {
-	if (!ord || !out || !out_len) return -1;
-	std::vector<uint8_t> buf;
+	if (!ord || !fp) return -1;
+	const uint64_t len = blob_len(ord);
 	const uint32_t kind32 = (uint32_t)ord->kind;
-	append_pod(buf, kind32);
-	append_pod(buf, ord->seed);
 	const int32_t t32 = (int32_t)ord->t;
-	append_pod(buf, t32);
 	const uint8_t has_gm = ord->gm ? 1 : 0;
-	append_pod(buf, has_gm);
-	if (has_gm) {
-		const std::vector<uint64_t> raw = gm_table_to_raw(*ord->gm);
-		const uint64_t n = (uint64_t)raw.size();
-		append_pod(buf, n);
-		if (n) append_bytes(buf, raw.data(), raw.size() * sizeof(uint64_t));
+	bool ok = std::fwrite(&len, sizeof len, 1, fp) == 1 && std::fwrite(&kind32, sizeof kind32, 1, fp) == 1
+		&& std::fwrite(&ord->seed, sizeof ord->seed, 1, fp) == 1 && std::fwrite(&t32, sizeof t32, 1, fp) == 1
+		&& std::fwrite(&has_gm, sizeof has_gm, 1, fp) == 1;
+	if (ok && has_gm) {
+		const uint64_t n = (uint64_t)ord->gm->size(), inf = n;
+		const uint16_t *r = ord->gm->data();
+		ok = std::fwrite(&n, sizeof n, 1, fp) == 1;
+		uint64_t chunk[kChunk];
+		for (uint64_t i = 0; ok && i < n;) {
+			const size_t c = n - i < kChunk ? (size_t)(n - i) : kChunk;
+			for (size_t j = 0; j < c; ++j)
+				chunk[j] = r[i + j] == GreedyMiniTable::kInfRank ? inf : r[i + j];
+			ok = std::fwrite(chunk, sizeof(uint64_t), c, fp) == c;
+			i += c;
+		}
 	}
-	// Appended after the table so a blob written before --gm-projection
-	// existed (no trailing byte) still loads, as at0-cg1.
 	const uint8_t proj = (uint8_t)ord->gm_projection;
-	append_pod(buf, proj);
-	// Then the length the GreedyMini centre order was built for (the index's
-	// k). Its absence marks a greedymini index from before the centre
-	// extension, whose rank differs -- rejected on load.
 	const int32_t gm_l = (int32_t)ord->gm_l;
-	append_pod(buf, gm_l);
-	uint8_t *mem = buf.empty() ? nullptr : (uint8_t *)std::malloc(buf.size());
-	if (!buf.empty() && !mem) return -1;
-	if (!buf.empty()) std::memcpy(mem, buf.data(), buf.size());
-	*out = mem;
-	*out_len = (uint64_t)buf.size();
-	return 0;
+	ok = ok && std::fwrite(&proj, sizeof proj, 1, fp) == 1 && std::fwrite(&gm_l, sizeof gm_l, 1, fp) == 1;
+	return ok ? 0 : -1;
 }
 
-extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, char *errbuf, size_t errbuf_len)
+extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
 {
 	if (errbuf && errbuf_len) errbuf[0] = '\0';
-	size_t off = 0;
-	auto need = [&](size_t n) { return off + n <= (size_t)len; };
-	if (!need(sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int32_t) + sizeof(uint8_t))) {
+	uint64_t len = 0;
+	if (std::fread(&len, sizeof len, 1, fp) != 1 || len == 0) {
 		set_err(errbuf, errbuf_len, "truncated order metadata");
 		return nullptr;
 	}
-	uint32_t kind32; std::memcpy(&kind32, buf + off, sizeof(kind32)); off += sizeof(kind32);
-	uint64_t seed;   std::memcpy(&seed, buf + off, sizeof(seed));     off += sizeof(seed);
-	int32_t t32;     std::memcpy(&t32, buf + off, sizeof(t32));       off += sizeof(t32);
-	uint8_t has_gm;  std::memcpy(&has_gm, buf + off, sizeof(has_gm)); off += sizeof(has_gm);
+	SectionReader in{fp, len};
+	uint32_t kind32; uint64_t seed; int32_t t32; uint8_t has_gm;
+	if (!in.get(&kind32, sizeof kind32) || !in.get(&seed, sizeof seed) || !in.get(&t32, sizeof t32) || !in.get(&has_gm, sizeof has_gm)) {
+		set_err(errbuf, errbuf_len, "truncated order metadata");
+		return nullptr;
+	}
 	if (!valid_kind(kind32) || kind32 == MM_ORDER_NATIVE) {
 		set_err(errbuf, errbuf_len, "index was built with a minimizer order this binary no longer supports; rebuild it");
 		return nullptr;
@@ -749,24 +772,31 @@ extern "C" mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, ch
 
 	std::shared_ptr<const GreedyMiniTable> gm;
 	if (has_gm) {
-		if (!need(sizeof(uint64_t))) { set_err(errbuf, errbuf_len, "truncated GreedyMini table length"); return nullptr; }
-		uint64_t n; std::memcpy(&n, buf + off, sizeof(n)); off += sizeof(n);
-		if (n > ((size_t)len - off) / sizeof(uint64_t)) { set_err(errbuf, errbuf_len, "truncated GreedyMini table bytes"); return nullptr; }
+		uint64_t n;
+		if (!in.get(&n, sizeof n)) { set_err(errbuf, errbuf_len, "truncated GreedyMini table length"); return nullptr; }
+		if (n > in.left / sizeof(uint64_t)) { set_err(errbuf, errbuf_len, "truncated GreedyMini table bytes"); return nullptr; }
 		try {
-			std::vector<uint64_t> raw(n);
-			if (n) std::memcpy(raw.data(), buf + off, (size_t)n * sizeof(uint64_t));
-			off += (size_t)n * sizeof(uint64_t);
-			gm = std::make_shared<const GreedyMiniTable>(raw);
+			auto table = std::make_shared<GreedyMiniTable>();
+			table->reset((size_t)n);
+			uint64_t chunk[kChunk];
+			for (uint64_t i = 0; i < n;) {
+				const size_t c = n - i < kChunk ? (size_t)(n - i) : kChunk;
+				if (!in.get(chunk, c * sizeof(uint64_t))) { set_err(errbuf, errbuf_len, "truncated GreedyMini table bytes"); return nullptr; }
+				for (size_t j = 0; j < c; ++j) table->set_raw((size_t)(i + j), chunk[j]);
+				i += c;
+			}
+			gm = table;
 		} catch (const std::exception &e) {
 			set_err(errbuf, errbuf_len, e.what());
 			return nullptr;
 		}
 	}
 	uint8_t proj = MM_GM_PROJ_AT0_CG1;
-	if (need(sizeof(proj))) { std::memcpy(&proj, buf + off, sizeof(proj)); off += sizeof(proj); }
+	if (in.left >= sizeof proj) in.get(&proj, sizeof proj);
 	if (proj > MM_GM_PROJ_AT1_CG0) { set_err(errbuf, errbuf_len, "invalid GreedyMini projection in index"); return nullptr; }
 	int32_t gm_l = 0;
-	if (need(sizeof(gm_l))) { std::memcpy(&gm_l, buf + off, sizeof(gm_l)); off += sizeof(gm_l); }
+	if (in.left >= sizeof gm_l) in.get(&gm_l, sizeof gm_l);
+	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated order metadata"); return nullptr; }
 	if (gm && gm_l <= 0) {
 		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini centre extension; rebuild it");
 		return nullptr;

@@ -526,16 +526,9 @@ void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part)
 	}
 	if (!(mi->flag & MM_I_NO_SEQ))
 		fwrite(mi->S, 4, (sum_len + 7) / 8, fp);
-	if (write_order) {
-		uint8_t *buf = 0;
-		uint64_t len = 0;
-		if (mm_order_serialize(mi->order, &buf, &len) != 0 || len == 0) {
-			fprintf(stderr, "[ERROR] failed to serialize the minimizer order into the index\n");
-			exit(1);
-		}
-		fwrite(&len, 8, 1, fp);
-		fwrite(buf, 1, len, fp);
-		free(buf);
+	if (write_order && mm_order_dump(mi->order, fp) != 0) {
+		fprintf(stderr, "[ERROR] failed to write the minimizer order into the index\n");
+		exit(1);
 	}
 	fflush(fp);
 }
@@ -596,27 +589,19 @@ mm_idx_t *mm_idx_load(FILE *fp)
 		fread(mi->S, 4, (sum_len + 7) / 8, fp);
 	}
 	if (has_order) { // an index whose order cannot be restored is refused, not mapped with the native order
-		uint64_t len = 0;
 		char errbuf[256];
-		strcpy(errbuf, "truncated order metadata");
-		if (fread(&len, 8, 1, fp) == 1 && len > 0 && len < (1ULL<<40)) {
-			uint8_t *buf = (uint8_t*)malloc(len);
-			if (buf && fread(buf, 1, len, fp) == len) {
-				mm_order_t *ord = mm_order_deserialize(buf, len, errbuf, sizeof errbuf);
-				if (ord && mm_order_validate(ord, mi->k, errbuf, sizeof errbuf) != 0) {
-					mm_order_destroy(ord);
-					ord = 0;
-				}
-				mi->order = ord;
-			}
-			free(buf);
+		mm_order_t *ord = mm_order_load(fp, errbuf, sizeof errbuf);
+		if (ord && mm_order_validate(ord, mi->k, errbuf, sizeof errbuf) != 0) {
+			mm_order_destroy(ord);
+			ord = 0;
 		}
-		if (mi->order == 0) {
+		if (ord == 0) {
 			if (mm_verbose >= 1)
 				fprintf(stderr, "[ERROR] failed to load the minimizer order stored in the index: %s\n", errbuf);
 			mm_idx_destroy(mi);
 			return 0;
 		}
+		mi->order = ord;
 	}
 	return mi;
 }

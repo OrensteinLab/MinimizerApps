@@ -12,6 +12,7 @@
 #define MM_ORDER_H
 
 #include <stdint.h>
+#include <stdio.h>
 #include "minimap.h" // mm128_v, mm_order_kind_t, mm_order_conf_t, mm_order_t
 
 #ifdef __cplusplus
@@ -48,15 +49,13 @@ mm_order_kind_t mm_order_kind(const mm_order_t *ord);
 void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *str, int len,
                         int w, int k, uint32_t rid, int is_hpc, mm128_v *p);
 
-// .mmi persistence: serialize a fully-materialized order -- including the
-// loaded GreedyMini table's raw bytes, not just the source filename -- into
-// a caller-owned malloc'd buffer (free() it), so a reload never needs
-// --greedymini-file re-supplied. Returns 0 on success.
-int mm_order_serialize(const mm_order_t *ord, uint8_t **out, uint64_t *out_len);
-
-// Reconstructs an order purely from a serialized blob (no filesystem
-// access). Returns NULL and writes to errbuf on failure.
-mm_order_t *mm_order_deserialize(const uint8_t *buf, uint64_t len, char *errbuf, size_t errbuf_len);
+// .mmi persistence: write the order section ([u64 len][blob], including the
+// GreedyMini table itself, so a reload never needs --greedymini-file) at the
+// file position, or read one back (no filesystem access besides fp). Both
+// stream: no full-size temporary buffer. 0 / non-NULL on success; the loader
+// writes a message to errbuf on failure.
+int mm_order_dump(const mm_order_t *ord, FILE *fp);
+mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len);
 
 // Checks that ord can sketch the index's k-mers (k <= 28; for mod-minimizer
 // 0 < t < k; for greedymini a table built for length k), as mm_idx_load does
