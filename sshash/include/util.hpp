@@ -7,6 +7,7 @@
 #include <cmath>  // for std::ceil on linux
 
 #include "hash_util.hpp"
+#include "../../common/minimizer-orders/mod_minimizer_rule.h"
 
 namespace sshash {
 
@@ -621,15 +622,14 @@ inline bool mod_forward_preferred(Kmer const& kmer, Kmer const& kmer_rc, const u
         (void)kmer, (void)kmer_rc, (void)k;
         return true;
     } else {
-        const uint64_t g2 = 2 * count_gt(kmer, k);
-        if (g2 != k) return g2 > k;
-        return !(kmer_rc < kmer);
+        return mod_rule::prefer_forward(int(2 * count_gt(kmer, k)) - int(k),
+                                        [&]() { return !(kmer_rc < kmer); });
     }
 }
 
 /* The offset of the sampled m-mer for the minimal t-mer at locus x (see compute_mod_minimizer). */
 inline uint64_t mod_offset(uint64_t x, uint64_t w, uint64_t T, bool forward_preferred) {
-    return forward_preferred ? x % w : (w - 1) - (((T - 1) - x) % w);
+    return mod_rule::offset(x, w, T, forward_preferred);
 }
 
 /* Tie at the minimum of the mod-minimizer: every locus in [x_l, x_r] whose hash
@@ -640,27 +640,17 @@ inline uint64_t mod_offset(uint64_t x, uint64_t w, uint64_t T, bool forward_pref
 inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t T, uint64_t w,
                                uint64_t min_hash, uint64_t x_l, uint64_t x_r,
                                bool forward_preferred) {
-    uint64_t best = constants::invalid_uint64, lo = 0, hi = 0;
-    for (uint64_t x = x_l; x <= x_r; ++x) {
-        if (hashes[(base + x) & 63] != min_hash) continue;
-        const uint64_t p = mod_offset(x, w, T, forward_preferred);
-        const uint64_t d = 2 * p > w - 1 ? 2 * p - (w - 1) : (w - 1) - 2 * p;
-        if (d < best) {
-            best = d;
-            lo = p;
-            hi = p;
-        } else if (d == best) {
-            lo = p < lo ? p : lo;
-            hi = p > hi ? p : hi;
-        }
-    }
-    return forward_preferred ? lo : hi;
+    return mod_rule::centre_tie_offset(
+        x_l, x_r, w, T, forward_preferred,
+        [&](uint64_t x) { return hashes[(base + x) & 63] == min_hash; });
 }
 
 /*
     Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with a
-    preferred strand per kmer; this fork, not a published scheme -- the rule of the minimap2 and
-    kraken2 forks' mod-minimizer, except for ties, see below). The kmer's T = k - t + 1 t-mers
+    preferred strand per kmer as in simd-minimizers' canonical definition, Groot Koerkamp and
+    Martayan, bioRxiv 2025.01.27.634998; the rule of the minimap2 and kraken2 forks'
+    mod-minimizer, except for ties, see below; shared definition in
+    common/minimizer-orders/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers
     are ranked by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its
     hash being strand invariant); x is the locus of the minimal hash. A forward-preferred kmer
     (mod_forward_preferred) samples the m-mer at offset x mod w, w = k - m + 1, as plain

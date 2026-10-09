@@ -24,6 +24,7 @@ implementation behind a small extern-"C" bridge instead of using it directly
 - `pcg_rxs_m_xs.h` — the PCG RXS-M-XS scramble (`pcg_rxs_m_xs64`), used by all four apps' xor-pcg order.
 - `greedymini_rank.h` — the full GreedyMini implementation: the bit-manipulation helpers for extracting a DNA k-mer key, the `GreedyMiniTable` LUT class (binary-alphabet tables only; kmc's DNA-alphabet tables are its own, see below), and the `.gm` binary file I/O (`load_gm_file_raw`/`write_gm_file_raw`/`load_gm_table`). All at global C++ scope, so kraken2 (via unqualified lookup from inside `namespace kraken2 {}`), kmc, and sshash (via unqualified lookup from inside `namespace sshash {}`) can all use it directly without a wrapper.
 - `greedymini_centre.h` — additive header on top of `greedymini_rank.h`: the centre extension of a canonical table (`gm_centre::Order`, compressed packing for kraken2, injective packing for sshash and minimap2), the encoding-agnostic plane extraction (`TwoBitPlanes`) and rolling Sigma helpers, a slow per-base `Reference` and a density helper. Used by kraken2's `GMRanker`, sshash's `custom_order_hasher` and minimap2's `order.cpp`; kmc does not use it.
+- `mod_minimizer_rule.h` — the strand-symmetric mod-minimizer rule (preferred strand by G/T count and its tie-break, the two offset rules, the residue-class mirror slot, sshash's centre tie rule), shared by kraken2's `ModSampler`, minimap2's `sketch_mod_minimizer` and sshash's `compute_mod_minimizer` / `mod_minimizer_iterator`; each app keeps its own scan.
 - `dna_revcomp.h` — reverse-complement of a packed 2-bit-per-base k-mer. Kept in its own header (not `greedymini_rank.h`) because kraken2 already has its own `dna_reverse_complement` in `dna_kmer.h`; combining the two into one header caused an ambiguous-overload compile error under kraken2's `using namespace kraken2;`. kmc includes this header directly (sshash does not: it runs on its own nucleotide encoding, see `sshash/README.md`); kraken2 keeps using its own (verified bit-identical).
 - `gm_serializer.cpp` (+ `Makefile`) — builds a `.gm` binary table from a GreedyMini tool's `.txt` rank-list output. C++, not Python, so all four apps share one implementation instead of independent re-serializers.
 
@@ -119,14 +120,18 @@ kmc ...                                                        # no -or/-co: kmc
 | greedymini | `--order greedymini --greedymini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode] [-oat1]` | `-O greedymini --greedy-mini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` (binary alphabet only) | `--minimizer-order greedymini --greedymini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` (binary alphabet only; centre extension to `-k = gm_k + 2i`) |
 | mod-minimizer sketching (strand-symmetric, see below) | `--sketching mod-minimizer` (combine with any `--order` above) | (n/a — kmc has no analogous two-stage scheme) | `-O mod-xor-hash --mod-t T -s<seed>` or `-O mod-greedymini --greedy-mini-file FILE.gm --mod-t T` (a table of t-mers) | `--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T` (O_t = xor only) |
 
-kraken2's and minimap2's mod-minimizer is a strand-symmetric variant of
-mod-sampling (Groot Koerkamp & Pibiri, WABI 2024; this repo, not a published
-scheme): each window prefers the strand with more G/T bases (tie: the window
-<= its reverse complement); a forward-preferred window samples the k-mer at
+The mod-minimizer of all three apps is a strand-symmetric variant of
+mod-sampling (Groot Koerkamp & Pibiri, WABI 2024). Its canonical definition is
+simd-minimizers' (Groot Koerkamp & Martayan, "SimdMinimizers: Computing random
+minimizers, fast", [bioRxiv 2025.01.27.634998](https://www.biorxiv.org/content/10.1101/2025.01.27.634998v1.full.pdf)):
+each window prefers the strand with more G/T bases; applying it to
+mod-sampling and the tie rules (window <= its reverse complement on equal G/T
+counts, ties at the minimum below) are this repo's. A forward-preferred window samples the k-mer at
 offset `x_L mod w` (`x_L` = leftmost minimal t-mer), a reverse-preferred one at
 `(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T` t-mers per
 window), so a read and its reverse complement select the same k-mers.
-Implemented in `kraken2/src/mod_minimizer.h`, `minimap2/order.cpp` and
+The rule is `common/minimizer-orders/mod_minimizer_rule.h`; the scans are
+`kraken2/src/mod_minimizer.h`, `minimap2/order.cpp` and
 `sshash/include/util.hpp` (`compute_mod_minimizer`; sshash's window is the k-mer, `w = k-m+1`,
 `T = k-t+1`). With the usual `t = 4 + (m - 4) mod w` (`(T-1) ≡ w-1 mod w`) both rules reduce
 to `x mod w` and the strands differ only on ties, so the density is mod-sampling's. Ties

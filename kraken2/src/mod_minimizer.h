@@ -13,20 +13,19 @@
  * MOD+GM ranks raw t-mers with GMRanker (ACGT→ATCG σ-extend), same as
  * MINIMIZER+GM on ℓ-mers.
  *
- * Plain mod-sampling is not strand-symmetric, so on DNA this sampler uses a
- * canonical variant (this fork, not a published scheme -- the mod-sampling
- * counterpart of simd-minimizers' canonical minimizer, Groot Koerkamp &
- * Martayan SEA 2025, and the same rule as the minimap2 fork's
- * mod-minimizer-xor): every window (the k bases of the k-mer) has a preferred
- * strand, the one with more G/T bases (a tie, possible only for even k,
- * broken by window <= revcomp(window)). A forward-preferred window samples
- * offset x_L mod w (x_L = leftmost minimal t-mer, the paper's tie-break); a
- * reverse-preferred one applies the same rule from the window's other end:
- * offset (w-1) - (((T-1) - x_R) mod w), x_R = rightmost minimal t-mer. The
- * reverse complement of a window then selects the mirror l-mer, so a read
- * and its reverse complement give the same minimizers (the t-mer ranks are
- * strand-invariant for every order here). Protein (no strands) keeps the
- * plain rule above.
+ * Plain mod-sampling is not strand-symmetric, so on DNA this sampler uses the
+ * canonical variant of common/minimizer-orders/mod_minimizer_rule.h (the
+ * canonical definition of simd-minimizers, Groot Koerkamp & Martayan, bioRxiv
+ * 2025.01.27.634998; the same rule as the minimap2 fork's mod-minimizer-xor):
+ * every window (the k bases of the k-mer) has a preferred strand, the one
+ * with more G/T bases (a tie, possible only for even k, broken by window <=
+ * revcomp(window)). A forward-preferred window samples offset x_L mod w (x_L =
+ * leftmost minimal t-mer, the paper's tie-break); a reverse-preferred one
+ * applies the same rule from the window's other end: offset (w-1) - (((T-1) -
+ * x_R) mod w), x_R = rightmost minimal t-mer. The reverse complement of a
+ * window then selects the mirror l-mer, so a read and its reverse complement
+ * give the same minimizers (the t-mer ranks are strand-invariant for every
+ * order here). Protein (no strands) keeps the plain rule above.
  */
 
 #ifndef KRAKEN2_MOD_MINIMIZER_H_
@@ -35,6 +34,7 @@
 #include "minimizer_rankers.h"
 #include "sketching_schemes.h"
 #include "dna_kmer.h"
+#include "../../common/minimizer-orders/mod_minimizer_rule.h"
 
 #include <cstdint>
 #include <memory>
@@ -86,9 +86,8 @@ class ModSampler {
     if (t_ < 1 || t_ > l)
       throw std::invalid_argument("ModSampler: invalid t");
     tmer_span_ = w_ + l - t_;
-    tm1_mod_ = (tmer_span_ - 1) % w_;
     for (int a = 0; a < w_; ++a)
-      mirror_slot_[a] = (uint8_t)((a + (w_ - 1) - tm1_mod_) % w_);
+      mirror_slot_[a] = (uint8_t)mod_rule::mirror_slot(a, w_, tmer_span_);
     const int t_bits = t_ * bpc_;
     t_mask_ = (t_bits >= 64) ? ~0ULL : ((1ULL << t_bits) - 1ULL);
     toggle_t_ = toggle_mask & t_mask_;
@@ -489,10 +488,9 @@ class ModSampler {
       ++r;
     // mirror slot (win + (w-1) - (((T-1) - x_R) mod w)) mod w, with
     // x_R mod w = cls - win (mod w), is (cls + (w-1) - (T-1)) mod w
-    const int rslot = mirror_slot_[dq_[r & kDqMask].cls];
-    const int fslot = dq_[dq_head_ & kDqMask].cls;
-    const int fmask = -(int)forward_preferred();
-    return rslot ^ ((fslot ^ rslot) & fmask);
+    return mod_rule::select_slot(dq_[dq_head_ & kDqMask].cls,
+                                 mirror_slot_[dq_[r & kDqMask].cls],
+                                 forward_preferred());
   }
 
   // The window (its last k pushed bases) prefers the forward strand when it
@@ -500,24 +498,17 @@ class ModSampler {
   // complement lexicographically (exactly one of a window and its reverse
   // complement wins unless it is its own reverse complement).
   MOD_ALWAYS_INLINE bool forward_preferred() const {
-    const int d = 2 * __builtin_popcountll(whi_ & wmask_) - k_;
-    bool fwd = d > 0;
-    if (__builtin_expect(d == 0, 0))  // only for even k
-      fwd = forward_preferred_tie();
-    return fwd;
+    return mod_rule::prefer_forward(
+        2 * __builtin_popcountll(whi_ & wmask_) - k_,  // tie only for even k
+        [this]() { return forward_preferred_tie(); });
   }
 
   bool forward_preferred_tie() const {
-    auto base_at = [this](int i) {  // i-th newest base
+    // window base j is the (k-1-j)-th newest
+    return mod_rule::window_le_revcomp(k_, [this](int j) {
+      const int i = k_ - 1 - j;
       return (int)((((whi_ >> i) & 1) << 1) | ((wlo_ >> i) & 1));
-    };
-    for (int j = 0; j < k_; ++j) {  // window base j is the (k-1-j)-th newest
-      const int a = base_at(k_ - 1 - j);
-      const int b = 3 - base_at(j);
-      if (a != b)
-        return a < b;
-    }
-    return true;
+    });
   }
 
   int k_, l_, bpc_;
@@ -525,7 +516,6 @@ class ModSampler {
   Order order_;
   uint64_t whi_ = 0, wlo_ = 0;  // DNA: bits 1 / 0 of the last bases
   uint64_t wmask_ = 0;          // the window's k bases
-  int tm1_mod_ = 0;             // (T-1) mod w
   uint8_t mirror_slot_[kMaxResidues] = {};  // DNA: mirror-rule slot per class
   int revcom_version_;
   int w_, t_, tmer_span_;
