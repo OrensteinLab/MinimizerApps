@@ -1,36 +1,83 @@
 CXX ?= g++
 KRAKEN2_SKIP_FOPENMP ?= -fopenmp
-CXXFLAGS = $(KRAKEN2_SKIP_FOPENMP) -Wall -std=c++11 -O3 -fPIC -g
+# -march=native enables BMI2 pext used by greedymini_rank.h when available.
+CXXFLAGS = $(KRAKEN2_SKIP_FOPENMP) -Wall -std=c++11 -O3 -fPIC -g -march=native -flto
 CXXFLAGS += -DLINEAR_PROBING
-CFLAGS = -Wall -std=c99 -O2 -g
+LDFLAGS ?=
+LDFLAGS += -flto
+CFLAGS = -Wall -std=c99 -O2 -g -march=native
 
-.PHONY: all clean install
+.PHONY: all clean install test check_prof_mode
 
-PROGS = estimate_capacity build_db classify dump_table lookup_accession_numbers k2mask blast_to_fasta merge libtax.so
+PROGS = estimate_capacity build_db classify dump_table lookup_accession_numbers k2mask blast_to_fasta merge libtax.so benchmark_minimizers
+TESTS = test_scheme_rankers test_mod_minimizer
 
-all: $(PROGS)
+# UHS hit counters are always updated in GMRanker (cheap); BENCH only gates
+# NextMinimizer RDTSC phase timing in mmscanner.cc.
+BENCH_CPPFLAGS = -DKRAKEN2_MINIMIZER_BENCHMARK
+
+# NextMinimizer / phase timing in classify (env KRAKEN2_MINIMIZER_PROF path).
+# Stamp tracks ENABLE_MINIMIZER_PROF so toggling the flag rebuilds classify.
+PROF_STAMP = .minimizer_prof_mode
+ifeq ($(ENABLE_MINIMIZER_PROF),1)
+  PROF_CPPFLAGS = -DKRAKEN2_MINIMIZER_PROF
+  PROF_MODE = 1
+else
+  PROF_CPPFLAGS =
+  PROF_MODE = 0
+endif
+
+# Headers whose layout/inlines are merged under -flto; keep deps tight to avoid
+# -Wlto-type-mismatch from stale TUs (e.g. classify.o vs mmscanner.o).
+MM_HEADERS = mmscanner.h minimizer_rankers.h sketching_schemes.h \
+	mod_minimizer.h dna_kmer.h greedymini_rank.h \
+	../../common/minimizer-orders/greedymini_rank.h \
+	../../common/minimizer-orders/greedymini_centre.h \
+	../../common/minimizer-orders/mod_minimizer_rule.h
+
+all: check_prof_mode $(PROGS)
+
+# Always ensure stamp exists before objects that list it as a prerequisite
+# (direct `make classify` after clean must not fail).
+$(PROF_STAMP):
+	@echo "$(PROF_MODE)" > "$@"
+
+check_prof_mode: $(PROF_STAMP)
+	@desired="$(PROF_MODE)"; \
+	if [ "$$(cat "$(PROF_STAMP)" 2>/dev/null)" != "$$desired" ]; then \
+	  echo "$$desired" > "$(PROF_STAMP)"; \
+	  rm -f classify.o mmscanner.o classify; \
+	fi
 
 install: $(PROGS)
 	cp $(PROGS) "$(KRAKEN2_DIR)/"
 
+test: $(TESTS)
+	./test_scheme_rankers
+	./test_mod_minimizer
+
 clean:
-	rm -f *.o $(PROGS)
+	rm -f *.o $(PROGS) $(TESTS) scan_dump $(PROF_STAMP)
 
 taxonomy.o: taxonomy.cc taxonomy.h mmap_file.h
 hyperloglogplus.o: hyperloglogplus.cc hyperloglogplus.h
 mmap_file.o: mmap_file.cc mmap_file.h
 compact_hash.o: compact_hash.cc compact_hash.h kv_store.h mmap_file.h kraken2_data.h
-mmscanner.o: mmscanner.cc mmscanner.h
+mmscanner.o: mmscanner.cc $(MM_HEADERS) $(PROF_STAMP)
+	$(CXX) $(CXXFLAGS) $(PROF_CPPFLAGS) -c -o $@ mmscanner.cc
 seqreader.o: seqreader.cc seqreader.h kseq.h
 omp_hack.o: omp_hack.cc omp_hack.h
 reports.o: reports.cc reports.h kraken2_data.h
 aa_translate.o: aa_translate.cc aa_translate.h
 utilities.o: utilities.cc utilities.h
 
-classify.o: classify.cc kraken2_data.h kv_store.h taxonomy.h seqreader.h mmscanner.h compact_hash.h aa_translate.h reports.h utilities.h readcounts.h
-dump_table.o: dump_table.cc compact_hash.h taxonomy.h mmscanner.h kraken2_data.h reports.h
-estimate_capacity.o: estimate_capacity.cc kv_store.h mmscanner.h seqreader.h utilities.h
-build_db.o: build_db.cc build_db.h taxonomy.h mmscanner.h seqreader.h compact_hash.h kv_store.h kraken2_data.h utilities.h
+classify.o: classify.cc kraken2_data.h kv_store.h taxonomy.h seqreader.h \
+	$(MM_HEADERS) compact_hash.h aa_translate.h reports.h utilities.h \
+	readcounts.h $(PROF_STAMP)
+	$(CXX) $(CXXFLAGS) $(PROF_CPPFLAGS) -c -o $@ classify.cc
+dump_table.o: dump_table.cc compact_hash.h taxonomy.h $(MM_HEADERS) kraken2_data.h reports.h
+estimate_capacity.o: estimate_capacity.cc kv_store.h $(MM_HEADERS) seqreader.h utilities.h
+build_db.o: build_db.cc build_db.h taxonomy.h $(MM_HEADERS) seqreader.h compact_hash.h kv_store.h kraken2_data.h utilities.h
 lookup_accession_numbers.o: lookup_accession_numbers.cc mmap_file.h utilities.h
 k2mask.o: k2mask.cc gzstream.h threadpool.h
 merge.o: merge.cc taxonomy.cc reports.cc mmap_file.cc utilities.cc hyperloglogplus.cc
@@ -67,3 +114,32 @@ libtax.o: libtax.cc
 
 libtax.so: taxonomy.o mmap_file.o libtax.o
 	$(CXX) $(CXXFLAGS) -shared -o libtax.so taxonomy.o mmap_file.o libtax.o $(LDFLAGS)
+
+benchmark_minimizers.o: benchmark_minimizers.cc $(MM_HEADERS)
+	$(CXX) $(CXXFLAGS) $(BENCH_CPPFLAGS) -c -o $@ benchmark_minimizers.cc
+
+# Separate mmscanner TU: RDTSC phase timing only in the bench binary.
+mmscanner_bench.o: mmscanner.cc $(MM_HEADERS)
+	$(CXX) $(CXXFLAGS) $(BENCH_CPPFLAGS) -c -o $@ mmscanner.cc
+
+benchmark_minimizers: benchmark_minimizers.o mmscanner_bench.o
+	$(CXX) $(CXXFLAGS) -o $@ benchmark_minimizers.o mmscanner_bench.o $(LDFLAGS)
+
+test_scheme_rankers.o: test_scheme_rankers.cc greedymini_rank.h minimizer_rankers.h \
+	kraken2_data.h $(MM_HEADERS)
+test_scheme_rankers: test_scheme_rankers.o
+	$(CXX) $(CXXFLAGS) -o $@ test_scheme_rankers.o $(LDFLAGS)
+
+test_mod_minimizer.o: test_mod_minimizer.cc $(MM_HEADERS)
+	$(CXX) $(CXXFLAGS) -c -o $@ test_mod_minimizer.cc
+
+test_mod_minimizer: test_mod_minimizer.o mmscanner.o
+	$(CXX) $(CXXFLAGS) -o $@ test_mod_minimizer.o mmscanner.o $(LDFLAGS)
+
+# Test/benchmark tool (not part of `all`): key-stream dump and scan timing via
+# the public MinimizerScanner API only. Build: make -C kraken2/src scan_dump
+scan_dump.o: scan_dump.cc $(MM_HEADERS) utilities.h
+	$(CXX) $(CXXFLAGS) -c -o $@ scan_dump.cc
+
+scan_dump: scan_dump.o mmscanner.o utilities.o
+	$(CXX) $(CXXFLAGS) -o $@ scan_dump.o mmscanner.o utilities.o $(LDFLAGS)

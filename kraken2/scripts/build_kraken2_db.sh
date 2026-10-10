@@ -98,7 +98,27 @@ fi
 echo "Estimating required capacity (step 2)..."
 
 step_time=$(get_current_time)
-estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG )
+KRAKEN2_SCHEME_FLAGS=""
+# Defaults (minimizer, xor) are not passed; anything else (including an
+# invalid value, which the binaries reject) is forwarded.
+if [ -n "${KRAKEN2_SKETCHING:-}" ] && [ "${KRAKEN2_SKETCHING}" != "minimizer" ]
+then
+  KRAKEN2_SCHEME_FLAGS="-s ${KRAKEN2_SKETCHING}"
+fi
+if [ -n "${KRAKEN2_ORDER:-}" ] && [ "${KRAKEN2_ORDER}" != "xor" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -O ${KRAKEN2_ORDER}"
+fi
+if [ "${KRAKEN2_ORDER:-xor}" = "greedymini" ] && [ -n "${KRAKEN2_GREEDYMINI_FILE:-}" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -G $KRAKEN2_GREEDYMINI_FILE"
+fi
+if [ -n "${KRAKEN2_GM_PROJECTION:-}" ] && [ "${KRAKEN2_GM_PROJECTION}" != "at0-cg1" ]
+then
+  KRAKEN2_SCHEME_FLAGS="$KRAKEN2_SCHEME_FLAGS -P ${KRAKEN2_GM_PROJECTION}"
+fi
+
+estimate=$(list_sequence_files | xargs -0 cat | estimate_capacity -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE -p $KRAKEN2_THREAD_CT $KRAKEN2XFLAG $KRAKEN2_SCHEME_FLAGS)
 # Slight upward adjustment of distinct minimizer estimate to protect
 # against crash w/ small reference sets
 estimate=$(( estimate + 8192 ))
@@ -135,7 +155,7 @@ else
     build_db -k $KRAKEN2_KMER_LEN -l $KRAKEN2_MINIMIZER_LEN -S $KRAKEN2_SEED_TEMPLATE $KRAKEN2XFLAG \
              -H hash.k2d.tmp -t taxo.k2d.tmp -o opts.k2d.tmp -n taxonomy/ -m $seqid2taxid_map_file \
              -c $required_capacity -p $KRAKEN2_THREAD_CT $max_db_flag -B $KRAKEN2_BLOCK_SIZE -b $KRAKEN2_SUBBLOCK_SIZE \
-             -r $KRAKEN2_MIN_TAXID_BITS $fast_build_flag
+             -r $KRAKEN2_MIN_TAXID_BITS $fast_build_flag $KRAKEN2_SCHEME_FLAGS
   finalize_file taxo.k2d
   finalize_file opts.k2d
   finalize_file hash.k2d

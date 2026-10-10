@@ -65,6 +65,10 @@ my (
   $standard,
   $clean,
   $special,
+  $sketching,
+  $order,
+  $greedymini_file,
+  $gm_projection,
 );
 
 # Initialization of defaults and env. var checks
@@ -121,6 +125,10 @@ GetOptions(
   "standard" => \$standard,
   "clean" => \$clean,
   "special=s" => \$special,
+  "sketching=s" => \$sketching,
+  "order=s" => \$order,
+  "greedymini-file=s" => \$greedymini_file,
+  "gm-projection=s" => \$gm_projection,
 ) or usage();
 
 if ($is_protein) {
@@ -189,6 +197,14 @@ $ENV{"KRAKEN2_FAST_BUILD"} = $fast_build ? 1 : "";
 $ENV{"KRAKEN2_BLOCK_SIZE"} = $block_size;
 $ENV{"KRAKEN2_SUBBLOCK_SIZE"} = $subblock_size;
 $ENV{"KRAKEN2_MIN_TAXID_BITS"} = $minimum_bits_for_taxid;
+$sketching = "minimizer" if ! defined $sketching;
+$order = "xor" if ! defined $order;
+$greedymini_file = "" if ! defined $greedymini_file;
+$gm_projection = "at0-cg1" if ! defined $gm_projection;
+$ENV{"KRAKEN2_SKETCHING"} = $sketching;
+$ENV{"KRAKEN2_ORDER"} = $order;
+$ENV{"KRAKEN2_GREEDYMINI_FILE"} = $greedymini_file;
+$ENV{"KRAKEN2_GM_PROJECTION"} = $gm_projection;
 
 if ($dl_taxonomy) {
   download_taxonomy();
@@ -272,6 +288,14 @@ Options:
                              built when using multiple threads.  This is faster,
                              but does introduce variability in minimizer/LCA
                              pairs.  Used with --build and --standard options.
+  --sketching SKETCHING      Sketching rule: minimizer (default) or
+                             mod-minimizer (build task only).
+  --order ORDER              Substring order: xor (default), xor-pcg-hash, or
+                             greedymini (build task only).
+  --greedymini-file FILE     Path to greedymini rank file (.gm); required when
+                             --order greedymini.
+  --gm-projection PROJ       DNA->binary projection for greedymini: at0-cg1
+                             (default) or at1-cg0 (build task only).
 EOF
   exit $exit_code;
 }

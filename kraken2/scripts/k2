@@ -28,6 +28,7 @@ import random
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tarfile
@@ -86,6 +87,28 @@ WRAPPER_ARGS_TO_BIN_ARGS = {
     "use_daemon": "-D",
     "cht_cell_size": "-C",
     "dump_taxon_counters": "-d"
+}
+
+# SketchingScheme / Order (must match src/sketching_schemes.h + kraken2_data.h)
+SKETCHING_MINIMIZER = 0
+SKETCHING_MOD = 2  # 1: retired forward-only mod-minimizer (rebuild such databases)
+ORDER_RANDOM_XOR = 0
+ORDER_GM = 1
+ORDER_RANDOM_PCG = 2
+KRAKEN2_DB_VERSION = 2  # must match kraken2_data.h; other versions are rejected
+KRAKEN2_OPTS_MAGIC = 0x4B32534B  # "K2SK"; must match kraken2_data.h
+INDEX_OPTIONS_BASE_FMT = "<QQQQ?7xQiii"
+# sketching_scheme, order, gm_k, magic, gm_projection, (3 reserved bytes), gm_num_entries
+INDEX_OPTIONS_EXT_FMT = "<BBHIB3xQ"
+GM_PROJECTION_NAMES = {0: "at0-cg1", 1: "at1-cg0"}
+SKETCHING_NAMES = {
+    SKETCHING_MINIMIZER: "minimizer",
+    SKETCHING_MOD: "mod-minimizer",
+}
+ORDER_NAMES = {
+    ORDER_RANDOM_XOR: "xor",
+    ORDER_GM: "greedymini",
+    ORDER_RANDOM_PCG: "xor-pcg-hash",
 }
 
 
@@ -571,6 +594,175 @@ def wrapper_args_to_binary_args(opts, argv, binary_args):
             argv.extend([WRAPPER_ARGS_TO_BIN_ARGS[k], str(v)])
 
 
+def read_index_options(opts_pathname):
+    """Parse opts.k2d. Returns None unless it is a database of the current
+    format (exact size, db_version == KRAKEN2_DB_VERSION, magic matches);
+    such databases must be rebuilt."""
+    with open(opts_pathname, "rb") as in_file:
+        data = in_file.read()
+    base_size = struct.calcsize(INDEX_OPTIONS_BASE_FMT)
+    ext_size = struct.calcsize(INDEX_OPTIONS_EXT_FMT)
+    if len(data) != base_size + ext_size:
+        return None
+    (
+        k,
+        l,
+        spaced_seed_mask,
+        toggle_mask,
+        dna_db,
+        minimum_acceptable_hash_value,
+        revcom_version,
+        db_version,
+        db_type,
+    ) = struct.unpack(INDEX_OPTIONS_BASE_FMT, data[:base_size])
+    if db_version != KRAKEN2_DB_VERSION:
+        return None
+    sketching, order, gm_k, magic, gm_projection, gm_num_entries = struct.unpack(
+        INDEX_OPTIONS_EXT_FMT, data[base_size : base_size + ext_size]
+    )
+    if (
+        magic != KRAKEN2_OPTS_MAGIC
+        or sketching not in SKETCHING_NAMES
+        or order not in ORDER_NAMES
+        or gm_projection not in GM_PROJECTION_NAMES
+    ):
+        return None
+    return {
+        "k": k,
+        "l": l,
+        "db_version": db_version,
+        "sketching": sketching,
+        "order": order,
+        "gm_k": gm_k,
+        "gm_projection": gm_projection,
+        "gm_num_entries": gm_num_entries,
+        "dna_db": bool(dna_db),
+    }
+
+
+def database_requires_gm_k2d(opts_pathname):
+    opts = read_index_options(opts_pathname)
+    if opts is None:
+        return False
+    return opts["order"] == ORDER_GM and opts["gm_num_entries"] > 0
+
+
+def sketching_order_from_args(args):
+    return (
+        getattr(args, "sketching", None) or "minimizer",
+        getattr(args, "order", None) or "xor",
+    )
+
+
+def sketching_order_build_key(args):
+    sketching, order = sketching_order_from_args(args)
+    parts = [sketching, order]
+    if order == "greedymini":
+        gm_file = getattr(args, "greedymini_file", None)
+        if gm_file:
+            parts.append(os.path.basename(gm_file))
+            if os.path.isfile(gm_file):
+                stat = os.stat(gm_file)
+                parts.append("{}:{}".format(stat.st_size, int(stat.st_mtime)))
+        parts.append(getattr(args, "gm_projection", None) or "at0-cg1")
+    return ":".join(parts)
+
+
+def index_sketching_order_key(opts_pathname):
+    opts = read_index_options(opts_pathname)
+    if opts is None:
+        return None
+    parts = [SKETCHING_NAMES[opts["sketching"]], ORDER_NAMES[opts["order"]]]
+    if opts["order"] == ORDER_GM:
+        parts.append("gm{}".format(opts["gm_num_entries"]))
+        parts.append(GM_PROJECTION_NAMES[opts["gm_projection"]])
+    return ":".join(parts)
+
+
+def validate_minimizer_build_args(args):
+    _, order = sketching_order_from_args(args)
+    projection = getattr(args, "gm_projection", None) or "at0-cg1"
+    if order != "greedymini":
+        if projection != "at0-cg1":
+            LOG.error("--gm-projection applies to --order greedymini only\n")
+            sys.exit(1)
+        return
+    if getattr(args, "protein", False):
+        LOG.error("--order greedymini is supported for DNA only, not --protein\n")
+        sys.exit(1)
+    gm_file = getattr(args, "greedymini_file", None)
+    if not gm_file:
+        LOG.error("--greedymini-file is required when --order greedymini\n")
+        sys.exit(1)
+    if not os.path.isfile(gm_file):
+        LOG.error("greedymini rank file not found: {:s}\n".format(gm_file))
+        sys.exit(1)
+    # With --sketching mod-minimizer the table must be a t-mer table (gm_k ==
+    # t = 4 + (l - 4) mod (k - l + 1)); build_db checks this against the file.
+
+
+def add_sketching_args(args, argv, binary_args):
+    """Pass -s/-O/-G/-T (sketching, order, greedymini file, toggle)."""
+    sketching, order = sketching_order_from_args(args)
+    if "-s" in binary_args and sketching != "minimizer":
+        argv.extend(["-s", sketching])
+    if "-O" in binary_args and order != "xor":
+        argv.extend(["-O", order])
+    if "-G" in binary_args and order == "greedymini":
+        gm_file = getattr(args, "greedymini_file", None)
+        if gm_file:
+            argv.extend(["-G", gm_file])
+        projection = getattr(args, "gm_projection", None) or "at0-cg1"
+        if "-P" in binary_args and projection != "at0-cg1":
+            argv.extend(["-P", projection])
+    toggle = getattr(args, "toggle_mask", None)
+    if toggle and "-T" in binary_args:
+        argv.extend(["-T", str(toggle)])
+
+
+def database_build_complete(args):
+    if not all(os.path.isfile(f) for f in ("hash.k2d", "taxo.k2d", "opts.k2d")):
+        return False
+
+    if read_index_options("opts.k2d") is None:
+        LOG.info(
+            "opts.k2d is not in the current format (database was built by an "
+            "older/different Kraken 2 build); rebuilding.\n"
+        )
+        return False
+    requested = sketching_order_build_key(args)
+    stored = index_sketching_order_key("opts.k2d")
+    _, order = sketching_order_from_args(args)
+
+    if order == "greedymini":
+        if not os.path.isfile("gm.k2d"):
+            return False
+        opts = read_index_options("opts.k2d")
+        gm_file = getattr(args, "greedymini_file", None)
+        if opts and gm_file and os.path.isfile(gm_file):
+            with open(gm_file, "rb") as gm_in:
+                (table_size,) = struct.unpack("<Q", gm_in.read(8))
+            if opts["gm_num_entries"] != table_size:
+                return False
+        else:
+            return False
+        # stored key is sketching:order:gmN:projection; the requested key's
+        # first two parts (sketching:order) and its last part (projection)
+        # must match.
+        req_parts = requested.split(":")
+        sto_parts = stored.split(":") if stored else []
+        if len(sto_parts) < 3 or req_parts[:2] != sto_parts[:2]:
+            return False
+        if req_parts[-1] != sto_parts[-1]:
+            return False
+    elif stored != requested:
+        return False
+
+    if database_requires_gm_k2d("opts.k2d") and not os.path.isfile("gm.k2d"):
+        return False
+    return True
+
+
 def find_kraken2_binary(name):
     # search the OS PATH
     if "PATH" in os.environ:
@@ -617,6 +809,10 @@ def find_database(database_name):
     if database_path:
         for db_file in ["taxo.k2d", "hash.k2d", "opts.k2d"]:
             if not os.path.exists(os.path.join(database_path, db_file)):
+                return None
+        opts_path = os.path.join(database_path, "opts.k2d")
+        if database_requires_gm_k2d(opts_path):
+            if not os.path.exists(os.path.join(database_path, "gm.k2d")):
                 return None
     return database_path
 
@@ -2847,6 +3043,7 @@ def build_kraken2_db(args):
     if not os.path.isdir(get_abs_path(args.db)):
         LOG.error('Cannot find Kraken 2 database: "{:s}\n'.format(args.db))
         sys.exit(1)
+    validate_minimizer_build_args(args)
     os.chdir(args.db)
     if not os.path.isdir("taxonomy"):
         LOG.error("Cannot find taxonomy subdirectory in database\n")
@@ -2916,33 +3113,44 @@ def build_kraken2_db(args):
         check_seqidmap()
 
     estimate_capacity_binary = find_kraken2_binary("estimate_capacity")
+    estimate_capacity_options = get_binary_options(estimate_capacity_binary)
     argv = [estimate_capacity_binary, "-S", construct_seed_template(args)]
     if args.protein:
         argv.append("-X")
-    wrapper_args_to_binary_args(
-        args, argv, get_binary_options(estimate_capacity_binary)
-    )
+    wrapper_args_to_binary_args(args, argv, estimate_capacity_options)
+    add_sketching_args(args, argv, estimate_capacity_options)
     fasta_filenames = glob.glob(
         os.path.join("library", os.path.join("*", "*.f[an]a")), recursive=False
     )
     estimate = ""
     total_sequences = 0
+    scheme_key = sketching_order_build_key(args)
     if os.path.exists("estimated_capacity"):
         estimated_capacity_mtime = os.path.getmtime("estimated_capacity")
         seqid_to_taxid_map_mtime = os.path.getmtime("seqid2taxid.map")
         if estimated_capacity_mtime > seqid_to_taxid_map_mtime:
-            LOG.info(
-                "An estimated_capacity file exists and is newer "
-                "than seqid2taxid.map , reading the estimated "
-                "capacity from estimated_capacity file.\n"
-            )
             with open("estimated_capacity", "r") as in_file:
                 lines = in_file.readlines()
-                if len(lines) == 1:
+            cached_scheme = lines[2].strip() if len(lines) >= 3 else None
+            if cached_scheme == scheme_key:
+                LOG.info(
+                    "An estimated_capacity file exists and is newer "
+                    "than any of the prelim_map.txt files, reading the estimated "
+                    "capacity from estimated_capacity file.\n"
+                )
+                if len(lines) >= 1:
                     estimate = lines[0].strip()
-                elif len(lines) == 2:
-                    estimate = lines[0].strip()
+                if len(lines) >= 2:
                     total_sequences = int(lines[1].strip())
+            else:
+                if cached_scheme is not None:
+                    LOG.info(
+                        "estimated_capacity is for scheme '{:s}', "
+                        "re-estimating for '{:s}'.\n".format(
+                            cached_scheme, scheme_key
+                        )
+                    )
+                estimate = ""
 
     mapped_sequences = {}
     with open("seqid2taxid.map", "rb") as in_file:
@@ -2967,7 +3175,9 @@ def build_kraken2_db(args):
         estimate = proc.communicate()[0].decode()
         proc.stdin.close()
         with open("estimated_capacity", "w") as out_file:
-            out_file.write(estimate + str(total_sequences) + "\n")
+            out_file.write(estimate.strip() + "\n")
+            out_file.write(str(total_sequences) + "\n")
+            out_file.write(scheme_key + "\n")
 
     required_capacity = (int(estimate.strip()) + 8192) / args.load_factor
     LOG.info(
@@ -2986,11 +3196,12 @@ def build_kraken2_db(args):
                     format_bytes(required_capacity * (args.cht_cell_size / 8)),
                 )
             )
-    if os.path.isfile("hash.k2d"):
-        LOG.info("Hash table already present, skipping build\n")
+    if database_build_complete(args):
+        LOG.info("Database files already present, skipping build\n")
     else:
         LOG.info("Starting database build\n")
         build_db_bin = find_kraken2_binary("build_db")
+        build_db_options = get_binary_options(build_db_bin)
         argv = [
             build_db_bin,
             "-H",
@@ -3010,7 +3221,8 @@ def build_kraken2_db(args):
         ]
         if args.protein:
             argv.append("-X")
-        wrapper_args_to_binary_args(args, argv, get_binary_options(build_db_bin))
+        wrapper_args_to_binary_args(args, argv, build_db_options)
+        add_sketching_args(args, argv, build_db_options)
 
         LOG.info("Running: " + " ".join(argv) + "\n")
         if total_sequences > 0:
@@ -4372,12 +4584,12 @@ def get_library_and_prelim_map_filepaths(db_pathname):
 
 def spawn_estimate_capacity_proc(args):
     estimate_capacity_binary = find_kraken2_binary("estimate_capacity")
+    estimate_capacity_options = get_binary_options(estimate_capacity_binary)
     argv = [estimate_capacity_binary, "-S", construct_seed_template(args)]
     if args.protein:
         argv.append("-X")
-    wrapper_args_to_binary_args(
-        args, argv, get_binary_options(estimate_capacity_binary)
-    )
+    wrapper_args_to_binary_args(args, argv, estimate_capacity_options)
+    add_sketching_args(args, argv, estimate_capacity_options)
 
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     return proc
@@ -4546,6 +4758,15 @@ def make_build_parser(subparsers):
               ignored in comparisons",
     )
     parser.add_argument(
+        "--toggle-mask",
+        type=str,
+        metavar="MASK",
+        default=None,
+        help="Minimizer ordering toggle mask (build_db -T). "
+             "Binary bitstring (strtoull base 2). Used as the random-order "
+             "seed for Random / within-tier tiebreaks.",
+    )
+    parser.add_argument(
         "--threads",
         type=int,
         metavar="INT",
@@ -4612,6 +4833,43 @@ def make_build_parser(subparsers):
         metavar="INT",
         default=0,
         help="Bit storage requested for taxid",
+    )
+    parser.add_argument(
+        "--sketching",
+        type=str,
+        metavar="SKETCHING",
+        default="minimizer",
+        choices=["minimizer", "mod-minimizer"],
+        help="Sketching rule (default: minimizer). Choices: minimizer, "
+             "mod-minimizer",
+    )
+    parser.add_argument(
+        "--order",
+        type=str,
+        metavar="ORDER",
+        default="xor",
+        choices=["xor", "xor-pcg-hash", "greedymini"],
+        help="Substring order O_l / O_t (default: xor). Choices: xor, "
+             "xor-pcg-hash, greedymini",
+    )
+    parser.add_argument(
+        "--greedymini-file",
+        type=str,
+        metavar="FILENAME",
+        default=None,
+        help="Path to greedymini rank file (.gm); required when --order "
+             "greedymini. With --sketching minimizer the minimizer length l "
+             "must be gm_k + 2i (w5_k15_canonical.gm: 15, 17, ..., 31); with "
+             "--sketching mod-minimizer the table's gm_k must equal t "
+             "(w5_k6_canonical.gm)",
+    )
+    parser.add_argument(
+        "--gm-projection",
+        type=str,
+        default="at0-cg1",
+        choices=["at0-cg1", "at1-cg0"],
+        help="DNA->binary projection of the greedymini order: at0-cg1 "
+             "(default; A,T->0 and C,G->1) or at1-cg0 (flipped)",
     )
     parser.add_argument(
         "--log",

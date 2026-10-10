@@ -1,7 +1,23 @@
+# Object files and link products
 *.o
+*.so
+*.a
+__pycache__/
+
+# Built executables (src/)
 src/build_db
 src/classify
 src/estimate_capacity
 src/dump_table
 src/lookup_accession_numbers
 src/k2mask
+src/merge
+src/blast_to_fasta
+src/benchmark_minimizers
+src/test_scheme_rankers
+src/test_mod_minimizer
+src/scan_dump
+
+# NFS leftover stubs
+.nfs*
+src/.minimizer_prof_mode

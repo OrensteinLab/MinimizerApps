@@ -4,9 +4,12 @@
  * This file is part of the Kraken 2 taxonomic sequence classification system.
  */
 
+#include <getopt.h>
 #include "kraken2_headers.h"
 #include "kv_store.h"
 #include "mmscanner.h"
+#include "sketching_schemes.h"
+#include <memory>
 #include "seqreader.h"
 #include "utilities.h"
 #include <ios>
@@ -38,6 +41,11 @@ struct Options {
   size_t block_size;
   uint64_t spaced_seed_mask;
   uint64_t toggle_mask;
+  SketchingScheme sketching_scheme;
+  Order order;
+  std::string greedy_mini_filename;
+  std::shared_ptr<const GreedyMiniTable> gm_table;
+  GmProjection gm_projection = GmProjection::AT0_CG1;
 };
 
 void ParseCommandLine(int argc, char **argv, Options &opts);
@@ -57,7 +65,14 @@ int main(int argc, char **argv) {
   opts.spaced_seed_mask = DEFAULT_SPACED_SEED_MASK;
   opts.toggle_mask = DEFAULT_TOGGLE_MASK;
   opts.block_size = DEFAULT_BLOCK_SIZE;
+  opts.sketching_scheme = SketchingScheme::MINIMIZER;
+  opts.order = Order::RANDOM_XOR;
   ParseCommandLine(argc, argv, opts);
+
+  if (opts.order == Order::GM) {
+    opts.gm_table = MinimizerScanner::load_gm_table_or_exit(
+        opts.greedy_mini_filename);
+  }
   omp_set_num_threads(opts.threads);
   ProcessSequences(opts);
   return 0;
@@ -103,7 +118,14 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
   int opt;
   long long sig;
 
-  while ((opt = getopt(argc, argv, "?hk:l:n:S:T:B:p:X")) != -1) {
+  static const struct option long_options[] = {
+    {"sketching", required_argument, nullptr, 's'},
+    {"order", required_argument, nullptr, 'O'},
+    {"greedymini-file", required_argument, nullptr, 'G'},
+    {"gm-projection", required_argument, nullptr, 'P'},
+    {nullptr, 0, nullptr, 0}};
+  while ((opt = getopt_long(argc, argv, "?hk:l:n:S:T:B:p:XG:s:O:P:",
+                            long_options, nullptr)) != -1) {
     switch (opt) {
       case 'h' : case '?' :
         usage(0);
@@ -146,13 +168,40 @@ void ParseCommandLine(int argc, char **argv, Options &opts) {
         opts.input_is_protein = true;
         break;
       case 'S' :
-        opts.spaced_seed_mask = strtol(optarg, nullptr, 2);
+        // strtoull: 64-bit masks with MSB set overflow signed strtol → LONG_MAX
+        opts.spaced_seed_mask = strtoull(optarg, nullptr, 2);
         break;
       case 'T' :
-        opts.toggle_mask = strtol(optarg, nullptr, 2);
+        opts.toggle_mask = strtoull(optarg, nullptr, 2);
+        break;
+      case 's':
+        try {
+          opts.sketching_scheme = parse_sketching_scheme(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      case 'O':
+        try {
+          opts.order = parse_order(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
+        break;
+      case 'G':
+        opts.greedy_mini_filename = optarg;
+        break;
+      case 'P':
+        try {
+          opts.gm_projection = parse_gm_projection(optarg);
+        } catch (const std::exception &ex) {
+          errx(EX_USAGE, "%s", ex.what());
+        }
         break;
     }
   }
+  if (opts.gm_projection != GmProjection::AT0_CG1 && opts.order != Order::GM)
+    errx(EX_USAGE, "-P (--gm-projection) applies to --order greedymini only");
 
   if (opts.spaced_seed_mask != DEFAULT_SPACED_SEED_MASK)
     ExpandSpacedSeedMask(opts.spaced_seed_mask,
@@ -178,14 +227,26 @@ void usage(int exit_code) {
        << "  -S BITSTRING  Spaced seed mask" << endl
        << "  -T BITSTRING  Minimizer ordering toggle mask" << endl
        << "  -B INT        Read block size" << endl
-       << "  -p INT        Number of threads" << endl;
+       << "  -p INT        Number of threads" << endl
+       << "  -s STRING     Sketching (--sketching): minimizer (default), mod-minimizer" << endl
+       << "  -O STRING     Order (--order): xor (default), xor-pcg-hash, greedymini" << endl
+       << "  -G FILENAME   GreedyMini rank file (--greedymini-file, .gm);" << endl
+       << "                required for --order greedymini" << endl
+       << "  -P STRING     GreedyMini projection (--gm-projection): at0-cg1 (default)"
+       << " or at1-cg0" << endl;
   exit(exit_code);
 }
 
 void ProcessSequence(string &seq, Options &opts,
     vector<unordered_set<uint64_t>> &sets)
 {
-  MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask, ! opts.input_is_protein, opts.toggle_mask);
+  MinimizerScanner scanner(opts.k, opts.l, opts.spaced_seed_mask,
+                           ! opts.input_is_protein, opts.toggle_mask,
+                           CURRENT_REVCOM_VERSION,
+                           opts.sketching_scheme, opts.order,
+                           opts.greedy_mini_filename,
+                           opts.gm_table,
+                           opts.gm_projection == GmProjection::AT1_CG0);
   // Add terminator for protein sequences if not already there
   if (opts.input_is_protein && seq.back() != '*')
     seq.push_back('*');
@@ -196,7 +257,6 @@ void ProcessSequence(string &seq, Options &opts,
       continue;
     uint64_t hash_code = MurmurHash3(*minimizer_ptr);
     if ((hash_code & RANGE_MASK) < opts.n) {
-      // #pragma omp critical(set_insert)
       sets[hash_code & RANGE_MASK].insert(*minimizer_ptr);
     }
   }
