@@ -1,12 +1,22 @@
 CFLAGS=		-g -Wall -O2 -Wc++-compat #-Wextra
+CXX?=		g++
+# order.cpp is the only C++ translation unit (the custom minimizer order
+# integration -- see order.h/order.cpp for why it can't be plain C); -I..
+# reaches common/minimizer-orders/'s shared headers from minimap2/order.cpp.
+# -march=native enables BMI2 pext used by greedymini_rank.h when available
+# (same flag kraken2/src/Makefile already uses for the same header).
+CXXFLAGS=	-g -Wall -O2 -std=c++11 -march=native
 CPPFLAGS=	-DHAVE_KALLOC
 INCLUDES=
 OBJS=		kthread.o kalloc.o misc.o bseq.o sketch.o sdust.o options.o index.o \
 			lchain.o align.o hit.o seed.o jump.o map.o format.o pe.o esterr.o splitidx.o \
-			ksw2_ll_sse.o
+			ksw2_ll_sse.o order.o
 PROG=		minimap2
 PROG_EXTRA=	sdust minimap2-lite
-LIBS=		-lm -lz -lpthread
+# order.o is C++ (libstdc++ exceptions/std::vector/shared_ptr); the rest of
+# the link stays driven by $(CC) rather than switching the whole build to
+# $(CXX), so -lstdc++ is added explicitly instead.
+LIBS=		-lm -lz -lpthread -lstdc++
 
 ifneq ($(aarch64),)
 	arm_neon=1
@@ -38,15 +48,25 @@ ifneq ($(tsan),)
 	LIBS+=-fsanitize=thread -ldl
 endif
 
-.PHONY:all extra clean depend
-.SUFFIXES:.c .o
+.PHONY:all extra clean depend test
+.SUFFIXES:.c .cpp .o
 
 .c.o:
 		$(CC) -c $(CFLAGS) $(CPPFLAGS) $(INCLUDES) $< -o $@
 
+.cpp.o:
+		$(CXX) -c $(CXXFLAGS) $(CPPFLAGS) $(INCLUDES) -I.. $< -o $@
+
 all:$(PROG)
 
 extra:all $(PROG_EXTRA)
+
+test:all sketch_dump
+		./test_order.sh
+
+# Test-only driver for validate_mod_minimizer.py (see sketch_dump.c).
+sketch_dump:sketch_dump.o libminimap2.a
+		$(CC) $(CFLAGS) sketch_dump.o -o $@ -L. -lminimap2 $(LIBS)
 
 minimap2:main.o libminimap2.a
 		$(CC) $(CFLAGS) main.o -o $@ -L. -lminimap2 $(LIBS)
@@ -102,7 +122,7 @@ ksw2_exts2_neon.o:ksw2_exts2_sse.c ksw2.h kalloc.h
 # other non-file targets
 
 clean:
-		rm -fr gmon.out *.o a.out $(PROG) $(PROG_EXTRA) *~ *.a *.dSYM build dist mappy*.so mappy.c python/mappy.c mappy.egg* .eggs
+		rm -fr gmon.out *.o a.out $(PROG) $(PROG_EXTRA) sketch_dump *~ *.a *.dSYM build dist mappy*.so mappy.c python/mappy.c mappy.egg* .eggs
 
 depend:
 		(LC_ALL=C; export LC_ALL; makedepend -Y -- $(CFLAGS) $(CPPFLAGS) -- *.c)
@@ -130,8 +150,11 @@ map.o: kthread.h kvec.h kalloc.h sdust.h mmpriv.h minimap.h bseq.h kseq.h
 map.o: khash.h ksort.h
 misc.o: mmpriv.h minimap.h bseq.h kseq.h ksort.h
 options.o: mmpriv.h minimap.h bseq.h kseq.h
+order.o: order.h minimap.h kvec.h kalloc.h
+order.o: ../common/minimizer-orders/pcg_rxs_m_xs.h
+order.o: ../common/minimizer-orders/greedymini_rank.h ../common/minimizer-orders/greedymini_centre.h ../common/minimizer-orders/mod_minimizer_rule.h
 pe.o: mmpriv.h minimap.h bseq.h kseq.h kvec.h kalloc.h ksort.h
 sdust.o: kalloc.h kdq.h kvec.h sdust.h
 seed.o: mmpriv.h minimap.h bseq.h kseq.h kalloc.h ksort.h
-sketch.o: kvec.h kalloc.h mmpriv.h minimap.h bseq.h kseq.h
+sketch.o: kvec.h kalloc.h mmpriv.h minimap.h bseq.h kseq.h order.h
 splitidx.o: mmpriv.h minimap.h bseq.h kseq.h

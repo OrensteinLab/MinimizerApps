@@ -5,4 +5,5 @@
 *.o
 *.dSYM
 minimap2
+sketch_dump
 mappy.c

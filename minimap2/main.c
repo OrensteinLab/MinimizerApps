@@ -6,6 +6,7 @@
 #include "minimap.h"
 #include "mmpriv.h"
 #include "ketopt.h"
+#include "order.h"
 
 #ifdef __linux__
 #include <sys/resource.h>
@@ -88,6 +89,11 @@ static ko_longopt_t long_options[] = {
 	{ "spsc-scale",     ko_required_argument, 363 },
 	{ "spsc0",          ko_required_argument, 364 },
 	{ "dbg-seed-occ",   ko_no_argument,       501 },
+	{ "minimizer-order",ko_required_argument, 502 },
+	{ "order-seed",     ko_required_argument, 503 },
+	{ "greedymini-file",ko_required_argument, 504 },
+	{ "gm-projection",  ko_required_argument, 505 },
+	{ "mod-t",          ko_required_argument, 506 },
 	{ "help",           ko_no_argument,       'h' },
 	{ "max-intron-len", ko_required_argument, 'G' },
 	{ "version",        ko_no_argument,       'V' },
@@ -138,6 +144,9 @@ int main(int argc, char *argv[])
 	int i, c, n_threads = 3, n_parts, old_best_n = -1;
 	float spsc_scale = 0.7f;
 	char *fnw = 0, *rg = 0, *fn_bed_junc = 0, *fn_bed_jump = 0, *fn_bed_pass1 = 0, *fn_spsc = 0, *s, *alt_list = 0;
+	const char *order_name = "native", *gm_file = 0, *gm_projection = 0;
+	uint64_t order_seed = 0;
+	int mod_t = 0, mod_t_set = 0;
 	FILE *fp_help = stderr;
 	mm_idx_reader_t *idx_rdr;
 	mm_idx_t *mi;
@@ -215,6 +224,11 @@ int main(int argc, char *argv[])
 		}
 		else if (c == 300) ipt.bucket_bits = atoi(o.arg); // --bucket-bits
 		else if (c == 302) opt.seed = atoi(o.arg); // --seed
+		else if (c == 502) order_name = o.arg; // --minimizer-order
+		else if (c == 503) order_seed = strtoull(o.arg, 0, 0); // --order-seed
+		else if (c == 504) gm_file = o.arg; // --greedymini-file
+		else if (c == 505) gm_projection = o.arg; // --gm-projection
+		else if (c == 506) mod_t = atoi(o.arg), mod_t_set = 1; // --mod-t
 		else if (c == 303) mm_dbg_flag |= MM_DBG_NO_KALLOC; // --no-kalloc
 		else if (c == 304) mm_dbg_flag |= MM_DBG_PRINT_QNAME; // --print-qname
 		else if (c == 306) mm_dbg_flag |= MM_DBG_PRINT_QNAME | MM_DBG_PRINT_SEED, n_threads = 1; // --print-seed
@@ -351,6 +365,31 @@ int main(int argc, char *argv[])
 	}
 	if (!fnw && !(opt.flag&MM_F_CIGAR))
 		ipt.flag |= MM_I_NO_SEQ;
+	if (strcmp(order_name, "native") != 0) {
+		if (mm_order_parse_kind(order_name, &ipt.order_conf.kind) != 0) {
+			fprintf(stderr, "[ERROR] unknown --minimizer-order '%s'\n", order_name);
+			return 1;
+		}
+		if (gm_projection) {
+			if (ipt.order_conf.kind != MM_ORDER_GREEDYMINI) {
+				fprintf(stderr, "[ERROR] --gm-projection only applies to --minimizer-order greedymini\n");
+				return 1;
+			}
+			if (strcmp(gm_projection, "at0-cg1") == 0) ipt.order_conf.gm_projection = MM_GM_PROJ_AT0_CG1;
+			else if (strcmp(gm_projection, "at1-cg0") == 0) ipt.order_conf.gm_projection = MM_GM_PROJ_AT1_CG0;
+			else {
+				fprintf(stderr, "[ERROR] unknown --gm-projection '%s' (choices: at0-cg1, at1-cg0)\n", gm_projection);
+				return 1;
+			}
+		}
+		ipt.order_conf.seed = order_seed;
+		ipt.order_conf.greedymini_file = gm_file;
+		ipt.order_conf.t = mod_t_set ? mod_t : 0;
+		ipt.order_conf.k = ipt.k;
+	} else if (gm_file || order_seed || mod_t_set || gm_projection) {
+		fprintf(stderr, "[ERROR] --order-seed/--greedymini-file/--gm-projection/--mod-t given without --minimizer-order\n");
+		return 1;
+	}
 	if (mm_check_opt(&ipt, &opt) < 0)
 		return 1;
 	if (opt.best_n == 0) {
@@ -367,6 +406,13 @@ int main(int argc, char *argv[])
 		fprintf(fp_help, "    -w INT       minimizer window size [%d]\n", ipt.w);
 		fprintf(fp_help, "    -I NUM       split index for every ~NUM input bases [8G]\n");
 		fprintf(fp_help, "    -d FILE      dump index to FILE []\n");
+		fprintf(fp_help, "    --minimizer-order STR  order used to pick each window's minimizer: native (default),\n");
+		fprintf(fp_help, "                 xor, xor-pcg-hash, greedymini, mod-minimizer-xor\n");
+		fprintf(fp_help, "    --order-seed INT       seed for xor/xor-pcg-hash/mod-minimizer-xor; for greedymini\n");
+		fprintf(fp_help, "                           the Gamma tie-break toggle [0]\n");
+		fprintf(fp_help, "    --greedymini-file FILE .gm rank table for greedymini (-k = gm_k + 2i, -k <= 23)\n");
+		fprintf(fp_help, "    --gm-projection STR    greedymini AT/CG projection: at0-cg1 (default) or at1-cg0\n");
+		fprintf(fp_help, "    --mod-t INT            t-mer length for mod-minimizer-xor (0 < t < -k)\n");
 		fprintf(fp_help, "  Mapping:\n");
 		fprintf(fp_help, "    -f FLOAT     filter out top FLOAT fraction of repetitive minimizers [%g]\n", opt.mid_occ_frac);
 		fprintf(fp_help, "    -g NUM       stop chain enlongation if there are no minimizers in INT-bp [%d]\n", opt.max_gap);
