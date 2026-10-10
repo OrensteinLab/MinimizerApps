@@ -1,5 +1,3 @@
-all: kmc kmc_dump kmc_tools py_kmc_api
-
 dummy := $(shell git submodule update --init --recursive)
 
 UNAME_S := $(shell uname -s)
@@ -41,9 +39,25 @@ CPU_FLAGS =
 STATIC_CFLAGS = 
 STATIC_LFLAGS = 
 PY_FLAGS =
+LINK_STATIC ?= 0
+
+# Python for py_kmc_api (needs python*-devel). Override: make PYTHON=python3.9 py_kmc_api
+PYTHON ?= $(shell \
+	for p in python3.11 python3.10 python3.9 python3; do \
+		$$p -c 'import sysconfig,os; exit(0 if os.path.isfile(os.path.join(sysconfig.get_path("include"),"Python.h")) else 1)' 2>/dev/null && echo $$p && break; \
+	done)
+PYTHON_INCLUDES := $(shell $(PYTHON)-config --includes 2>/dev/null)
+PYTHON_EXT_SUFFIX := $(shell $(PYTHON)-config --extension-suffix 2>/dev/null)
+
+ifneq ($(strip $(PYTHON)),)
+ALL_TARGETS := kmc kmc_dump kmc_tools py_kmc_api
+else
+ALL_TARGETS := kmc kmc_dump kmc_tools
+$(info note: py_kmc_api skipped — no Python.h found; install python3-devel or set PYTHON=)
+endif
 
 ifeq ($(D_OS),MACOS)
-	CC = g++-11
+CC = g++-11
 
 	ifeq ($(D_ARCH),ARM64)
 		CPU_FLAGS = -march=armv8.4-a
@@ -54,16 +68,20 @@ ifeq ($(D_OS),MACOS)
 	STATIC_LFLAGS = -static-libgcc -static-libstdc++ -pthread	
 	PY_FLAGS = -Wl,-undefined,dynamic_lookup -fPIC 
 else
-	CC 	= g++
+CC = g++
 
 	ifeq ($(D_ARCH),ARM64)
 		CPU_FLAGS = -march=armv8-a
-		STATIC_CFLAGS =
-		STATIC_LFLAGS = -static-libgcc -static-libstdc++ -pthread	
+		STATIC_CFLAGS = -pthread
+		STATIC_LFLAGS = -pthread
 	else
 		CPU_FLAGS = -m64
-		STATIC_CFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-		STATIC_LFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+		STATIC_CFLAGS = -pthread
+		ifeq ($(LINK_STATIC),1)
+			STATIC_LFLAGS = -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+		else
+			STATIC_LFLAGS = -lpthread
+		endif
 	endif
 	PY_FLAGS = -fPIC
 endif
@@ -152,11 +170,11 @@ $(KMC_CLI_OBJS) $(KMC_CORE_OBJS) $(KMC_DUMP_OBJS) $(KMC_API_OBJS) $(KFF_OBJS) $(
 	$(CC) $(CFLAGS) -I 3rd_party/cloudflare -c $< -o $@
 
 $(KMC_MAIN_DIR)/raduls_sse2.o: $(KMC_MAIN_DIR)/raduls_sse2.cpp
-	$(CC) $(CFLAGS) -msse2 -c $< -o $@
+	$(CC) $(CFLAGS) -msse2 -mno-sse3 -mno-sse4.1 -mno-avx -c $< -o $@
 $(KMC_MAIN_DIR)/raduls_sse41.o: $(KMC_MAIN_DIR)/raduls_sse41.cpp
-	$(CC) $(CFLAGS) -msse4.1 -c $< -o $@
+	$(CC) $(CFLAGS) -msse4.1 -mno-avx -c $< -o $@
 $(KMC_MAIN_DIR)/raduls_avx.o: $(KMC_MAIN_DIR)/raduls_avx.cpp
-	$(CC) $(CFLAGS) -mavx -c $< -o $@
+	$(CC) $(CFLAGS) -mavx -mno-avx2 -c $< -o $@
 $(KMC_MAIN_DIR)/raduls_avx2.o: $(KMC_MAIN_DIR)/raduls_avx2.cpp
 	$(CC) $(CFLAGS) -mavx2 -c $< -o $@
 
@@ -185,13 +203,16 @@ kmc_tools: $(KMC_TOOLS_OBJS) $(KMC_API_OBJS) $(KFF_OBJS) $(LIB_ZLIB)
 $(PY_KMC_API_DIR)/%.o: $(KMC_API_DIR)/%.cpp
 	$(CC) -c -fPIC -Wall -O3 $(CPU_FLAGS) -std=c++14 $^ -o $@
 
-py_kmc_api: $(PY_KMC_API_OBJS) $(PY_KMC_API_OBJS)
+py_kmc_api: $(PY_KMC_API_OBJS)
+	@test -n "$(PYTHON)" || (echo "py_kmc_api: set PYTHON= to a Python with development headers (python3-devel)" && exit 1)
 	-mkdir -p $(OUT_BIN_DIR)
 	$(CC) $(PY_KMC_API_CFLAGS) $(PY_KMC_API_DIR)/py_kmc_api.cpp $(PY_KMC_API_OBJS) \
 	-I $(KMC_API_DIR) \
 	-I $(PY_KMC_API_DIR)/libs/pybind11/include \
-	-I `python3 -c "import sysconfig;print(sysconfig.get_paths()['include'])"` \
-	-o $(OUT_BIN_DIR)/$@`python3-config --extension-suffix`
+	$(PYTHON_INCLUDES) \
+	-o $(OUT_BIN_DIR)/$@$(PYTHON_EXT_SUFFIX)
+
+all: $(ALL_TARGETS)
 
 clean:
 	-rm -f $(KMC_MAIN_DIR)/*.o
