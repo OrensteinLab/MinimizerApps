@@ -1,0 +1,23 @@
+# Shared benchmark configuration (loaded by python -m scripts config and kmc3_bench.sh).
+
+seeds:
+  - 0xDEADBEEF
+  - 0xC0FFEE01
+  - 0x31415926
+  - 0x27182818
+  - 0x16180339
+  - 0x0BADF00D
+  - 0x600D600D
+  - 0xFEEDFACE
+  - 0x12345678
+  - 0x87654321
+
+paths:
+  gm_dir: ../../orders/GreedyMini
+  experiments: experiments
+  data: data
+
+defaults:
+  datasets: f_vesca,g_gallus,m_balbisiana,h_sapiens_2,h_sapiens_3
+  k: "28,55"
+  signature_len: 9
