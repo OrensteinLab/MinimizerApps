@@ -74,3 +74,12 @@ bin/
 /kmc_tools/x64/Release
 /py_kmc_api/x64/Release
 /x64/Release
+
+# Local Python env (python3 -m venv .venv)
+/.venv/
+
+# build_release.py's packaged release tarball
+/KMC*.tar.gz
+
+# Copy of kmc_core/kmc_runner.h made by the Makefile
+/include/

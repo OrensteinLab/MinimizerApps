@@ -125,6 +125,7 @@ $(KMC_DUMP_DIR)/kmc_dump.o
 
 KMC_API_OBJS = \
 $(KMC_API_DIR)/mmer.o \
+$(KMC_API_DIR)/custom_order.o \
 $(KMC_API_DIR)/kmc_file.o \
 $(KMC_API_DIR)/kmer_api.o
 

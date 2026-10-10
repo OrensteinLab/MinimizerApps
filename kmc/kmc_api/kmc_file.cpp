@@ -10,6 +10,7 @@
 
 #include "mmer.h"
 #include "kmc_file.h"
+#include "custom_order.h"
 #include <tuple>
 
 
@@ -33,7 +34,7 @@ bool CKMCFile::OpenForRA(const std::string &file_name)
 	if (!OpenASingleFile(file_name + ".kmc_pre", file_pre, size, (char *)"KMCP"))
 		return false;
 
-	ReadParamsFrom_prefix_file_buf(size, open_mode::opened_for_RA);
+	ReadParamsFrom_prefix_file_buf(size, open_mode::opened_for_RA, file_name);
 
 	if (!OpenASingleFile(file_name + ".kmc_suf", file_suf, size, (char *)"KMCS"))
 		return false;
@@ -71,7 +72,7 @@ bool CKMCFile::OpenForListing(const std::string &file_name)
 	if (!OpenASingleFile(file_name + ".kmc_pre", file_pre, size, (char *)"KMCP"))
 		return false;
 
-	ReadParamsFrom_prefix_file_buf(size, open_mode::opened_for_listing);
+	ReadParamsFrom_prefix_file_buf(size, open_mode::opened_for_listing, file_name);
 
 	end_of_file = total_kmers == 0;
 
@@ -175,7 +176,7 @@ bool CKMCFile::OpenASingleFile(const std::string &file_name, FILE *&file_handler
 // IN	: the size of the file *.kmc_pre, without initial and terminal markers 
 // RET	: true - if succesfull
 //----------------------------------------------------------------------------------
-bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size, open_mode _open_mode)
+bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size, open_mode _open_mode, const std::string& db_prefix)
 {
 	size_t prev_pos = my_ftell(file_pre);
 	my_fseek(file_pre, -12, SEEK_END);
@@ -215,6 +216,17 @@ bool CKMCFile::ReadParamsFrom_prefix_file_buf(uint64 &size, open_mode _open_mode
 		result = fread(&total_kmers, 1, sizeof(uint64), file_pre);
 		result = fread(&both_strands, 1, 1, file_pre);
 		both_strands = !both_strands;
+
+		unsigned char reserved[27]{};
+		result = fread(reserved, 1, 27, file_pre);
+		if (reserved[0] == CCustomOrder::kFlagCustom)
+		{
+			if (!CCustomOrder::InstallFromSidecar(db_prefix, signature_len))
+			{
+				std::cerr << "Error: custom signature order flag set but cannot load " << db_prefix << ".kmc_co\n";
+				return false;
+			}
+		}
 
 		signature_map_size = ((1 << (2 * signature_len)) + 1);
 		uint64 lut_area_size_in_bytes = size - (signature_map_size * sizeof(uint32)+header_offset + 8);
@@ -620,6 +632,7 @@ bool CKMCFile::Close()
 		sufix_file_buf = NULL;
 		delete[] signature_map;
 		signature_map = NULL;
+		CCustomOrder::Clear();
 
 		return true;
 	}
@@ -1099,6 +1112,7 @@ void CKMCFile::GetSuperKmers(const std::string& transformed_read, super_kmers_t&
 	uint32 len = 0; //length of super k-mer
 	uint32 signature_start_pos;
 	CMmer current_signature(signature_len), end_mmer(signature_len);
+	uint32 current_sig_bin;
 
 	while (i + kmer_length - 1 < transformed_read.length())
 	{
@@ -1122,15 +1136,14 @@ void CKMCFile::GetSuperKmers(const std::string& transformed_read, super_kmers_t&
 		signature_start_pos = i - signature_len;
 		current_signature.insert(transformed_read.c_str() + signature_start_pos);
 		end_mmer.set(current_signature);
+		current_sig_bin = signature_map[current_signature.get()];
 
 		for (; i < transformed_read.length(); ++i)
 		{
 			if (transformed_read[i] < 0)//'N'
 			{
 				if (len >= kmer_length)
-				{
-					super_kmers.push_back(std::make_tuple(i - len, len, signature_map[current_signature.get()]));
-				}
+					super_kmers.push_back(std::make_tuple(i - len, len, current_sig_bin));
 				len = 0;
 				++i;
 				break;
@@ -1140,26 +1153,29 @@ void CKMCFile::GetSuperKmers(const std::string& transformed_read, super_kmers_t&
 			{
 				if (len >= kmer_length)
 				{
-					super_kmers.push_back(std::make_tuple(i - len, len, signature_map[current_signature.get()]));
+					super_kmers.push_back(std::make_tuple(i - len, len, current_sig_bin));
 					len = kmer_length - 1;
 				}
 				current_signature.set(end_mmer);
 				signature_start_pos = i - signature_len + 1;
+				current_sig_bin = signature_map[current_signature.get()];
 			}
 			else if (end_mmer == current_signature)
 			{
 				current_signature.set(end_mmer);
 				signature_start_pos = i - signature_len + 1;
+				current_sig_bin = signature_map[current_signature.get()];
 			}
 			else if (signature_start_pos + kmer_length - 1 < i)//need to find new signature
 			{
-				super_kmers.push_back(std::make_tuple(i - len, len, signature_map[current_signature.get()]));
+				super_kmers.push_back(std::make_tuple(i - len, len, current_sig_bin));
 				len = kmer_length - 1;
 				//looking for new signature
 				++signature_start_pos;
 				//building first signature in current k-mer
 				end_mmer.insert(transformed_read.c_str() + signature_start_pos);
 				current_signature.set(end_mmer);
+				current_sig_bin = signature_map[current_signature.get()];
 				for (uint32 j = signature_start_pos + signature_len; j <= i; ++j)
 				{
 					end_mmer.insert(transformed_read[j]);
@@ -1167,6 +1183,7 @@ void CKMCFile::GetSuperKmers(const std::string& transformed_read, super_kmers_t&
 					{
 						current_signature.set(end_mmer);
 						signature_start_pos = j - signature_len + 1;
+						current_sig_bin = signature_map[current_signature.get()];
 					}
 				}
 			}
@@ -1174,9 +1191,7 @@ void CKMCFile::GetSuperKmers(const std::string& transformed_read, super_kmers_t&
 		}
 	}
 	if (len >= kmer_length)//last one in read
-	{
-		super_kmers.push_back(std::make_tuple(i - len, len, signature_map[current_signature.get()]));
-	}
+		super_kmers.push_back(std::make_tuple(i - len, len, current_sig_bin));
 }
 
 //---------------------------------------------------------------------------------

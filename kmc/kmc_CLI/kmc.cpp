@@ -1,5 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "../kmc_core/kmc_runner.h"
+#include "../kmc_api/custom_order.h"
+#include "../kmc_api/mmer.h"
 #include <cstring>
 #include <iostream>
 #include <fstream>
@@ -37,6 +39,14 @@ void usage()
 		<< "  -sm - use strict memory mode (memory limit from -m<n> switch will not be exceeded)\n"
 		<< "  -hc - count homopolymer compressed k-mers (approximate and experimental)\n"
 		<< "  -p<par> - signature length (5, 6, 7, 8, 9, 10, 11); default: 9\n"
+		<< "  -co<file> - custom signature order (.gm binary or _dna.gm DNA table); default: KMC lex order\n"
+		<< "  -ode      - with -co binary .gm: use a 4^p DNA-expanded sort table instead of the\n"
+		<< "              default 2^p rank LUT + runtime projection\n"
+		<< "  -oat1     - with -co binary .gm: DNA->binary projection A,T -> 1, C,G -> 0 (at1-cg0)\n"
+		<< "              instead of the default A,T -> 0, C,G -> 1\n"
+		<< "  -or xor|xor-pcg-hash - random signature order (xor seed, or xor seed then PCG hash); default: KMC lex order\n"
+		<< "  -os<seed> - seed for -co (tie-breaking) or -or (ranking); default: 0\n"
+		<< "  -ol<label> - label for custom/random order (logs, JSON, sidecar); required with -or, default with -co: table basename\n"
 		<< "  -f<a/q/m/bam/kmc> - input in FASTA format (-fa), FASTQ format (-fq), multi FASTA (-fm) or BAM (-fbam) or KMC (-fkmc); default: FASTQ\n"
 		<< "  -ci<value> - exclude k-mers occurring less than <value> times (default: 2)\n"
 		<< "  -cs<value> - maximal value of a counter (default: 255)\n"
@@ -139,6 +149,52 @@ bool parse_parameters(int argc, char* argv[], Params& params)
 		// Maximal counter value
 		else if (strncmp(argv[i], "-cs", 3) == 0)
 			stage2Params.SetCounterMax(atoll(&argv[i][3]));
+		else if (strncmp(argv[i], "-co", 3) == 0)
+		{
+			if (argv[i][3] == '\0')
+			{
+				cerr << "Error: -co requires a file path\n";
+				return false;
+			}
+			stage1Params.SetCustomOrderFile(&argv[i][3]);
+		}
+		else if (strcmp(argv[i], "-ode") == 0)
+			stage1Params.SetCustomOrderDnaExpandedLut(true);
+		else if (strcmp(argv[i], "-oat1") == 0)
+			stage1Params.SetCustomOrderAt1(true);
+		else if (strncmp(argv[i], "-or", 3) == 0)
+		{
+			if (argv[i][3] == '\0')
+			{
+				cerr << "Error: -or requires xor or xor-pcg-hash\n";
+				return false;
+			}
+			std::string mode = &argv[i][3];
+			if (mode != "xor" && mode != "xor-pcg-hash")
+			{
+				cerr << "Error: -or must be xor or xor-pcg-hash (got " << mode << ")\n";
+				return false;
+			}
+			stage1Params.SetCustomOrderMode(mode);
+		}
+		else if (strncmp(argv[i], "-os", 3) == 0)
+		{
+			if (argv[i][3] == '\0')
+			{
+				cerr << "Error: -os requires a seed value\n";
+				return false;
+			}
+			stage1Params.SetCustomOrderSeed(strtoull(&argv[i][3], nullptr, 0));
+		}
+		else if (strncmp(argv[i], "-ol", 3) == 0)
+		{
+			if (argv[i][3] == '\0')
+			{
+				cerr << "Error: -ol requires a label\n";
+				return false;
+			}
+			stage1Params.SetCustomOrderLabel(&argv[i][3]);
+		}
 		// Set p1
 		else if (strncmp(argv[i], "-p", 2) == 0)
 			stage1Params.SetSignatureLen(atoi(&argv[i][2]));
@@ -281,6 +337,39 @@ bool parse_parameters(int argc, char* argv[], Params& params)
 		return false;
 	}
 	
+	if (stage1Params.GetCustomOrderAt1() && stage1Params.GetCustomOrderFile().empty())
+	{
+		cerr << "Error: -oat1 requires -co\n";
+		return false;
+	}
+	if (!stage1Params.GetCustomOrderFile().empty() && !stage1Params.GetCustomOrderMode().empty())
+	{
+		cerr << "Error: -co and -or are mutually exclusive\n";
+		return false;
+	}
+	if (!stage1Params.GetCustomOrderFile().empty() && stage1Params.GetCustomOrderLabel().empty())
+	{
+		std::string base = stage1Params.GetCustomOrderFile();
+		auto slash = base.find_last_of("/\\");
+		if (slash != std::string::npos)
+			base = base.substr(slash + 1);
+		auto dot = base.rfind('.');
+		if (dot != std::string::npos)
+			base = base.substr(0, dot);
+		stage1Params.SetCustomOrderLabel(base);
+	}
+	const bool has_random_order = !stage1Params.GetCustomOrderMode().empty();
+	if (has_random_order && stage1Params.GetCustomOrderLabel().empty())
+	{
+		cerr << "Error: -ol is required with -or\n";
+		return false;
+	}
+	if (stage1Params.GetCustomOrderFile().empty() && !stage1Params.GetCustomOrderLabel().empty() && !has_random_order)
+	{
+		cerr << "Error: -ol requires -co or -or\n";
+		return false;
+	}
+
 	//Check if output files may be created and if it is possible to create file in specified tmp location
 	if (!stage2Params.GetWithoutOutput())
 	{		
@@ -361,6 +450,26 @@ void save_stats_in_json_file(const Params& params, const KMC::Stage1Results& sta
 	else
 		stats << "\t\"Tmp_size\": \"" << stage1Results.tmpSize / 1000000 << "MB\",\n";
 
+	if (params.stage1Params.GetCustomOrderFile().empty() && params.stage1Params.GetCustomOrderMode().empty())
+		stats << "\t\"signature_order\": \"default\",\n";
+	else
+	{
+		stats << "\t\"signature_order\": \"custom\",\n"
+			<< "\t\"signature_order_label\": \"" << params.stage1Params.GetCustomOrderLabel() << "\",\n";
+		if (!params.stage1Params.GetCustomOrderFile().empty())
+		{
+			const CCustomOrder::Info co_info = CCustomOrder::GetInfo();
+			stats << "\t\"signature_order_file\": \"" << params.stage1Params.GetCustomOrderFile() << "\",\n"
+				<< "\t\"signature_order_mode\": \"" << co_info.mode_name << "\",\n"
+				<< "\t\"signature_order_gm_lut\": \"" << CCustomOrder::gm_lut_name() << "\",\n"
+				<< "\t\"signature_order_projection\": \""
+				<< (params.stage1Params.GetCustomOrderAt1() ? "at1-cg0" : "at0-cg1") << "\",\n";
+		}
+		else
+			stats << "\t\"signature_order_mode\": \"" << params.stage1Params.GetCustomOrderMode() << "\",\n";
+		stats << "\t\"signature_order_seed\": " << params.stage1Params.GetCustomOrderSeed() << ",\n";
+	}
+
 	stats << "\t\"Stats\": {\n";
 
 	stats << "\t\t\"#k-mers_below_min_threshold\": " << stage2Results.nBelowCutoffMin << ",\n"
@@ -373,9 +482,7 @@ void save_stats_in_json_file(const Params& params, const KMC::Stage1Results& sta
 	else
 		stats << "\t\t\"#Total_sequences\": " << stage1Results.nSeqences << ",\n";
 	stats << "\t\t\"#Total_super-k-mers\": " << stage1Results.nTotalSuperKmers << "\n";
-
-	stats << "\t}\n";
-	stats << "}\n";
+	stats << "\t}\n}\n";
 	stats.close();
 }
 

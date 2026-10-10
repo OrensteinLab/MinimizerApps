@@ -81,6 +81,11 @@ struct CKMCParams {
 
 	int kmer_len;			// kmer length
 	int signature_len;
+	std::string custom_order_file;
+	std::string custom_order_label;
+	std::string custom_order_mode;
+	uint64_t custom_order_seed = 0;
+	bool use_custom_order = false;
 	int cutoff_min;			// exclude k-mers occurring less than times
 	int64 cutoff_max;			// exclude k-mers occurring more than times
 	int64 counter_max;		// maximal counter value	

@@ -195,6 +195,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\kmc_api\kmc_file.cpp" />
+    <ClCompile Include="..\kmc_api\custom_order.cpp" />
     <ClCompile Include="..\kmc_api\kmer_api.cpp" />
     <ClCompile Include="..\kmc_api\mmer.cpp" />
     <ClCompile Include="..\kmc_core\kff_writer.cpp" />

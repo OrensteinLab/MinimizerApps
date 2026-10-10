@@ -224,7 +224,37 @@ namespace KMC
 		this->signatureLen = signatureLen;
 		return *this;
 	}
-	
+	Stage1Params& Stage1Params::SetCustomOrderFile(const std::string& customOrderFile)
+	{
+		this->customOrderFile = customOrderFile;
+		return *this;
+	}
+	Stage1Params& Stage1Params::SetCustomOrderLabel(const std::string& customOrderLabel)
+	{
+		this->customOrderLabel = customOrderLabel;
+		return *this;
+	}
+	Stage1Params& Stage1Params::SetCustomOrderMode(const std::string& customOrderMode)
+	{
+		this->customOrderMode = customOrderMode;
+		return *this;
+	}
+	Stage1Params& Stage1Params::SetCustomOrderSeed(uint64_t customOrderSeed)
+	{
+		this->customOrderSeed = customOrderSeed;
+		return *this;
+	}
+	Stage1Params& Stage1Params::SetCustomOrderDnaExpandedLut(bool customOrderDnaExpandedLut)
+	{
+		this->customOrderDnaExpandedLut = customOrderDnaExpandedLut;
+		return *this;
+	}
+	Stage1Params& Stage1Params::SetCustomOrderAt1(bool customOrderAt1)
+	{
+		this->customOrderAt1 = customOrderAt1;
+		return *this;
+	}
+
 	Stage1Params& Stage1Params::SetHomopolymerCompressed(bool homopolymerCompressed)
 	{
 		this->homopolymerCompressed = homopolymerCompressed;
