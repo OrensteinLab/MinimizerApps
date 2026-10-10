@@ -1,0 +1,18 @@
+# Conda environment for minimizer/MOD benchmarks.
+# Create:  conda env create -f environment.yml
+# Update:  conda env update -f environment.yml --prune
+#
+# bioconda kraken2 supplies perl, python, wget, and related tools.
+# This fork still builds custom binaries from source (make all); repo scripts/
+# and src/ take precedence over the bioconda kraken2 wrappers on PATH.
+
+name: kraken_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - kraken2
+  - python>=3.10
+  - wget
+  - perl
