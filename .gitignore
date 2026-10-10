@@ -1,0 +1,6 @@
+# Root-level ignores for the monorepo (each app also keeps its own .gitignore
+# for app-specific build artifacts; this covers things shared across common/,
+# orders/, and top-level tooling).
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,50 @@
+# kraken2 harness local outputs (see kraken2/README.md)
+kraken2/benchmark_data/
+kraken2/.benchmark_run_manifest
+kraken2/benchmark_comparison.txt
+kraken2/classify_round_tables.txt
+kraken2/minimizer_density_summary.txt
+kraken2/figures/
+kraken2/__pycache__/
+
+# Local env overrides (not committed)
+kraken2/.env
+
+# Paper-eval local copy (CSVs under kraken2/tables/ are committed)
+kraken2/kraken2_sup.xlsx
+
+# KMC3 paper benchmark harness — harness itself is tracked; local data and
+# outputs are not.
+kmc/.env
+kmc/work/
+kmc/results/
+kmc/**/__pycache__/
+kmc/**/*.pyc
+kmc/.pytest_cache/
+# Downloaded / prepared FASTQ and generated file lists
+kmc/data/*/
+!kmc/data/*.csv
+
+# sshash benchmark harness — harness itself is tracked; local data and
+# outputs are not.
+sshash/.env
+sshash/.venv/
+sshash/results/
+sshash/**/__pycache__/
+sshash/**/*.pyc
+sshash/.pytest_cache/
+# Downloaded eulertigs FASTA / query FASTQ (data/datasets.csv and the
+# committed sanity-check query sets under data/queries/ are tracked).
+sshash/data/cod/
+sshash/data/kestrel/
+sshash/data/human/
+sshash/data/adhoc/
+
+# minimap2 benchmark harness — harness itself is tracked; local data/results
+# (both live under MINIMIZER_BENCH_ROOT off-repo, but guard anyway) are not.
+minimap2/.env
+minimap2/results/
+minimap2/data/
+minimap2/**/__pycache__/
+minimap2/**/*.pyc
+minimap2/.pytest_cache/

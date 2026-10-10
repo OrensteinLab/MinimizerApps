@@ -1,0 +1,5 @@
+# .gm tables are generated from the tracked .txt rank lists in this
+# directory (kraken2's evaluation/benchmark_interface.sh and kmc's
+# scripts/gm.py both regenerate them on demand). Only the .txt sources
+# are tracked; see orders/README.md.
+*.gm
