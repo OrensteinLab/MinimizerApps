@@ -231,6 +231,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
 
     if (num_buckets_in_skew_index == 0) {
         if (build_config.verbose) buckets_stats.print_less();
+        if (build_config.bucket_stats) buckets_stats.print_full();
         return;
     }
 
@@ -299,6 +300,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
         mphf_build_config.verbose = false;
         mphf_build_config.num_threads = build_config.num_threads;
         mphf_build_config.avg_partition_size = constants::avg_partition_size;
+        mphf_build_config.tmp_dir = build_config.tmp_dirname;
 
         uint64_t partition_id = 0;
         uint64_t lower = min_size;
@@ -421,7 +423,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
             uint64_t pos_in_bucket = -1;
             for (auto mt : bucket)  //
             {
-                ++pos_in_bucket;  // one position per tuple: the scheme is forward
+                ++pos_in_bucket;  // one position per tuple (repeated for a re-selected locus)
                 assert(mt.pos_in_seq >= mt.pos_in_kmer);
 
                 mt.pos_in_seq = d.m_spss.strings_offsets.decode(mt.pos_in_seq).absolute_offset;
@@ -456,6 +458,7 @@ void dictionary_builder<Kmer, Offsets>::build_sparse_and_skew_index(
         print_time(uint64_t(timer.elapsed()), "step 7.2 (build skew index)");
         buckets_stats.print_less();
     }
+    if (build_config.bucket_stats) buckets_stats.print_full();
 }
 
 }  // namespace sshash

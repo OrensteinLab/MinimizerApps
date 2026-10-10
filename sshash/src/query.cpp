@@ -121,42 +121,59 @@ streaming_query_report streaming_query_from_fasta_file(Dict const* dict, std::is
     return streaming_query_from_fasta_file<Dict, Query>(dict, is);
 }
 
-template <typename Kmer, typename Offsets>
-streaming_query_report  //
-dictionary<Kmer, Offsets>::streaming_query_from_file(std::string const& filename,
-                                                     bool multiline) const  //
+template <typename Dict, typename Query>
+static streaming_query_report streaming_query_from_file_impl(Dict const* dict,
+                                                             std::string const& filename,
+                                                             bool multiline)  //
 {
-    using dictionary_type = dictionary<Kmer, Offsets>;
-    using query_type = streaming_query<dictionary_type>;
-
     std::ifstream is(filename.c_str());
     if (!is.good()) throw std::runtime_error("error in opening the file '" + filename + "'");
     streaming_query_report report;
 
     if (util::ends_with(filename, ".fa.gz") or util::ends_with(filename, ".fasta.gz")) {
         zip_istream zis(is);
-        report = streaming_query_from_fasta_file<dictionary_type, query_type>(this, zis, multiline);
+        report = streaming_query_from_fasta_file<Dict, Query>(dict, zis, multiline);
     } else if (util::ends_with(filename, ".fq.gz") or util::ends_with(filename, ".fastq.gz")) {
         if (multiline) {
             std::cout << "==> Warning: option 'multiline' is only valid for FASTA files, not FASTQ."
                       << std::endl;
         }
         zip_istream zis(is);
-        report = streaming_query_from_fastq_file<dictionary_type, query_type>(this, zis);
+        report = streaming_query_from_fastq_file<Dict, Query>(dict, zis);
     } else if (util::ends_with(filename, ".fa") or util::ends_with(filename, ".fasta")) {
-        report = streaming_query_from_fasta_file<dictionary_type, query_type>(this, is, multiline);
+        report = streaming_query_from_fasta_file<Dict, Query>(dict, is, multiline);
     } else if (util::ends_with(filename, ".fq") or util::ends_with(filename, ".fastq")) {
         if (multiline) {
             std::cout << "==> Warning: option 'multiline' is only valid for FASTA files, not FASTQ."
                       << std::endl;
         }
-        report = streaming_query_from_fastq_file<dictionary_type, query_type>(this, is);
+        report = streaming_query_from_fastq_file<Dict, Query>(dict, is);
     } else {
         std::cerr << "unsupported query file format" << std::endl;
     }
 
     is.close();
     return report;
+}
+
+template <typename Kmer, typename Offsets>
+streaming_query_report  //
+dictionary<Kmer, Offsets>::streaming_query_from_file(std::string const& filename,
+                                                     bool multiline) const  //
+{
+    using dictionary_type = dictionary<Kmer, Offsets>;
+    /* compile-time choice of the order, see streaming_query */
+    return dispatch_order(m_hasher.mode(), [&](auto mode) {
+        constexpr custom_order_mode Mode = decltype(mode)::value;
+        if (m_regular_parsing) {
+            return streaming_query_from_file_impl<dictionary_type,
+                                                  streaming_query<dictionary_type, Mode, true>>(
+                this, filename, multiline);
+        }
+        return streaming_query_from_file_impl<dictionary_type,
+                                              streaming_query<dictionary_type, Mode, false>>(
+            this, filename, multiline);
+    });
 }
 
 }  // namespace sshash

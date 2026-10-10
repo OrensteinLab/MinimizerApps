@@ -111,6 +111,26 @@ if(SSHASH_BUILD_EXECUTABLES)
     sshash_static
   )
 
+  add_executable(test_gm_centre test/test_gm_centre.cpp)
+  target_link_libraries(test_gm_centre
+    sshash_static
+  )
+
+  add_executable(test_gm_rolling test/test_gm_rolling.cpp)
+  target_link_libraries(test_gm_rolling
+    sshash_static
+  )
+
+  add_executable(test_streaming_order test/test_streaming_order.cpp)
+  target_link_libraries(test_streaming_order
+    sshash_static
+  )
+
+  add_executable(test_mod_minimizer test/test_mod_minimizer.cpp)
+  target_link_libraries(test_mod_minimizer
+    sshash_static
+  )
+
   add_executable(check test/check.cpp)
   target_link_libraries(check
     sshash_static

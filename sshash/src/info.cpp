@@ -55,6 +55,11 @@ void dictionary<Kmer, Offsets>::print_info() const {
     std::cout << "k = " << k() << '\n';
     std::cout << "num_minimizers = " << m_ssi.codewords.size() << std::endl;
     std::cout << "m = " << m() << '\n';
+    std::cout << "order = " << custom_order_mode_name(m_hasher.mode()) << '\n';
+    if (is_gm_mode(m_hasher.mode())) {
+        std::cout << "gm_projection = " << gm_projection_name(m_hasher.projection()) << '\n';
+    }
+    if (is_mod_mode(m_hasher.mode())) std::cout << "mod_t = " << m_hasher.mod_t() << '\n';
     std::cout << "weighted = " << (weighted() ? "true" : "false") << '\n';
     print_space_breakdown();
 }
