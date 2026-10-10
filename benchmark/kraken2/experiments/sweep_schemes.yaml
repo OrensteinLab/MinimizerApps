@@ -1,0 +1,24 @@
+# Compare the five order schemes (plain + mod-minimizer) on the
+# standard_p10 library, one seed (one classify per hit-group setting).
+# The GreedyMini schemes run with both DNA->binary projections (at0-cg1, at1-cg0).
+name: sweep_schemes
+description: All five order schemes (plain + mod-minimizer; GreedyMini schemes with both projections) on standard_p10, 1 seed.
+
+defaults:
+  library: standard_p10
+  n_seeds: 1
+  threads: 16
+  parallel_jobs: 1
+
+configs:
+  - scheme: xor
+  - scheme: xor-pcg-hash
+  - scheme: greedymini
+    projection: at0-cg1
+  - scheme: greedymini
+    projection: at1-cg0
+  - scheme: mod-minimizer-xor
+  - scheme: mod-minimizer-greedymini
+    projection: at0-cg1
+  - scheme: mod-minimizer-greedymini
+    projection: at1-cg0
