@@ -41,7 +41,7 @@ from pathlib import Path
 import order_names
 from paths import bench_paths
 import orders_sheet
-from units import gb_from_bytes, gb_from_kib
+from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 from scripts.common import die, load_dotenv
 from scripts.config import data_dir
 from correlation import correlation_rows
@@ -187,8 +187,8 @@ COUNT_FIELDS = (
 
 SUMMARY_XLSX_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("super-k-mer", ("n_super_kmers", "avg_super_kmer_len", "density_factor")),
-    ("disk_gb", ("disk_gb",)),
-    ("runtime", ("count_wall_s", "count_stage1_s", "count_stage2_s", "count_stage3_s")),
+    ("tmp_disk_gb", ("tmp_disk_gb",)),
+    ("runtime", ("count_wall_s", "count_cpu_s", "count_stage1_s", "count_stage2_s", "count_stage3_s")),
     ("memory", ("count_max_rss_gb",)),
 )
 DENSITY_REF_FIELDS = ("binary_density_factor",)
@@ -198,7 +198,7 @@ XLSX_FORMULA_FIELDS = frozenset(
     {"w", "avg_read_len", "avg_super_kmer_len_mean", "density_factor_mean"}
 )
 RATIO_COLOR_SCALE_METRICS = frozenset(
-    {"n_super_kmers", "density_factor", "disk_gb", "count_wall_s", "count_stage1_s", "count_stage2_s", "count_stage3_s"}
+    {"n_super_kmers", "density_factor", "tmp_disk_gb", "count_wall_s", "count_cpu_s", "count_stage1_s", "count_stage2_s", "count_stage3_s"}
 )
 XLSX_RATIO_COLOR_SHEETS = frozenset({"summary", "readlen_check", "gm_lut", "runs"})
 SUMMARY_ALL_AGG_METRICS = tuple(m for _c, ms in SUMMARY_XLSX_METRIC_GROUPS for m in ms)
@@ -230,14 +230,14 @@ SUMMARY_PARAM_FIELDS = (
     "n_bins",
     "threads",
     "strict_memory",
-    "mem_limit",
-    "n_seeds",
+    "mem_limit_gb",
+    "n_repeats",
 )
 RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         # Matches SUMMARY_PARAM_FIELDS' order for every shared field (dataset ..
         # order, gm_k, projection, gm_table, gm_lut, then the app params n_bins, threads,
-        # strict_memory, mem_limit), so "runs" and "summary" line up
+        # strict_memory, mem_limit_gb), so "runs" and "summary" line up
         # column-for-column as far as their differing row granularity allows;
         # runs-only extras (run_id, label, signature_order_label, seed_idx,
         # seed) are placed per the rule: dataset, order, params, seeds.
@@ -258,7 +258,7 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "n_bins",
             "threads",
             "strict_memory",
-            "mem_limit",
+            "mem_limit_gb",
             "seed_idx",
             "seed",
         ),
@@ -278,8 +278,8 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             )
         ),
     ),
-    ("disk_gb", _with_ratio(("disk_gb", "disk_strict_mem_gb"))),
-    ("runtime", _with_ratio(("count_wall_s", "count_stage1_s", "count_stage2_s", "count_stage3_s"))),
+    ("tmp_disk_gb", _with_ratio(("tmp_disk_gb", "tmp_disk_strict_mem_gb"))),
+    ("runtime", _with_ratio(("count_wall_s", "count_cpu_s", "count_stage1_s", "count_stage2_s", "count_stage3_s"))),
     ("memory", _with_ratio(("count_max_rss_gb",))),
     (
         "order",
@@ -298,10 +298,12 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "major_pagefaults",
             "minor_pagefaults",
             "fs_inputs",
+            "read_gb",
             "fs_outputs",
+            "count_pinned_cpus",
             "ctx_voluntary",
             "ctx_involuntary",
-            "python_wall_s",
+            "harness_wall_s",
             "kmc_version",
             "host",
             "exit_code",
@@ -318,24 +320,25 @@ VS_PAPER_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "n_bins",
             "threads",
             "strict_memory",
-            "mem_limit",
+            "mem_limit_gb",
             "paper_platform",
         ),
     ),
     (
         "runtime",
-        ("n_seeds", "count_wall_s", "count_wall_s_std", "paper_count_wall_s", "count_wall_s_ratio", "count_stage1_s", "count_stage2_s"),
+        ("n_repeats", "count_wall_s", "count_wall_s_std", "paper_count_wall_s", "count_wall_s_ratio", "count_stage1_s", "count_stage2_s"),
     ),
     ("memory", ("count_max_rss_gb", "paper_count_max_rss_gb")),
-    ("disk_gb", ("disk_gb", "paper_disk_gb")),
+    ("tmp_disk_gb", ("tmp_disk_gb", "paper_disk_gb")),
     ("super-k-mer", ("n_unique_counted",)),
 )
 _SUMMARY_CSV_METRICS = (
     "n_super_kmers",
     "avg_super_kmer_len",
     "density_factor",
-    "disk_gb",
+    "tmp_disk_gb",
     "count_wall_s",
+    "count_cpu_s",
     "count_stage1_s",
     "count_stage2_s",
     "count_stage3_s",
@@ -344,7 +347,7 @@ _SUMMARY_CSV_METRICS = (
 CATEGORY_LABELS: dict[str, str] = {
     "id / params": "params",
     "super-k-mer": "super-k-mer",
-    "disk_gb": "disk (GB)",
+    "tmp_disk_gb": "disk (GB)",
     "runtime": "runtime (s)",
     "memory": "memory (GB)",
     "binary / DNA": "bin/DNA",
@@ -377,7 +380,7 @@ def scheme_sort_key(row: dict) -> tuple:
         row.get("dataset", ""),
         int(row.get("n_bins") or 0),
         int(row.get("threads") or 0),
-        int(row.get("mem_limit") or 0),
+        int(row.get("mem_limit_gb") or 0),
         int(bool(row.get("strict_memory"))),
         int(row.get("k") or 0),
         row.get("input_format", ""),
@@ -406,7 +409,7 @@ def summary_sort_key(row: dict) -> tuple:
         row.get("dataset", ""),
         int(row.get("n_bins") or 0),
         int(row.get("threads") or 0),
-        int(row.get("mem_limit") or 0),
+        int(row.get("mem_limit_gb") or 0),
         int(row.get("strict_memory") or 0),
         variant_sort_key(row),
     )
@@ -417,7 +420,7 @@ def config_columns(r: dict) -> dict:
         "n_bins": r.get("n_bins"),
         "threads": r.get("threads"),
         "strict_memory": r.get("strict_memory"),
-        "mem_limit": r.get("mem_limit"),
+        "mem_limit_gb": r.get("mem_limit_gb"),
     }
 
 
@@ -482,7 +485,7 @@ def summary_xlsx_rows(rows: list[dict]) -> list[dict]:
             "w": None,
             **config_columns(head),
             **{f: head.get(f) for f in ID_FIELDS},
-            "n_seeds": len({p.get("seed_idx") for p in parts}),
+            "n_repeats": len({p.get("seed_idx") for p in parts}),
             "n_reads": head.get("n_reads"),
             "avg_read_len": head.get("avg_read_len"),
             "binary_density_factor": head.get("binary_density_factor"),
@@ -512,7 +515,7 @@ def _xlsx_match_key(row: dict, *, with_seed: bool) -> tuple:
         row.get("input_format"),
         int(row.get("n_bins") or 0),
         int(row.get("threads") or 0),
-        int(row.get("mem_limit") or 0),
+        int(row.get("mem_limit_gb") or 0),
         int(bool(row.get("strict_memory"))),
     )
     if with_seed:
@@ -700,10 +703,10 @@ def summary_field_order() -> list[str]:
         "n_bins",
         "threads",
         "strict_memory",
-        "mem_limit",
+        "mem_limit_gb",
         *_with_ratio(("n_super_kmers", "avg_super_kmer_len", "density_factor")),
         "binary_density_factor",
-        *_with_ratio(("disk_gb", "count_wall_s", "count_stage1_s", "count_stage2_s", "count_stage3_s", "count_max_rss_gb")),
+        *_with_ratio(("tmp_disk_gb", "count_wall_s", "count_cpu_s", "count_stage1_s", "count_stage2_s", "count_stage3_s", "count_max_rss_gb")),
     ]
 
 
@@ -793,7 +796,7 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
         "k": k,
         "input_format": kind,
         "threads": meta.get("threads"),
-        "mem_limit": meta.get("mem_limit_gb"),
+        "mem_limit_gb": meta.get("mem_limit_gb"),
         "n_bins": meta.get("n_bins"),
         "strict_memory": meta.get("strict_memory"),
         "config_tag": meta.get("config_tag", ""),
@@ -815,20 +818,28 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
         "count_wall_s": wall,
         "kmc_total_s": stats["kmc_total_s"],
         "time_elapsed_s": tinfo["time_elapsed_s"],
-        "python_wall_s": meta.get("python_wall_s"),
+        "harness_wall_s": meta.get("python_wall_s"),
         "user": tinfo["user_s"],
         "sys": tinfo["sys_s"],
         "cpu_pct": tinfo["cpu_pct"],
         "count_stage1_s": stats["stage1_s"],
         "count_stage2_s": stats["stage2_s"],
         "count_stage3_s": stats["stage3_s"],
+        # CPU seconds (user + system, all threads; /usr/bin/time -v) of the timed kmc call: with wall
+        # time it separates "ran longer" from "waited longer" (contention, input reads)
+        "count_cpu_s": (round(tinfo["user_s"] + tinfo["sys_s"], 2)
+                        if tinfo["user_s"] is not None and tinfo["sys_s"] is not None else None),
         "count_max_rss_gb": gb_from_kib(rss_kb),
-        "disk_gb": gb_from_bytes(stats["tmp_bytes"]),
-        "disk_strict_mem_gb": gb_from_bytes(stats["tmp_strict_mem_bytes"]),
+        "tmp_disk_gb": gb_from_bytes(stats["tmp_bytes"]),
+        "tmp_disk_strict_mem_gb": gb_from_bytes(stats["tmp_strict_mem_bytes"]),
         "major_pagefaults": tinfo["major_pagefaults"],
         "minor_pagefaults": tinfo["minor_pagefaults"],
         "fs_inputs": tinfo["fs_inputs"],
+        # file-system reads in decimal GB ('File system inputs' counts 512-byte blocks); ~0 = input served from the page cache
+        "read_gb": gb_from_blocks(tinfo["fs_inputs"]),
         "fs_outputs": tinfo["fs_outputs"],
+        # CPUs the timed kmc call was taskset to (cpus.txt, written by lib/run.sh); absent in older runs
+        "count_pinned_cpus": ((run_dir / "cpus.txt").read_text().strip() or None) if (run_dir / "cpus.txt").is_file() else None,
         "ctx_voluntary": tinfo["ctx_voluntary"],
         "ctx_involuntary": tinfo["ctx_involuntary"],
         "n_unique": stats["n_unique"],
@@ -1035,16 +1046,16 @@ XLSX_MERGE_DATASET = (
     "label",
 )
 XLSX_MERGE_MINIMIZER = ("k", "w", "L")  # unified names (make_sheet renames before use)
-XLSX_MERGE_CONFIG = ("n_bins", "threads", "strict_memory", "mem_limit")
+XLSX_MERGE_CONFIG = ("n_bins", "threads", "strict_memory", "mem_limit_gb")
 XLSX_MERGE_FIELDS: dict[str, frozenset[str]] = {
     "summary": frozenset(
-        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_seeds")
+        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_repeats")
     ),
     "readlen_check": frozenset(
-        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_seeds")
+        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_repeats")
     ),
     "gm_lut": frozenset(
-        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_seeds")
+        (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_repeats")
     ),
     # runs: the id columns (order, gm_k, projection, gm_table, gm_lut) merge over the
     # seed repeats of one variant -- see XLSX_ID_MERGE_SCOPE
@@ -1055,12 +1066,12 @@ XLSX_MERGE_FIELDS: dict[str, frozenset[str]] = {
 # An id column merges across rows that agree on the whole config + the full
 # order identity (so two variants never share a merged id cell).
 XLSX_ID_MERGE_SCOPE = {
-    f: ("dataset", "L", "input_format", "n_bins", "threads", "mem_limit", "strict_memory", *ID_FIELDS)
+    f: ("dataset", "L", "input_format", "n_bins", "threads", "mem_limit_gb", "strict_memory", *ID_FIELDS)
     for f in ID_FIELDS
 }
 # Block = one setting = dataset + input format + config (n_bins, threads, memory): a medium
 # bottom border after each; merges never cross it, except the dataset-level cells below.
-XLSX_BLOCK_FIELDS = ("dataset", "input_format", "n_bins", "threads", "strict_memory", "mem_limit")
+XLSX_BLOCK_FIELDS = ("dataset", "input_format", "n_bins", "threads", "strict_memory", "mem_limit_gb")
 # dataset-level cells span all the settings of one dataset
 XLSX_DATASET_MERGE_SCOPE = {
     f: ("dataset",) for f in ("dataset", "n_total_kmers", "n_reads", "label", "avg_read_len")
@@ -1115,6 +1126,10 @@ def _agg_metric_base(field: str) -> str | None:
     return None
 
 
+# Kept even when every row is empty (runs without cpus.txt): the column is part of the documented schema.
+XLSX_KEEP_FIELDS = frozenset({"count_pinned_cpus"})
+
+
 def prune_empty_fields(rows: Sequence[dict], fields: Sequence[str]) -> list[str]:
     """Drop columns whose values are all empty; drop ratio/std when mean/base is empty."""
     if not rows:
@@ -1124,7 +1139,10 @@ def prune_empty_fields(rows: Sequence[dict], fields: Sequence[str]) -> list[str]
         return all(_is_empty_cell(r.get(field)) for r in rows)
 
     drop: set[str] = set()
+    fields = list(fields)
     for field in fields:
+        if field in XLSX_KEEP_FIELDS:
+            continue
         base = _agg_metric_base(field)
         if base:
             mean_f = f"{base}_mean"
@@ -1143,7 +1161,7 @@ def prune_empty_fields(rows: Sequence[dict], fields: Sequence[str]) -> list[str]
                 drop.add(ratio_f)
     for field in fields:
         if field not in drop and col_empty(field):
-            if field in XLSX_FORMULA_FIELDS:
+            if field in XLSX_FORMULA_FIELDS or field in XLSX_KEEP_FIELDS:
                 continue
             base = _agg_metric_base(field)
             if base in XLSX_FORMULA_MEAN_METRICS:
@@ -1168,91 +1186,8 @@ def _summary_field_category(field: str) -> str:
     return ""
 
 
-def _agg_header_label(metric: str, suffix: str, _group_metrics: Sequence[str]) -> str:
-    tag = "avg" if suffix == "_mean" else "std"
-    return f"{metric}_{tag}"
-
-
 def _category_display(category: str) -> str:
     return CATEGORY_LABELS.get(category, category)
-
-
-def _build_xlsx_header_labels() -> dict[str, str]:
-    labels: dict[str, str] = {
-        "run_id": "id",
-        "dataset": "dataset",
-        "label": "label",
-        "input_format": "fmt",
-        "k": "L",  # internal k (kmc k-mer length) is the unified L
-        "p": "k",  # internal p (signature/minimizer length) is the unified k
-        "w": "w",
-        "n_bins": "bins",
-        "strict_memory": "strict_memory",
-        "threads": "threads",
-        "mem_limit": "mem_limit",
-        "seed_idx": "seed_idx",
-        "seed": "seed",
-        "n_super_kmers": "n_super_kmers",
-        "n_total_kmers": "n_total_kmers",
-        "avg_read_len": "avg_read_len",
-        "avg_super_kmer_len": "avg_super_kmer_len",
-        "density_factor": "density_factor",
-        "binary_density_factor": "binary_density_factor",
-        "n_unique_counted": "n_unique_counted",
-        "paper_count_wall_s": "paper_count_wall_s",
-        "paper_count_max_rss_gb": "paper_count_max_rss_gb",
-        "paper_disk_gb": "paper_disk_gb",
-        "count_wall_s_ratio": "count_wall_s_ratio",
-        "n_unique": "unique",
-        "n_reads": "reads",
-        "n_below_ci": "below",
-        "n_above_cx": "above",
-        "disk_gb": "disk_gb",
-        "disk_strict_mem_gb": "disk_strict_mem_gb",
-        "count_wall_s": "count_wall_s",
-        "count_stage1_s": "count_stage1_s",
-        "count_stage2_s": "count_stage2_s",
-        "count_stage3_s": "count_stage3_s",
-        "count_max_rss_gb": "count_max_rss_gb",
-        "signature_order_label": "sig_lbl",
-        "signature_order_mode": "sig_mode",
-        "custom_order_file": "gm_file",
-        "user": "user",
-        "sys": "sys",
-        "cpu_pct": "cpu",
-        "major_pagefaults": "maj_pf",
-        "minor_pagefaults": "min_pf",
-        "fs_inputs": "fs_in",
-        "fs_outputs": "fs_out",
-        "ctx_voluntary": "ctx_vol",
-        "ctx_involuntary": "ctx_inv",
-        "python_wall_s": "python_wall_s",
-        "kmc_version": "kmc_ver",
-        "host": "host",
-        "exit_code": "exit",
-        "n_seeds": "seeds",
-        "count_stage1_s_ratio": "count_stage1_s_ratio",
-        "count_stage2_s_ratio": "count_stage2_s_ratio",
-        "disk_gb_ratio": "disk_gb_ratio",
-    }
-    for _cat, metrics in SUMMARY_XLSX_METRIC_GROUPS:
-        for metric in metrics:
-            for suffix in ("_mean", "_std"):
-                labels[f"{metric}{suffix}"] = _agg_header_label(metric, suffix, metrics)
-    return labels
-
-
-XLSX_HEADER_LABELS = _build_xlsx_header_labels()
-
-
-def _xlsx_header_label(field: str, sheet: str = "") -> str:
-    if field in XLSX_HEADER_LABELS:
-        return XLSX_HEADER_LABELS[field]
-    for prefix in ("dna_", "bin_"):
-        if field.startswith(prefix):
-            rest = field[len(prefix) :]
-            return XLSX_HEADER_LABELS.get(rest, rest)
-    return field
 
 
 def _categories_from_groups(fields: Sequence[str], groups: Sequence[tuple[str, Sequence[str]]]) -> list[str]:
@@ -1280,10 +1215,6 @@ def _xlsx_field_categories(raw_name: str, fields: Sequence[str]) -> list[str] | 
 
 
 
-def _sheet_header_labels(sheet: str, fields: Sequence[str]) -> dict[str, str]:
-    return {f: _xlsx_header_label(f, sheet) for f in fields}
-
-
 _WIDE_TEXT_FIELDS = {"meaning": 70, "notes": 80, "description": 80, "column": 34, "sheet": 20}
 
 
@@ -1304,18 +1235,13 @@ def make_sheet(
     n_bins / threads cell fills. Category bands and headers are not filled."""
     fields = list(fields)
     categories = _xlsx_field_categories(name, fields)
-    header_labels = _sheet_header_labels(name, fields)
     if name not in ("orders", "overview"):  # those two are authored with the unified names
         fields = [unify_name(f) for f in fields]
         rows = unify_rows(rows)
-        header_labels = {unify_name(f): v for f, v in header_labels.items()}
-    else:
-        header_labels = {f: v for f, v in header_labels.items() if f not in UNIFIED_PARAM_NAMES}  # k/L: as is
     sheet: dict = {
         "name": name,
         "fields": fields,
         "rows": rows,
-        "header_labels": header_labels,
     }
     if categories:
         sheet["categories"] = [_category_display(c) for c in categories]
@@ -1397,7 +1323,7 @@ def vs_paper_rows(rows: list[dict], paper_rows: list[dict], platform: str) -> li
         s1_vals = [float(r["count_stage1_s"]) for r in reps if r.get("count_stage1_s") is not None]
         s2_vals = [float(r["count_stage2_s"]) for r in reps if r.get("count_stage2_s") is not None]
         rss_vals = [float(r["count_max_rss_gb"]) for r in reps if r.get("count_max_rss_gb") is not None]
-        disk_vals = [float(r["disk_gb"]) for r in reps if r.get("disk_gb") is not None]
+        disk_vals = [float(r["tmp_disk_gb"]) for r in reps if r.get("tmp_disk_gb") is not None]
         paper_t = float(p["paper_time_s"]) if p else None
         out.append(
             {
@@ -1406,7 +1332,7 @@ def vs_paper_rows(rows: list[dict], paper_rows: list[dict], platform: str) -> li
                 "input_format": head["input_format"],
                 **config_columns(head),
                 "paper_platform": platform,
-                "n_seeds": len({r.get("seed_idx") for r in reps}),
+                "n_repeats": len({r.get("seed_idx") for r in reps}),
                 "count_wall_s": round(wt_mean, 4) if wt_mean is not None else None,
                 "count_wall_s_std": round(wt_std, 4) if wt_std is not None else None,
                 "paper_count_wall_s": paper_t,
@@ -1415,7 +1341,7 @@ def vs_paper_rows(rows: list[dict], paper_rows: list[dict], platform: str) -> li
                 "count_stage2_s": round(_mean_std(s2_vals)[0], 4) if s2_vals else None,
                 "count_max_rss_gb": round(_mean_std(rss_vals)[0], 4) if rss_vals else None,
                 "paper_count_max_rss_gb": float(p["paper_ram_gb"]) if p else None,
-                "disk_gb": round(_mean_std(disk_vals)[0], 4) if disk_vals else None,
+                "tmp_disk_gb": round(_mean_std(disk_vals)[0], 4) if disk_vals else None,
                 "paper_disk_gb": float(p["paper_disk_gb"]) if p else None,
                 "n_unique_counted": head.get("n_unique_counted"),
             }
@@ -1439,103 +1365,164 @@ def overview_field_order() -> list[str]:
     return ["sheet", "column", "meaning", "notes"]
 
 
-def overview_rows() -> list[dict]:
-    """Static reference for every non-obvious column in this workbook."""
+PINNING_NOTE = (
+    "Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores "
+    "(benchmark/common/pin_cpus.sh); the CPU list is in count_pinned_cpus"
+)
 
-    def row(sheet: str, column: str, meaning: str, notes: str = "") -> dict:
-        return {"sheet": sheet, "column": column, "meaning": meaning, "notes": notes}
+# column -> (meaning, notes). Metric columns are generated below.
+_METRIC_MEANING: dict[str, tuple[str, str]] = {
+    "n_super_kmers": ("number of super-k-mers KMC's splitter produced", ""),
+    "avg_super_kmer_len": ("n_total_kmers / n_super_kmers -- longer is better (fewer, denser super-k-mers)", ""),
+    "density_factor": (
+        "n_super_kmers / n_total_kmers * (w + 1) -- lower is better (closer-to-theoretical minimizer density)", ""),
+    "tmp_disk_gb": ("KMC temp directory size", "decimal GB (bytes / 10^9)"),
+    "count_wall_s": ("wall time of the timed kmc call", "seconds"),
+    "count_cpu_s": (
+        "CPU time of the timed kmc call (user + system, summed over all threads; GNU time -v). Wall time = CPU "
+        "time / cores actually running, so wall time rises with contention or input reads while CPU time mostly "
+        "does not: compare orders on both -- a wall-time difference without a CPU-time one is load or I/O, "
+        "not the order", "seconds"),
+    "count_stage1_s": ("KMC internal stage 1 time (splitting)", "seconds"),
+    "count_stage2_s": ("KMC internal stage 2 time (counting)", "seconds"),
+    "count_stage3_s": ("KMC internal stage 3 time (only reported by some KMC versions/modes)", "seconds"),
+    "count_max_rss_gb": ("peak RSS of the timed kmc call (GNU time -v)", "decimal GB (KiB * 1024 / 10^9; GNU time reports KiB)"),
+}
+_ORDER_SHEET_MEANING: dict[str, tuple[str, str]] = {
+    "order": (
+        "signature/minimizer ordering scheme (canonical names, orders/README.md)",
+        "default (kmc's shipped lex, is_allowed-protected) | lex (pure canonical lex, no denylist) | xor (random "
+        "xor seed) | xor-pcg-hash (xor seed then PCG hash) | greedymini (GreedyMini UHS table) -- see the orders "
+        "sheet for what each one actually does"),
+    "gm_k": ("greedymini only: table k (= minimizer length k)", ""),
+    "projection": ("greedymini only: DNA->binary projection (at0-cg1 default | at1-cg0 = kmc -oat1)", ""),
+    "gm_table": ("greedymini only: table file stem (w{w}_k{k}_canonical)", ""),
+    "gm_lut": (
+        "greedymini only: table LUT backend (dna = 4^k DNA table | binary = 2^k rank LUT + runtime projection)",
+        "gm_k / projection / gm_table / gm_lut are separate columns, never packed into the order name; two rows "
+        "that differ in any of them are different variants and are never pooled"),
+}
+_COLUMN_MEANING: dict[str, tuple[str, str]] = {
+    "dataset": ("dataset id", ""),
+    "k": ("minimizer (signature) length (kmc -p)", "unified parameter names shared with the other apps; the CLI flags and run-dir names (k28_p9) keep kmc's own"),
+    "w": ("window in k-mers, w = L - k + 1", ""),
+    "L": ("k-mer length L = k + w - 1 (kmc -k)", ""),
+    "input_format": ("gzip or plain FASTQ input", ""),
+    "label": ("dataset label as given in the run's meta (e.g. read-length variants)", ""),
+    "n_total_kmers": ("total number of k-mers (length L) in the dataset", ""),
+    "n_reads": ("number of reads", ""),
+    "avg_read_len": ("average read length in bases", "Excel formula in summary/gm_lut/runs where derivable"),
+    "gc_fraction": ("GC fraction of the sampled bases", ""),
+    "mem_gb": ("kmc -m memory limit used for the dataset's canonical run", "decimal GB"),
+    "n_bins": ("kmc -n number of bins", "config_tag in CSVs encodes the config as {input}_n{bins}_t{threads}_m{mem}[_sm]"),
+    "threads": ("kmc -t number of threads", ""),
+    "strict_memory": ("kmc -sm strict-memory mode on/off", ""),
+    "mem_limit_gb": ("kmc -m memory limit", "decimal GB"),
+    "n_repeats": (
+        "number of runs (repeats) aggregated into the row's mean/std; for the default baseline the repeats are "
+        "runs of the same configuration that only measure timing noise", ""),
+    "run_id": ("run directory relative to runs/ (dataset/k_p/config/scheme/repeat)", ""),
+    "seed_idx": ("0..n-1 repeat index", ""),
+    "seed": ("actual hex seed used for that repeat (custom schemes only)", ""),
+    "signature_order_label": ("the kmc -ol label of the signature order", ""),
+    "signature_order": ("kmc -o signature order argument", ""),
+    "signature_order_mode": ("how the signature order is supplied to kmc", ""),
+    "custom_order_file": ("custom order (GreedyMini table) file used, if any", ""),
+    "binary_density_factor": ("GreedyMini rows only: density factor of the binary-alphabet (2-symbol) projection of the table", ""),
+    "n_unique_counted": ("number of distinct k-mers counted by kmc", ""),
+    "n_unique": ("number of unique k-mers (kmc stats)", ""),
+    "n_below_ci": ("k-mers below the counter lower bound -ci (excluded)", ""),
+    "n_above_cx": ("k-mers above the counter upper bound -cx (excluded)", ""),
+    "tmp_disk_strict_mem_gb": ("KMC temp directory size in strict-memory mode", "decimal GB; empty when strict-memory was not used"),
+    "user": ("user CPU time of the timed call (GNU time -v)", "seconds"),
+    "sys": ("system CPU time of the timed call (GNU time -v)", "seconds"),
+    "cpu_pct": ("CPU utilisation of the timed call (GNU time -v)", "percent"),
+    "major_pagefaults": ("major page faults (GNU time -v)", "count; needed disk I/O"),
+    "minor_pagefaults": ("minor page faults (GNU time -v)", "count"),
+    "fs_inputs": ("file system inputs (GNU time -v)", "512-byte blocks; ~0 = input served from the page cache"),
+    "read_gb": ("file system reads of the timed call = fs_inputs * 512 bytes", "decimal GB"),
+    "fs_outputs": ("file system outputs (GNU time -v)", "512-byte blocks"),
+    "ctx_voluntary": ("voluntary context switches (GNU time -v)", "count"),
+    "ctx_involuntary": ("involuntary context switches (GNU time -v)", "count"),
+    "harness_wall_s": ("wall time of the whole harness step around kmc (includes startup and bookkeeping)", "seconds"),
+    "kmc_version": ("KMC version string", ""),
+    "host": ("host the run was executed on", ""),
+    "exit_code": ("exit code of the timed kmc call", "0 = success"),
+    "count_pinned_cpus": ("CPU list the timed step was pinned to (from the run's cpus.txt)", PINNING_NOTE + "; empty for runs without it"),
+    "paper_platform": ("platform of the published KMC 3 numbers (xeon_hdd | xeon_ssd)", ""),
+    "paper_count_wall_s": ("published KMC 3 paper wall time", "seconds"),
+    "paper_count_max_rss_gb": ("published KMC 3 paper memory", "decimal GB"),
+    "paper_disk_gb": ("published KMC 3 paper temp disk usage", "decimal GB"),
+    "description": ("what the order variant does", ""),
+    "cli": ("kmc command-line flags that select this variant", ""),
+    "is_allowed_denylist": ("whether kmc's is_allowed denylist (forbidden signatures) applies to this order", ""),
+    "expected_density_factor_mean": (
+        "theoretical density factor on i.i.d. random DNA, mean over the benchmark's seeds for "
+        "xor/xor-pcg-hash/greedymini (0 std for the deterministic default/lex)", ""),
+    "expected_density_factor_std": ("sample std of expected_density_factor over the seeds", ""),
+}
+_RATIO_NOTE = "Excel formula, recalculated on open; color scale: green < 1 (better) < red"
 
+
+def _legend_entry(sheet: str, col: str) -> tuple[str, str]:
+    if sheet == "vs_paper":
+        if col == "count_wall_s":
+            return ("mean wall time of the default (lex) runs of this dataset/L/config across the n_repeats repeats", "seconds")
+        if col == "count_wall_s_std":
+            return ("sample std of count_wall_s across the n_repeats repeats", "seconds")
+        if col == "count_wall_s_ratio":
+            return (
+                "this run's count_wall_s / paper_count_wall_s",
+                "< 1 = faster than the 2017 paper's hardware; do not expect 1.0. NOT the summary sheet's "
+                "count_wall_s_ratio, which compares to this run's own lex baseline")
+        if col in _METRIC_MEANING:
+            return (_METRIC_MEANING[col][0] + " (default/lex runs, mean across repeats)", _METRIC_MEANING[col][1])
+    if col in _ORDER_SHEET_MEANING:
+        return _ORDER_SHEET_MEANING[col]
+    if col in _COLUMN_MEANING:
+        return _COLUMN_MEANING[col]
+    for suf in ("_mean", "_std", "_ratio"):
+        if col.endswith(suf) and col[: -len(suf)] in _METRIC_MEANING:
+            m = col[: -len(suf)]
+            what, units = _METRIC_MEANING[m]
+            if suf == "_mean":
+                return (f"mean of {m} across the row's n_repeats repeats: {what}", units)
+            if suf == "_std":
+                return (f"sample std of {m} across the row's n_repeats repeats", units)
+            extra = ""
+            if m == "density_factor":
+                extra = ("; the summary sheet shows, under the table, Excel =CORREL of density_factor_ratio with each "
+                         "other {metric}_ratio column (ratios, not raw values, because raw values span very different "
+                         "absolute scales per dataset)")
+            base = "this run's" if sheet == "runs" else "this row's mean"
+            return (f"{base} {m} / the matching default (lex) row's value, same dataset/L/input/config", _RATIO_NOTE + extra)
+    if col in _METRIC_MEANING:
+        return _METRIC_MEANING[col]
+    if col.endswith("_particular_density_factor_mean"):
+        ds = col[: -len("_particular_density_factor_mean")]
+        return (f"density factor on real {ds} reads, mean over the seeds of the kmc runs (a density-only scan, std 0, "
+                "where a variant has no run on the dataset)", "")
+    if col.endswith("_particular_density_factor_std"):
+        ds = col[: -len("_particular_density_factor_std")]
+        return (f"sample std of the {ds} particular density factor over the seeds", "")
+    raise KeyError(f"no legend entry for column {col!r} (sheet {sheet})")
+
+
+def overview_rows(sheet_fields: dict[str, Sequence[str]]) -> list[dict]:
+    """Legend: one row per (column, meaning) over every data sheet's actual (unified) headers."""
+    order: list[tuple] = []
+    sheets_of: dict[tuple, list[str]] = {}
+    for sheet, fields in sheet_fields.items():
+        for col in fields:
+            meaning, notes = _legend_entry(sheet, col)
+            key = (col, meaning, notes)
+            if key not in sheets_of:
+                order.append(key)
+                sheets_of[key] = []
+            sheets_of[key].append(sheet)
     return [
-        row("all", "dataset / k / w / L", "dataset id, k = minimizer (signature) length, w = window in k-mers, L = k + w - 1 = kmc's k-mer length (kmc -p = k, kmc -k = L)",
-            "unified parameter names shared with the other apps; the CLI flags and run-dir names (k28_p9) keep kmc's own"),
-        row("all", "input_format", "gzip or plain FASTQ input"),
-        row(
-            "all", "order", "signature/minimizer ordering scheme (canonical names, orders/README.md)",
-            "default (kmc's shipped lex, is_allowed-protected) | lex "
-            "(pure canonical lex, no denylist) | xor (random xor seed) | xor-pcg-hash "
-            "(xor seed then PCG hash) | greedymini (GreedyMini UHS table) "
-            "-- see the orders sheet for what each one actually does",
-        ),
-        row(
-            "all", "gm_k / projection / gm_table / gm_lut",
-            "greedymini only: table k (= minimizer length k), DNA->binary projection "
-            "(at0-cg1 default | at1-cg0 = kmc -oat1), table file stem (w{w}_k{k}_canonical), "
-            "and table LUT backend (dna = 4^p DNA table | binary = 2^p rank LUT + runtime projection)",
-            "separate columns, never packed into the order name; two rows that differ in any "
-            "of them are different variants and are never pooled",
-        ),
-        row(
-            "all", "n_bins / threads / strict_memory / mem_limit",
-            "kmc -n / -t / -sm / -m for this run",
-            "config_tag in CSVs encodes these as {input}_n{bins}_t{threads}_m{mem}[_sm]",
-        ),
-        row(
-            "summary / gm_lut", "n_seeds", "number of repeat runs aggregated into this row's mean/std",
-            "lex is repeated the same way custom schemes are (see README: "
-            "'Run order and the lex baseline') so it also gets a real n_seeds/std, not always 1",
-        ),
-        row(
-            "summary / gm_lut", "{metric}_mean / {metric}_std",
-            "mean and sample std of the metric across this row's n_seeds repeats",
-        ),
-        row(
-            "summary", "correlation with density (row under the table)",
-            "for every {metric}_ratio column, Excel =CORREL(density_factor_ratio range, that "
-            "column's range) over all summary rows",
-            "sheet-wide statistics, not per-row ones; recalculate live on open. Ratios (order / "
-            "lex of the same setting), not raw values, because raw values span very different "
-            "absolute scales per dataset",
-        ),
-        row(
-            "summary / gm_lut / runs", "{metric}_ratio",
-            "this row's value / the matching default (lex) row's value, same dataset/k/input/config",
-            "Excel formula, recalculated on open; color scale: green < 1 (better) < red",
-        ),
-        row("summary / gm_lut / runs", "n_super_kmers", "number of super-k-mers KMC's splitter produced"),
-        row(
-            "summary / gm_lut / runs", "avg_super_kmer_len",
-            "n_total_kmers / n_super_kmers -- longer is better (fewer, denser super-k-mers)",
-        ),
-        row(
-            "summary / gm_lut / runs", "density_factor",
-            "n_super_kmers / n_total_kmers * (w + 1) -- lower is better (closer-to-theoretical minimizer density)",
-        ),
-        row(
-            "summary / gm_lut / runs", "binary_density_factor",
-            "GreedyMini rows only: density factor of the binary-alphabet (2-symbol) projection of the table",
-        ),
-        row("summary / gm_lut / runs", "disk_gb", "KMC temp directory size", "decimal GB (bytes / 10^9)"),
-        row(
-            "summary / gm_lut / runs", "count_wall_s / count_stage1_s / count_stage2_s / count_stage3_s",
-            "total wall time and KMC's internal stage timings (count_stage1_s=splitting, count_stage2_s=counting)", "seconds",
-        ),
-        row("summary / gm_lut / runs", "count_max_rss_gb", "peak RSS (GNU time -v)", "decimal GB (KiB * 1024 / 10^9; GNU time reports KiB)"),
-        row(
-            "runs", "seed_idx / seed",
-            "0..n-1 repeat index, and the actual hex seed used for that repeat (custom schemes only)",
-        ),
-        row(
-            "vs_paper", "count_wall_s / count_wall_s_std / n_seeds",
-            "default (lex) runs only, averaged across repeats for this dataset/k/config",
-            "NOT the same as the summary sheet's count_wall_s_ratio: vs_paper compares to the "
-            "*published 2017 KMC3 paper* numbers, summary compares to *this run's own lex baseline*",
-        ),
-        row(
-            "vs_paper", "count_wall_s_ratio", "this run's count_wall_s / the paper's published count_wall_s",
-            "< 1 = faster than the 2017 paper's hardware; do not expect 1.0, hardware has moved on",
-        ),
-        row(
-            "orders", "(sheet)", "one row per (order variant, k, w, L): order, k, w, L, gm_k, projection, "
-            "gm_table, gm_lut, description, cli, is_allowed_denylist, then expected_density_factor_mean/std "
-            "(theoretical, i.i.d. random DNA; mean/std over the benchmark's seeds for xor/xor-pcg-hash/"
-            "greedymini, std 0 for the deterministic default/lex) and <dataset>_particular_density_factor_mean/std "
-            "(real data: mean/std over seeds of the kmc runs; a density-only scan, std 0, where a variant has no "
-            "run on a dataset). No cell is empty -- export fails otherwise",
-        ),
-        row(
-            "datasets", "(sheet)", "one row per dataset: size, read-length, and config stats "
-            "(from its own default/lex run), plus published KMC3-paper reference numbers where available",
-        ),
+        {"sheet": " / ".join(sheets_of[key]), "column": key[0], "meaning": key[1], "notes": key[2]}
+        for key in order
     ]
 
 
@@ -1794,7 +1781,7 @@ def datasets_rows(main_rows: Sequence[dict], out_root: Path, paper_rows: Sequenc
                 "n_reads": r.get("n_reads"),
                 "avg_read_len": r.get("avg_read_len"),
                 "gc_fraction": _as_float(part.get("gc_fraction")) if part else None,
-                "mem_gb": r.get("mem_limit"),
+                "mem_gb": r.get("mem_limit_gb"),
                 "paper_count_max_rss_gb": _as_float(paper.get("paper_ram_gb")) if paper else None,
                 "paper_disk_gb": _as_float(paper.get("paper_disk_gb")) if paper else None,
                 "paper_count_wall_s": _as_float(paper.get("paper_time_s")) if paper else None,
@@ -1871,12 +1858,13 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
                     file=sys.stderr,
                 )
 
-    write_csv(out_root / "kmc3_runs.csv", main_rows, runs_field_order())
+    write_csv(out_root / "kmc3_runs.csv", main_rows, prune_empty_fields(runs_xlsx, runs_field_order()))
     if gm_lut_xlsx:
         attach_summary_lex_ratios(gm_lut_xlsx)
         gm_lut_csv_fields = prune_empty_fields(gm_lut_xlsx, summary_xlsx_field_order())
         write_csv(out_root / "kmc3_gm_lut.csv", gm_lut_xlsx, gm_lut_csv_fields)
-    write_csv(out_root / "kmc3_summary.csv", summary, summary_field_order())
+    attach_summary_lex_ratios(summary_xlsx)
+    write_csv(out_root / "kmc3_summary.csv", summary_xlsx, prune_empty_fields(summary_xlsx, summary_xlsx_field_order()))
     write_csv(out_root / "kmc3_orders.csv", orders_xlsx, orders_field_order(orders_datasets), unified=True)
     if vs_paper:
         write_csv(out_root / "kmc3_vs_paper.csv", vs_paper, vs_paper_field_order())
@@ -1894,7 +1882,6 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     orders_fields = orders_field_order(orders_datasets)  # complete by check_orders_complete
     datasets_fields = prune_empty_fields(datasets_xlsx, datasets_field_order())
     sheets = [
-        make_sheet("overview", overview_rows(), overview_field_order()),
         make_sheet("orders", orders_xlsx, orders_fields),
         make_sheet("datasets", datasets_xlsx, datasets_fields),
         make_sheet("summary", summary_xlsx, summary_fields, footer_rows=summary_footer),
@@ -1906,6 +1893,8 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     sheets.append(make_sheet("runs", runs_xlsx, runs_fields))
     sheets.append(make_sheet("vs_paper", vs_paper, vs_paper_field_order()))
     xlsx_path = xlsx_root / "kmc3_results.xlsx"
+    legend = overview_rows({sh["name"]: sh["fields"] for sh in sheets})
+    sheets.insert(0, make_sheet("overview", legend, overview_field_order()))
     names = write_book(xlsx_path, sheets)
     print(f"wrote {xlsx_path} ({len(names)} sheets)")
 

@@ -1,5 +1,11 @@
 # kmc binary resolution, benchmark runs, and export dispatch
 
+# wait_low_load: block until the (shared) machine is quiet before each timed kmc invocation
+# (BENCH_LOAD_MAX; BENCH_WAIT_LOW_LOAD=0 disables; benchmark/common/wait_low_load.sh).
+source "${BASH_SOURCE[0]%/*}/../../common/wait_low_load.sh"
+# bench_pin_cpus: taskset the timed kmc invocation to $THREADS least-busy CPUs (benchmark/common/pin_cpus.sh; pinning is not optional)
+source "${BASH_SOURCE[0]%/*}/../../common/pin_cpus.sh"
+
 # Elapsed seconds between two $EPOCHREALTIME samples ("sec.usec" strings),
 # formatted like the `%.6f` this replaced -- pure bash, no subprocess.
 wall_time_delta() {
@@ -157,16 +163,19 @@ run_one() {
   fi
   kmc_cmd+=("@$lst" "$db_prefix" "$tmp")
 
+  local t0 wall rc cmd_file
+  cmd_file="$(mktemp)"
+  wait_low_load
+  bench_pin_cpus "$THREADS"
+  printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus.txt"
   if [[ -x "$TIME_BIN" ]]; then
-    wrapped=("$TIME_BIN" -v -o "$time_path" "${kmc_cmd[@]}")
+    wrapped=("$TIME_BIN" -v -o "$time_path" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${kmc_cmd[@]}")
   else
     echo "warning: $TIME_BIN missing; wall time from KMC JSON only" >&2
-    wrapped=("${kmc_cmd[@]}")
+    wrapped=(${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${kmc_cmd[@]}")
   fi
 
   printf '%s\n' "${wrapped[*]}"
-  local t0 wall rc cmd_file
-  cmd_file="$(mktemp)"
   printf '%s\n' "${wrapped[@]}" >"$cmd_file"
   t0="$EPOCHREALTIME"
   set +e
@@ -223,6 +232,8 @@ run_one() {
   META_CMD_FILE="$cmd_file" \
   bench_py meta
 
+  rm -f "$cmd_file"
+  # kmc temp dir ($run_dir/tmp, on the results filesystem, up to ~32 GB): always removed after the run
   if [[ "$KEEP_TMP" -eq 0 && -d "$tmp" ]]; then
     rm -rf "$tmp"
   fi
@@ -318,7 +329,8 @@ run_schemes() {
           for k in "${k_arr[@]}"; do
             for ((i = 0; i < N_SEEDS; i++)); do
               seed="${BENCH_SEEDS[$i]}"
-              run_one "$(trim "$ds")" "$k" "$kind" default "" "" "" "$i"
+              # DEFAULT_REPS (env, optional): repeat the default baseline only that many times
+              [[ "$i" -lt "${DEFAULT_REPS:-$N_SEEDS}" ]] && run_one "$(trim "$ds")" "$k" "$kind" default "" "" "" "$i"
               run_one "$(trim "$ds")" "$k" "$kind" xor "" "xor_s${seed}" "$seed" "$i"
               run_one "$(trim "$ds")" "$k" "$kind" xor-pcg-hash "" "xor-pcg-hash_s${seed}" "$seed" "$i"
               run_one "$(trim "$ds")" "$k" "$kind" greedymini "$CUSTOM_ORDER" "$(gm_label_for_k "$k")_s${seed}" "$seed" "$i"

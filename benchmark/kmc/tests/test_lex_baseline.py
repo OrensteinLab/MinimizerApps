@@ -38,13 +38,13 @@ def _lex_row(wall: float, seed_idx: int = 0, *, n_bins: int = 512, threads: int 
         "order": "default",
         "threads": threads,
         "n_bins": n_bins,
-        "mem_limit": 12,
+        "mem_limit_gb": 12,
         "seed_idx": seed_idx,
         "count_wall_s": wall,
         "count_stage1_s": wall * 0.6,
         "count_stage2_s": wall * 0.4,
         "count_stage3_s": 0.0,
-        "disk_gb": 4.0,
+        "tmp_disk_gb": 4.0,
         "n_super_kmers": 120,
         "avg_super_kmer_len": 11.0,
         "density_factor": 2.0,
@@ -87,7 +87,7 @@ def test_repeated_lex_gets_real_mean_and_std():
     summary = summary_xlsx_rows(lex_reps)
     assert len(summary) == 1
     row = summary[0]
-    assert row["n_seeds"] == 5
+    assert row["n_repeats"] == 5
     assert row["count_wall_s_mean"] == 30.0
     assert row["count_wall_s_std"] is not None and row["count_wall_s_std"] > 0
 
@@ -97,7 +97,7 @@ def test_vs_paper_aggregates_lex_repeats():
     out = vs_paper_rows(lex_reps, [], "xeon_hdd")
     assert len(out) == 1, "repeats of the same config must collapse to one vs-paper row"
     row = out[0]
-    assert row["n_seeds"] == 5
+    assert row["n_repeats"] == 5
     assert row["count_wall_s"] == 30.0
     assert row["count_wall_s_std"] is not None and row["count_wall_s_std"] > 0
 
