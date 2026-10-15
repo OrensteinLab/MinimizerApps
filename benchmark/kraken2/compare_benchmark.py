@@ -95,6 +95,40 @@ def parse_time_file(path):
     return wall_s, rss_gb
 
 
+def parse_time_io(path):
+    """(major page faults, file-system reads in decimal GB) of a GNU `time -v` log: the disk I/O the
+    step needed (~0 = served from the page cache). 'File system inputs' counts 512-byte blocks."""
+    if not os.path.isfile(path):
+        return None, None
+    with open(path) as f:
+        text = f.read()
+    m = re.search(r"Major \(requiring I/O\) page faults:\s*(\d+)", text)
+    major = int(m.group(1)) if m else None
+    m = re.search(r"File system inputs:\s*(\d+)", text)
+    read_gb = units.gb_from_blocks(int(m.group(1))) if m else None
+    return major, read_gb
+
+
+def read_cpu_list(path):
+    """First line of a pinned-CPU list file (cpus_build.txt / *_cpus.txt), or None when absent/empty."""
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        line = f.readline().strip()
+    return line or None
+
+
+def parse_time_cpu(path):
+    """User + system CPU seconds (all threads) of a GNU `time -v` log, or None."""
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        text = f.read()
+    u = re.search(r"User time \(seconds\):\s*([0-9.]+)", text)
+    sy = re.search(r"System time \(seconds\):\s*([0-9.]+)", text)
+    return round(float(u.group(1)) + float(sy.group(1)), 2) if u and sy else None
+
+
 def parse_processing_s(path):
     """Seconds of the classify "N sequences (X Mbp) processed in S s" line (the
     classification itself, without loading the database), or None."""
@@ -534,7 +568,13 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
 
     cf = perf_path(out, dataset, mhg)
     class_s, class_gb = parse_time_file(cf)
+    b_cpu = parse_time_cpu(resolve_build_performance_path(out))
+    c_cpu = parse_time_cpu(cf)
+    b_major, b_read_gb = parse_time_io(resolve_build_performance_path(out))
+    c_major, c_read_gb = parse_time_io(cf)
     proc_s = parse_processing_s(cf)
+    build_pinned = read_cpu_list(os.path.join(out, "cpus_build.txt"))
+    class_pinned = read_cpu_list(os.path.splitext(cf)[0] + "_cpus.txt")
     n_reads, n_class = parse_classify_counts(cf)
     db_load_s = None
     if class_s is not None and proc_s is not None:
@@ -579,8 +619,16 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "minimum_hit_groups": mhg,
         "build_s": bw,
         "build_gb": br,
+        "build_cpu_s": b_cpu,
+        "class_cpu_s": c_cpu,
+        "build_major_pf": b_major,
+        "build_read_gb": b_read_gb,
+        "class_major_pf": c_major,
+        "class_read_gb": c_read_gb,
         "class_s": class_s,
         "db_load_s": db_load_s,
+        "build_pinned_cpus": build_pinned,
+        "classify_pinned_cpus": class_pinned,
         "class_proc_s": proc_s,
         "class_gb": class_gb,
         "mrd_min": speed,
@@ -840,7 +888,7 @@ def summarize_strain_exclusion(labeled_rows):
         "minimum_hit_groups",
         "domain",
         "rank",
-        "n_seeds",
+        "n_repeats",
         "sensitivity_mean",
         "sensitivity_std",
         "ppv_mean",
@@ -859,7 +907,7 @@ def summarize_strain_exclusion(labeled_rows):
             "minimum_hit_groups": key[1],
             "domain": key[2],
             "rank": key[3],
-            "n_seeds": len(ms),
+            "n_repeats": len(ms),
         }
         for k in S1_METRICS:
             mu, sd = mean_std(
@@ -892,7 +940,7 @@ def summarize_argos_concordance(argos_rows):
         if not _argos_genus_headline(row):
             continue
         by_scheme[scheme].append(row)
-    fields = ["scheme", "minimum_hit_groups", "n_seeds", "n_experiments"] + [
+    fields = ["scheme", "minimum_hit_groups", "n_repeats", "n_experiments"] + [
         x
         for k in ARGOS_FOUR
         for x in (k.replace("_frac", "_mean"), k.replace("_frac", "_std"))
@@ -903,7 +951,7 @@ def summarize_argos_concordance(argos_rows):
         rec = {
             "scheme": scheme[0],
             "minimum_hit_groups": scheme[1],
-            "n_seeds": len(ms),
+            "n_repeats": len(ms),
             "n_experiments": len(n_exp_by_scheme.get(scheme) or ()),
         }
         for k in ARGOS_FOUR:
@@ -922,7 +970,7 @@ def _summarize_by(rows, key_fields, metrics):
     groups = defaultdict(list)
     for row in rows:
         groups[tuple(row.get(k) if row.get(k) is not None else "" for k in key_fields)].append(row)
-    fields = list(key_fields) + ["n_seeds"] + [
+    fields = list(key_fields) + ["n_repeats"] + [
         x for m in metrics for x in (m + "_mean", m + "_std")
     ]
     out = []
@@ -932,7 +980,7 @@ def _summarize_by(rows, key_fields, metrics):
     ):
         ms = groups[key]
         rec = dict(zip(key_fields, key))
-        rec["n_seeds"] = len(ms)
+        rec["n_repeats"] = len(ms)
         for m in metrics:
             mu, sd = mean_std([float(r[m]) for r in ms if r.get(m) not in ("", None)])
             rec[m + "_mean"] = mu

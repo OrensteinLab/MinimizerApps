@@ -235,10 +235,10 @@ results/
   classified once per `--minimum-hit-groups` value (0 = paper setting, 2 = k2
   default), so the classify-side sheets (`summary`, `runs`, `profile`,
   `vs_reference`, the four `accuracy_*`) carry `minimum_hit_groups` as an
-  app-parameter column (after `mod_t`, before `n_seeds` / `seed_idx`; column order: dataset, order, app parameter, seed, metrics) / slice key and are sorted dataset → minimum_hit_groups →
+  app-parameter column (after `mod_t`, before `n_repeats` / `seed_idx`; column order: dataset, order, app parameter, seed, metrics) / slice key and are sorted dataset → minimum_hit_groups →
   order; `build` / `build_runs` do not (building is independent of it). The
   replicates are the seeds (one classify run each; no repeats, no cold round),
-  so `_std` is across seeds. Sheets, in order:
+  so `_std` is across seeds; `n_repeats` = number of runs (repeats) aggregated into the row's mean / std. `runs` and `build_runs` also carry I/O telemetry (`build_major_pagefaults`, `build_read_gb`, `classify_major_pagefaults`, `classify_read_gb`; runs-only, not in `build` / `summary`) and, in a `telemetry` band at the end, the text columns `build_pinned_cpus` (`cpus_build.txt`) and `classify_pinned_cpus` (`classification_performance_<dataset>_mhg<n>_cpus.txt`): every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (`benchmark/common/pin_cpus.sh`); blank when the file is absent. The `overview` legend only lists sheets and columns that exist in the workbook. Sheets, in order:
 
   | Sheet | Rows |
   |---|---|
@@ -246,9 +246,9 @@ results/
   | `libraries` | one per Kraken library: sequences, taxa, FASTA GB, role, query sets and orders run |
   | `datasets` | one per query set: reads, read length, `truth` (simulated / real), `scoring`, provenance, libraries |
   | `orders` | one per (order variant, `k`, `w`, `L`), columns `order, k, w, L, gm_k, projection, gm_table, mod_t, description, cli`, then `sketching, rank_order, minimizer_spaces, spaced_seed_mask`, then the density factors; unified names: `k` = minimizer length (the kraken2 option `l`, 31), `w` = window (5), `L` = k + w - 1 = kraken2's own k-mer length (35); no empty cells (the export fails if an order lacks density rows): CLI, density factors (`expected_density_factor_mean/_std`, and per library `<library>_particular_density_factor_mean/_std`; also on `build`), `gm_table` (`w5_k15_canonical` / `w5_k6_canonical`), spaced seed. Orders are shown by short name (`greedymini`, `mod-minimizer-greedymini`; the table is in `gm_table`) |
-  | `build` | library × order, mean / std / ratio over seeds, columns in the SSHash order (id / params, density, minimizers, space, build): `expected_density_factor`, `particular_density_factor`, `distinct_minimizers` (the `size` field of the `hash.k2d` header), then `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `particular_density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
+  | `build` | library × order, mean / std / ratio over seeds, columns in the SSHash order (id / params, density, minimizers, space, build): `expected_density_factor`, `density_factor`, `distinct_minimizers` (the `size` field of the `hash.k2d` header), then `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
   | `build_runs` | the per-seed rows behind `build` (same split as `summary` / `runs` in the sshash / kmc apps) |
-  | `summary` | library × dataset × `minimum_hit_groups` × order, classify phase only; right after the identity columns (`library, dataset, order, gm_k, projection, gm_table, mod_t, minimum_hit_groups, n_seeds`) the order's density factors and `distinct_minimizers` (repeated for every dataset / `minimum_hit_groups` block), then the classify columns: `classify_wall_s` (= `db_load_s` + `classify_processing_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
+  | `summary` | library × dataset × `minimum_hit_groups` × order, classify phase only; right after the identity columns (`library, dataset, order, gm_k, projection, gm_table, mod_t, minimum_hit_groups, n_repeats`) the order's density factors and `distinct_minimizers` (repeated for every dataset / `minimum_hit_groups` block), then the classify columns: `classify_wall_s` (= `classify_load_s` + `classify_run_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
   | `runs` | one per seed × library × dataset × order, the rows behind `summary`: the raw numbers of the single classify run of that seed |
   | `profile` | NextMinimizer / phase profile (`nextminimizer_*`, `lookups_per_mbp`, `scan_s`, ...; needs `ENABLE_MINIMIZER_PROF=1`), library × dataset × `minimum_hit_groups` × order, mean / std / ratio; only present when `nextminimizer_timing_<dataset>_mhg<m>.txt` files exist (PROF builds) |
   | `vs_reference` | paired agreement with `xor` of the same seed, dataset and `minimum_hit_groups` (`genus_mape_pct`, `concordance_pct`, `jaccard_pct`, ...), mean / std |
@@ -258,7 +258,7 @@ results/
   Under the data of `build` and `summary` two rows, as in the SSHash summary
   sheet: `correlation with density` and `correlation with distinct minimizers`.
   Every `*_ratio` column holds a live `IFERROR(CORREL(<reference ratio column>,
-  <this column>),"")` over all data rows (reference: `particular_density_factor_ratio`
+  <this column>),"")` over all data rows (reference: `density_factor_ratio`
   resp. `distinct_minimizers_ratio`), with the computed value cached next to the
   formula. `build` has 5 rows (n = 5, in the label); in `summary` the density
   and minimizer values repeat per dataset / `minimum_hit_groups` block, so the
@@ -461,6 +461,17 @@ the same tool through `density_sweep.sh` + `density_summary.py`; the exact
 commands and the measured greedymini tables are in
 [`../../kraken2/minimizers/README.md`](../../kraken2/minimizers/README.md#density).
 Raw sweep rows: `tables/gm_centre_density_*.csv`.
+
+## Measurement protocol
+
+Every build and classify is timed under the protocol in [`../README.md`](../README.md): quiet-machine wait,
+`taskset` pinning (build: `--threads` cores + 2 spare; classify, which is `--threads 1`: 2 + 2 spare = 4 cores; one NUMA
+node, one thread per core; lists in `cpus_build.txt` and `classification_performance_<dataset>_mhg<n>_cpus.txt`,
+exported as `build_pinned_cpus` / `classify_pinned_cpus`) and per-step wall, CPU (`build_cpu_s`,
+`classify_cpu_s`), RSS, major page faults and reads (`*_major_pagefaults`, `*_read_gb`, runs sheets only).
+Classify wall time splits into `classify_load_s` (database load) and `classify_run_s` (the reads); compare
+orders on `classify_run_s`. kraken2 has no native run: the reference order is `xor`. `experiments/full_run.sh`
+is the full run (5 seeds, 35 databases of about 9.4 GB each).
 
 ## Notes
 

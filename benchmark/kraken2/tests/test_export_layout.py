@@ -5,6 +5,7 @@ multi-library merge, on synthetic per-run numbers (no database needed).
 """
 
 import os
+import re
 import shutil
 from collections import OrderedDict
 import struct
@@ -148,7 +149,7 @@ class ExportLayout(unittest.TestCase):
 
     def test_no_old_names_or_repeat_columns(self):
         run_root, (xlsx, tdir, tables) = self.lib()
-        banned = ("repeat", "build_measured", "n_classify")
+        banned = ("_repeat_", "build_measured", "n_classify")
         for name, (fields, rows) in tables.items():
             for f in fields:
                 self.assertFalse(any(b in f for b in banned), (name, f))
@@ -162,6 +163,29 @@ class ExportLayout(unittest.TestCase):
             text = " ".join(str(x) for x in r.values())
             for old in ("build_measured", "_repeat_std", "n_classify", "RandomXor", "ModRandom", "GreedyMini_w"):
                 self.assertNotIn(old, text)
+
+    def test_legend_matches_sheets(self):
+        run_root, (xlsx, tdir, tables) = self.lib()
+        leg = tables["overview"][1]
+        for sheet in ("build", "build_runs", "summary", "runs", "profile", "vs_reference"):
+            if sheet not in tables:
+                continue
+            for f in tables[sheet][0]:
+                base = re.sub(r"_(mean|std|ratio)$", "", f)
+                if f in E.ID or base in ("library", "dataset", "minimum_hit_groups", "n_repeats", "run_id",
+                                         "seed_idx", "seed", "gm_k", "projection", "gm_table", "mod_t"):
+                    continue
+                self.assertTrue(any(sheet in r["sheet"].split("/") and base in re.split(r" / |, ", r["column"])
+                                    for r in leg), (sheet, f))
+        # no legend row for a sheet that is not in the workbook
+        for r in leg:
+            for sh in r["sheet"].split("/"):
+                if sh in E.SHEETS:
+                    self.assertIn(sh, tables, r["column"])
+        # no pre-spec names left in the legend
+        text = " ".join(" ".join(map(str, r.values())) for r in leg)
+        for old in ("n_seeds", "db_load_s", "classify_processing_s", "least-busy"):
+            self.assertNotIn(old, text)
 
     def test_build_once_per_library_order(self):
         run_root, (xlsx, tdir, tables) = self.lib()
@@ -180,7 +204,11 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(sorted(r["order"] for r in build), sorted(SHORT))
         for sheet in ("summary", "runs"):
             for f in tables[sheet][0]:
-                self.assertFalse(f.startswith(("build_", "index_size", "rank_")), (sheet, f))
+                self.assertFalse(f.startswith(("build_", "index_size", "rank_")) and f != "build_pinned_cpus", (sheet, f))
+        self.assertEqual(tables["runs"][0][-2:], ["build_pinned_cpus", "classify_pinned_cpus"])
+        self.assertEqual(tables["build_runs"][0][-1], "build_pinned_cpus")
+        for sheet in ("build", "summary"):
+            self.assertFalse([f for f in tables[sheet][0] if "pagefaults" in f or "read_gb" in f], sheet)
 
     def test_column_order_density_first(self):
         run_root, (xlsx, tdir, tables) = self.lib()
@@ -189,7 +217,7 @@ class ExportLayout(unittest.TestCase):
             fields = tables[sheet][0]
             i = ids[sheet]
             names = [f.replace("_mean", "") for f in fields[i:] if not f.endswith(("_std", "_ratio"))]
-            self.assertEqual(names[:3], ["expected_density_factor", "particular_density_factor", "distinct_minimizers"], sheet)
+            self.assertEqual(names[:3], ["expected_density_factor", "density_factor", "distinct_minimizers"], sheet)
             if sheet.startswith("build"):
                 self.assertEqual(names[3:6], ["index_size_gb", "build_wall_s", "build_max_rss_gb"])
             else:
@@ -240,26 +268,26 @@ class ExportLayout(unittest.TestCase):
             self.assertEqual([f["label"].split(" (")[0] for f in footer],
                              ["correlation with density", "correlation with distinct minimizers"])
             n = len(rows)
-            dcol = E.col_letter(fields.index("particular_density_factor_ratio") + 1)
+            dcol = E.col_letter(fields.index("density_factor_ratio") + 1)
             cells = dict((f, (fm, cv)) for f, fm, cv in footer[0]["cells"])
             self.assertEqual(set(cells), set(f for f in fields if f.endswith("_ratio")))
-            fm, cv = cells["particular_density_factor_ratio"]
+            fm, cv = cells["density_factor_ratio"]
             self.assertEqual(fm, 'IFERROR(CORREL($%s$3:$%s$%d,%s$3:%s$%d),"")' % (dcol, dcol, n + 2, dcol, dcol, n + 2))
             self.assertEqual(cv, 1.0)
             # cached value: Pearson r over the pairs where both cells are numbers
             col = "distinct_minimizers_ratio"
-            pairs = [(r["particular_density_factor_ratio"], r[col]) for r in rows
-                     if r.get("particular_density_factor_ratio") is not None and r.get(col) is not None]
+            pairs = [(r["density_factor_ratio"], r[col]) for r in rows
+                     if r.get("density_factor_ratio") is not None and r.get(col) is not None]
             self.assertAlmostEqual(cells[col][1], round(E._pearson([a for a, _ in pairs], [b for _, b in pairs]), 4), places=4)
             for fr in flat:
                 self.assertEqual(fr["sheet"], sheet)
         self.assertIn("(n = 4)", E.correlation_rows("build", *tables["build"])[0][0]["label"])
         # blanks are skipped pairwise; constant column -> no value
-        fields = ["library", "particular_density_factor_ratio", "x_ratio", "y_ratio"]
-        rows = [{"particular_density_factor_ratio": 1.0, "x_ratio": 1.0, "y_ratio": 2.0},
-                {"particular_density_factor_ratio": 2.0, "x_ratio": None, "y_ratio": 2.0},
-                {"particular_density_factor_ratio": 3.0, "x_ratio": 3.0, "y_ratio": 2.0},
-                {"particular_density_factor_ratio": 4.0, "x_ratio": 4.0, "y_ratio": 2.0}]
+        fields = ["library", "density_factor_ratio", "x_ratio", "y_ratio"]
+        rows = [{"density_factor_ratio": 1.0, "x_ratio": 1.0, "y_ratio": 2.0},
+                {"density_factor_ratio": 2.0, "x_ratio": None, "y_ratio": 2.0},
+                {"density_factor_ratio": 3.0, "x_ratio": 3.0, "y_ratio": 2.0},
+                {"density_factor_ratio": 4.0, "x_ratio": 4.0, "y_ratio": 2.0}]
         _f, flat = E.correlation_rows("summary", fields, rows)
         v = dict((r["column"], r) for r in flat if r["row_label"] == "correlation with density")
         self.assertEqual(v["x_ratio"]["n"], 3)
@@ -289,24 +317,24 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(f[:9], ["run_id", "library", "dataset", "order", "gm_k",
                                  "projection", "gm_table", "mod_t", "minimum_hit_groups"])
         self.assertEqual(tables["summary"][0][:9], ["library", "dataset", "order", "gm_k",
-                                                    "projection", "gm_table", "mod_t", "minimum_hit_groups", "n_seeds"])
+                                                    "projection", "gm_table", "mod_t", "minimum_hit_groups", "n_repeats"])
         g = [r for r in runs if r["order"] == "greedymini"][0]
         self.assertEqual((g["gm_k"], g["projection"], g["gm_table"], g["mod_t"]),
                          (15, "at0-cg1", "w5_k15_canonical", None))
         self.assertEqual(g["run_id"].split("/")[1:3], ["greedymini", "k15_at0-cg1"])
         m = [r for r in runs if r["order"] == "mod-minimizer-xor"][0]
         self.assertEqual((m["gm_k"], m["projection"], m["mod_t"]), (None, None, 6))
-        for c in ("db_load_s", "classify_processing_s", "classify_wall_s", "classify_max_rss_gb"):
+        for c in ("classify_load_s", "classify_run_s", "classify_wall_s", "classify_max_rss_gb"):
             self.assertIn(c, f)
-        self.assertLess(f.index("classify_wall_s"), f.index("db_load_s"))
+        self.assertLess(f.index("classify_wall_s"), f.index("classify_load_s"))
         r0 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["order"] == "xor"
               and r["minimum_hit_groups"] == 0][0]
         self.assertAlmostEqual(r0["classify_wall_s_mean"], 2.2, places=6)    # seeds 1..3 -> 2.1 2.2 2.3
         self.assertAlmostEqual(r0["classify_wall_s_std"], 0.1, places=6)
-        self.assertAlmostEqual(r0["db_load_s_mean"], 1.1, places=6)
-        self.assertAlmostEqual(r0["classify_processing_s_mean"], 1.1, places=6)
+        self.assertAlmostEqual(r0["classify_load_s_mean"], 1.1, places=6)
+        self.assertAlmostEqual(r0["classify_run_s_mean"], 1.1, places=6)
         self.assertEqual(r0["classify_wall_s_ratio"], 1.0)
-        self.assertEqual(r0["n_seeds"], 3)
+        self.assertEqual(r0["n_repeats"], 3)
         r2 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["order"] == "xor"
               and r["minimum_hit_groups"] == 2][0]
         self.assertAlmostEqual(r2["classify_wall_s_mean"], 22.2, places=6)
@@ -363,12 +391,12 @@ class ExportLayout(unittest.TestCase):
             self.assertNotIn(neutral + "_ratio", fields)
         for directional in ("genus_f1", "species_ppv", "genus_discordant_fraction",
                             "classify_mreads_per_min",
-                            "db_load_s", "classify_processing_s"):
+                            "classify_load_s", "classify_run_s"):
             self.assertIn(directional + "_ratio", fields)
         spec = E.sheet_spec("summary", fields, tables["summary"][1])
         self.assertEqual(spec["ratio_fields"]["genus_f1_ratio"], "higher")
         self.assertEqual(spec["ratio_fields"]["genus_discordant_fraction_ratio"], "lower")
-        self.assertEqual(spec["ratio_fields"]["db_load_s_ratio"], "lower")
+        self.assertEqual(spec["ratio_fields"]["classify_load_s_ratio"], "lower")
         self.assertNotIn("classified_pct_ratio", spec["ratio_fields"])
         cats = E._categories("summary", fields)
         self.assertEqual(cats[fields.index("genus_f1_mean")], E.BAND_READ)
@@ -420,20 +448,20 @@ class ExportLayout(unittest.TestCase):
             self.assertEqual(set(r["minimum_hit_groups"] for r in rows), set(MHGS))
             self.assertEqual(fields[:2], ["library", "dataset"])
             self.assertLess(fields.index("order"), fields.index("minimum_hit_groups"))
-            self.assertEqual(fields.index("n_seeds"), fields.index("minimum_hit_groups") + 1)
+            self.assertEqual(fields.index("n_repeats"), fields.index("minimum_hit_groups") + 1)
             self.assertIn(has, fields)
             self.assertNotIn(hasnt, fields)
             self.assertNotIn("seed_idx", fields)
             self.assertEqual(sorted(set(r["order"] for r in rows)), sorted(SHORT))
         se = tables["accuracy_strain_exclusion"][1]
         self.assertEqual(len(se), 4 * 2 * 3 * 2)           # order x mhg x group x rank
-        self.assertEqual(se[0]["n_seeds"], 3)
+        self.assertEqual(se[0]["n_repeats"], 3)
 
     def test_accuracy_sheets_share_layout(self):
         run_root, (xlsx, tdir, tables) = self.lib()
         sf, sr = tables["accuracy_strain_exclusion"]
         cf, cr = tables["accuracy_cami"]
-        ident = ["library", "dataset", "group", "rank"] + list(order_names.ID_FIELDS) + ["minimum_hit_groups", "n_seeds"]
+        ident = ["library", "dataset", "group", "rank"] + list(order_names.ID_FIELDS) + ["minimum_hit_groups", "n_repeats"]
         self.assertEqual(sf[:len(ident)], ident)
         self.assertEqual(cf[:len(ident)], ident)
         for f in ("domain", "n_mean"):
@@ -510,7 +538,7 @@ class ExportLayout(unittest.TestCase):
         self.assertAlmostEqual(r["difference"], round(0.702 - 0.9396, 6))
         self.assertEqual(r["within_tolerance"], "no")
         self.assertEqual(r["tolerance"], E.PAPER_TOLERANCE)
-        self.assertEqual(r["n_seeds"], 3)
+        self.assertEqual(r["n_repeats"], 3)
         r = by[("S5", None, "concordant")]
         self.assertAlmostEqual(r["ours"], 0.88)
         self.assertEqual(r["n_experiments"], 1)
@@ -523,7 +551,7 @@ class ExportLayout(unittest.TestCase):
                                    ("concordant", "discordant", "ancestor", "unclassified")), 1.0, places=5)
         # within tolerance / not in repo / missing
         base = {"accuracy_strain_exclusion": [dict(library="strain_exclusion", order="xor", minimum_hit_groups=0,
-                                                   rank="genus", group="prokaryote", n_seeds=5,
+                                                   rank="genus", group="prokaryote", n_repeats=5,
                                                    f1_mean=0.9650, f1_std=0.001)]}
         pubs = [dict(table="S1", row="Kraken 2", domain="prokaryote", rank="genus", metric="f1", value=0.9657),
                 dict(table="S1", row="Kraken 2", domain="virus", rank="genus", metric="f1", value=None),

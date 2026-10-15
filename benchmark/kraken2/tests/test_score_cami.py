@@ -185,7 +185,7 @@ class ScoreCamiTest(unittest.TestCase):
             rows.append({"scheme": "Random", "group": "all", "rank": "genus", "seed_idx": seed,
                          "sensitivity": 0.5, "ppv": 0.9, "f1": f1, "excluded_frac": 0.1, "n_scored": 100})
         fields, out = compare_benchmark.summarize_cami(rows)
-        self.assertEqual(out[0]["n_seeds"], 2)
+        self.assertEqual(out[0]["n_repeats"], 2)
         self.assertAlmostEqual(out[0]["f1_mean"], 0.7)
         self.assertIn("excluded_frac_mean", fields)
 

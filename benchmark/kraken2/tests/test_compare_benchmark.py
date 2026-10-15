@@ -55,6 +55,11 @@ class Compare(unittest.TestCase):
         self.assertAlmostEqual(m["cls_pct"], 19.03)
         self.assertAlmostEqual(m["mrd_min"], 0.02 / (0.236 / 60.0))
         self.assertEqual(m["minimum_hit_groups"], 0)
+        self.assertIsNone(m["build_pinned_cpus"])
+        self.write("cpus_build.txt", "0-5,64-69\n")
+        self.write("classification_performance_cami_mhg0_cpus.txt", "0,64\n")
+        m = C.collect_run_metrics(run, 1e-6, {1: run}, "cami", 0)
+        self.assertEqual((m["build_pinned_cpus"], m["classify_pinned_cpus"]), ("0-5,64-69", "0,64"))
         self.assertFalse([k for k in m if "std" in k or k in ("n_classify", "class_walls")])
         # a PROF-less run has no profile
         self.assertIsNone(m["nextmin_s"])

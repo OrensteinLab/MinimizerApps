@@ -27,6 +27,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/benchmark_setup.sh"
 # shellcheck source=benchmark_interface.sh
 source "${SCRIPT_DIR}/benchmark_interface.sh"
+# wait_low_load: block until the shared machine is quiet before each timed step (database
+# build, classify). BENCH_WAIT_LOW_LOAD=0 disables; see ../common/wait_low_load.sh.
+# shellcheck source=../common/wait_low_load.sh
+source "${SCRIPT_DIR}/../common/wait_low_load.sh"
+# bench_pin_cpus: taskset every timed k2 step to the least-busy CPUs (../common/pin_cpus.sh; pinning is not optional)
+# shellcheck source=../common/pin_cpus.sh
+source "${SCRIPT_DIR}/../common/pin_cpus.sh"
 
 CODEBASE="$(cd "${SCRIPT_DIR}/../../kraken2" && pwd)"
 
@@ -429,7 +436,10 @@ build_database() {
         ln -sfn "${SHARED_DB}/library" "${DB_DIR}/library"
         echo "[*] Building ${SCHEME_CONTEXT} (toggle ${SEED})..."
         local build_output="${OUTPUT_DIR}/build_performance.txt"
-        if ! "${TIME_BIN}" -v "${K2:-k2}" build \
+        wait_low_load
+        bench_pin_cpus "${SCHEME_THREADS}"
+        printf '%s\n' "${BENCH_PIN_LIST}" > "${OUTPUT_DIR}/cpus_build.txt"
+        if ! "${TIME_BIN}" -v ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${K2:-k2}" build \
             --db "${DB_DIR}" \
             --threads "${SCHEME_THREADS}" \
             ${SCHEME_ARGS} \
@@ -507,8 +517,12 @@ classify_once() {
     local r2="$6"
     local mhg="$7"
     rm -f "${nextmin_file}"
+    wait_low_load
+    # classify runs --threads 1 (one worker plus the reader), so it is pinned to 2 CPUs
+    bench_pin_cpus 2
+    printf '%s\n' "${BENCH_PIN_LIST}" > "${time_file%.txt}_cpus.txt"
     env KRAKEN2_MINIMIZER_PROF="${nextmin_file}" \
-        "${TIME_BIN}" -v "${K2:-k2}" classify \
+        "${TIME_BIN}" -v ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${K2:-k2}" classify \
         --db "${DB_DIR}" \
         --threads 1 \
         --paired \
