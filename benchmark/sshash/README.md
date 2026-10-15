@@ -292,11 +292,13 @@ data exists).
 **Shared keys:** `dataset`, `k` (minimizer length, sshash's m), `w` (window), `L` (= k+w-1, sshash's k-mer length), the order variant `order` (`native`/`xor`/`xor-pcg-hash`/`greedymini`/
 `mod-minimizer-xor`/`mod-minimizer-greedymini`), `gm_k`, `projection` (`at0-cg1`/`at1-cg0`),
 `gm_table` (table file stem), `mod_t` (blank where they do not apply), then the app parameters `modality`
-(`canonical`/`regular`, see `-M/--modality`) and, in runs, `threads`, then the seed columns (`n_seeds` in
+(`canonical`/`regular`, see `-M/--modality`) and, in runs, `threads`, then the seed columns (`n_repeats`, the number of runs aggregated into the row's mean/std, in
 aggregated sheets; `seed`, `seed_idx` in runs). Summary, bucket and space rows are grouped by all of these.
 
 **Space:** `n_kmers`, `index_size_gb` (from `build`'s own JSON), `index_disk_gb`
 (`os.path.getsize`, the ground truth), `bits_per_kmer` (`index_disk_gb * 1e9 * 8 / num_kmers`). All sizes and memory are decimal GB (1 GB = 10^9 bytes, `benchmark/common/units.py`); meta.json and the run dirs keep the raw bytes / KiB, converted at export.
+
+**Density:** `density_factor` and `distinct_minimizers` (M, same value as `n_buckets`), `n_minimizer_positions` (runs).
 
 **Build:** `build_wall_s`/`build_max_rss_gb` (GNU time, KiB -> GB), `build_steps_total_s` and
 per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings).
@@ -305,7 +307,7 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 `bench_access_ns`, `bench_iterator_ns` (all `avg_nanosec_per_kmer`).
 
 **Query (secondary, real FASTQ):** `query_wall_s`/`query_max_rss_gb` (GNU time),
-`query_elapsed_ms` (sshash's own), `query_n_kmers`/`query_n_positive_kmers`/`query_n_negative_kmers`.
+`query_run_s` (sshash's own timed query phase, seconds), `query_load_s` (= `query_wall_s - query_run_s`), `query_n_kmers`/`query_n_positive_kmers`/`query_n_negative_kmers`.
 
 **Correctness/equivalence:** `check_ok`, `query_pos_match`, `query_neg_match` (all booleans;
 `export` hard-fails if any is false for any run).
@@ -320,6 +322,17 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this variant's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x order rows. |
 | `space_breakdown` | one row per dataset x order: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
 | `runs` | one row per run (every metric + telemetry, unfiltered) |
+
+## Measurement protocol
+
+Build, bench and query are timed under the protocol in [`../README.md`](../README.md): quiet-machine wait,
+`taskset` pinning (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; lists in `cpus.txt`,
+`cpus_bench.txt`, `cpus_query.txt`, exported as `build_/bench_/query_pinned_cpus`) and per-step wall and CPU
+seconds, RSS, major page faults and reads (runs sheets only). Query wall time splits into `query_load_s`
+(index load and start-up) and `query_run_s` (sshash's own timed queries, seconds). `native` runs once per seed
+like every other order. `experiments/full_run.sh` needs the default-encoding binary
+(`sshash/build/sshash`, `SSHASH_BIN` overrides; a build with the traditional nucleotide encoding cannot run
+GreedyMini).
 
 ## Notes
 

@@ -73,7 +73,7 @@ from scripts.config import gm_table_file
 from scripts.orders import BASELINES, ORDERS, order_dir_name, variant_key
 import order_names as on
 import orders_sheet as osh
-from units import gb_from_bytes, gb_from_kib
+from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 from xlsx_book import DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv, xml_escape
 
@@ -85,7 +85,8 @@ from xlsx_util import col_letter, write_csv as _shared_write_csv, xml_escape
 
 def parse_time_file(path: Path) -> dict:
     """Parse GNU /usr/bin/time -v into elapsed and peak-RSS fields."""
-    out: dict = {"time_elapsed_s": None, "max_rss_kb": None, "user_s": None, "sys_s": None}
+    out: dict = {"time_elapsed_s": None, "max_rss_kb": None, "user_s": None, "sys_s": None,
+                 "major_pagefaults": None, "fs_inputs": None}
     if not path.is_file():
         return out
     text = path.read_text(errors="replace")
@@ -109,7 +110,24 @@ def parse_time_file(path: Path) -> dict:
         elif s.startswith("System time (seconds)"):
             m = re.search(r"([0-9.]+)\s*$", s)
             out["sys_s"] = float(m.group(1)) if m else None
+        elif s.startswith("Major (requiring I/O) page faults"):
+            m = re.search(r"(\d+)\s*$", s)
+            out["major_pagefaults"] = int(m.group(1)) if m else None
+        elif s.startswith("File system inputs"):
+            m = re.search(r"(\d+)\s*$", s)
+            out["fs_inputs"] = int(m.group(1)) if m else None
     return out
+
+
+def cpu_seconds(t: dict) -> float | None:
+    """User + system CPU seconds (all threads) of a parse_time_file() result."""
+    if t.get("user_s") is None or t.get("sys_s") is None:
+        return None
+    return round(t["user_s"] + t["sys_s"], 2)
+
+
+def _read_cpus(path: Path) -> str | None:
+    return (path.read_text().strip() or None) if path.is_file() else None
 
 
 def parse_json_blob(path: Path) -> dict:
@@ -399,19 +417,24 @@ RUN_FIELDS = (
     "threads",
     "seed",
     "seed_idx",
+    # density (the raw minimizer_density stays dropped -- density_factor derives
+    # from it; the occurrence count Z and the repetition factor Z/M are kept
+    # because density fixes Z but M = Z / (Z/M) also depends on the data)
+    "density_factor",
+    "distinct_minimizers",
+    "n_minimizer_positions",
     # space
     "n_kmers",
     "index_size_gb",
     "index_disk_gb",
     "bits_per_kmer",
-    # density (the raw minimizer_density stays dropped -- density_factor derives
-    # from it; the occurrence count Z and the repetition factor Z/M are kept
-    # because density fixes Z but M = Z / (Z/M) also depends on the data)
-    "density_factor",
-    "n_minimizer_positions",
-    "minimizer_positions_per_minimizer",
+    "mphf_bits_per_kmer",
+    "strings_offsets_bits_per_kmer",
+    "strings_bits_per_kmer",
+    "begin_buckets_bits_per_kmer",
     # buckets
     "n_buckets",
+    "minimizer_positions_per_minimizer",
     "avg_bucket_size",
     "max_bucket_size",
     "log2_max_bucket_size",
@@ -425,17 +448,16 @@ RUN_FIELDS = (
     "skew_mphf_v_bits_per_kmer",
     "mid_load_bits_per_kmer",
     "control_codewords_bits_per_kmer",
-    "mphf_bits_per_kmer",
-    "strings_offsets_bits_per_kmer",
-    "strings_bits_per_kmer",
-    "begin_buckets_bits_per_kmer",
     "singleton_bucket_pct",
     "kmers_in_singleton_bucket_pct",
     "heavy_bucket_threshold",
     "expected_bucket_cost",
     # build
     "build_wall_s",
+    "build_cpu_s",
     "build_max_rss_gb",
+    "build_major_pagefaults",
+    "build_read_gb",
     "build_steps_total_s",
     "build_step1_s",
     "build_step2_s",
@@ -444,10 +466,14 @@ RUN_FIELDS = (
     "build_step5_s",
     "build_step6_s",
     "build_step7_s",
-    # query (real FASTQ) -- kept next to build, the other real wall-clock op
+    # query (real FASTQ)
     "query_wall_s",
+    "query_run_s",
+    "query_load_s",
+    "query_cpu_s",
     "query_max_rss_gb",
-    "query_elapsed_ms",
+    "query_major_pagefaults",
+    "query_read_gb",
     "query_n_kmers",
     "query_n_positive_kmers",
     "query_n_negative_kmers",
@@ -473,7 +499,10 @@ RUN_FIELDS = (
     "check_exit_code",
     "bench_exit_code",
     "query_exit_code",
-    "python_wall_s",
+    "harness_wall_s",
+    "build_pinned_cpus",
+    "bench_pinned_cpus",
+    "query_pinned_cpus",
 )
 
 
@@ -596,6 +625,7 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "density_factor": density_fac,
         "n_minimizer_positions": mini["num_minimizer_positions"],
         "minimizer_positions_per_minimizer": positions_per_minimizer,
+        "distinct_minimizers": buckets["num_buckets"],
         "n_buckets": buckets["num_buckets"],
         "avg_bucket_size": avg_bucket_size,
         "max_bucket_size": buckets["max_bucket_size"],
@@ -616,7 +646,11 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "control_codewords_bits_per_kmer": buckets["control_codewords_bits_per_kmer"],
         **bucket_dist,
         "build_wall_s": build_time["time_elapsed_s"],
+        "build_cpu_s": cpu_seconds(build_time),
         "build_max_rss_gb": gb_from_kib(build_time["max_rss_kb"]),
+        # disk I/O of the step (/usr/bin/time -v): major page faults, file-system reads in decimal GB
+        "build_major_pagefaults": build_time["major_pagefaults"],
+        "build_read_gb": gb_from_blocks(build_time["fs_inputs"]),
         "build_steps_total_s": (
             round(_num(build_json.get("total_build_time_in_microsec"), float) / 1_000_000, 6)
             if build_json.get("total_build_time_in_microsec") is not None
@@ -635,8 +669,16 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "bench_access_ns": _num(bench_json.get("access (avg_nanosec_per_kmer)")),
         "bench_iterator_ns": _num(bench_json.get("iterator (avg_nanosec_per_kmer)")),
         "query_wall_s": query_time["time_elapsed_s"],
+        "query_cpu_s": cpu_seconds(query_time),
+        # process time outside the timed queries (index load + start-up): wall time minus the
+        # query phase sshash reports itself, so the load is a separate runtime
+        "query_load_s": (round(query_time["time_elapsed_s"] - _num(query_json.get("elapsed_millisec")) / 1000, 3)
+                         if query_time["time_elapsed_s"] is not None and _num(query_json.get("elapsed_millisec")) is not None else None),
+        "query_run_s": (round(_num(query_json.get("elapsed_millisec")) / 1000, 3)
+                        if _num(query_json.get("elapsed_millisec")) is not None else None),
         "query_max_rss_gb": gb_from_kib(query_time["max_rss_kb"]),
-        "query_elapsed_ms": _num(query_json.get("elapsed_millisec")),
+        "query_major_pagefaults": query_time["major_pagefaults"],
+        "query_read_gb": gb_from_blocks(query_time["fs_inputs"]),
         "query_n_kmers": _num(query_json.get("num_kmers"), int),
         "query_n_positive_kmers": _num(query_json.get("num_positive_kmers"), int),
         "query_n_negative_kmers": _num(query_json.get("num_negative_kmers"), int),
@@ -659,7 +701,11 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "check_exit_code": meta.get("check_exit_code"),
         "bench_exit_code": meta.get("bench_exit_code"),
         "query_exit_code": meta.get("query_exit_code"),
-        "python_wall_s": meta.get("python_wall_s"),
+        "harness_wall_s": meta.get("python_wall_s"),
+        # CPUs each timed step was taskset to (lib/run.sh); empty when the file is absent (older runs)
+        "build_pinned_cpus": _read_cpus(run_dir / "cpus.txt"),
+        "bench_pinned_cpus": _read_cpus(run_dir / "cpus_bench.txt"),
+        "query_pinned_cpus": _read_cpus(run_dir / "cpus_query.txt"),
     }
     return row
 
@@ -712,11 +758,12 @@ def validate_orders_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
 # ---------------------------------------------------------------------------
 
 SUMMARY_METRICS = (
-    # space
-    "bits_per_kmer",
     # density (raw minimizer_density dropped -- density_factor is enough)
     "density_factor",
-    # buckets (n_buckets, M, is also shown in the summary: the correlation rows use it)
+    "distinct_minimizers",
+    # space
+    "bits_per_kmer",
+    # buckets (n_buckets = M also feeds the buckets sheet; the summary shows distinct_minimizers)
     "n_buckets",
     "minimizer_positions_per_minimizer",
     "avg_bucket_size",
@@ -734,10 +781,13 @@ SUMMARY_METRICS = (
     "kmers_in_singleton_bucket_pct",
     # build
     "build_wall_s",
+    "build_cpu_s",
     "build_max_rss_gb",
     # query (real FASTQ) -- kept next to build
     "query_wall_s",
-    "query_elapsed_ms",
+    "query_cpu_s",
+    "query_load_s",
+    "query_run_s",
     "query_extension_pct",
     # bench (sshash's own internal micro-benchmark)
     "bench_positive_ns",
@@ -810,7 +860,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             "L": head.get("L"),
             **{f: head.get(f) for f in on.ID_FIELDS},
             "modality": head["modality"],
-            "n_seeds": len({p.get("seed_idx") for p in parts}),
+            "n_repeats": len({p.get("seed_idx") for p in parts}),
             "n_kmers": head.get("n_kmers"),
         }
         for metric in SUMMARY_METRICS:
@@ -865,12 +915,12 @@ def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None)
 
 
 # Bucket metrics that the summary sheet shows as well as the buckets sheet:
-# the number of distinct minimizers M is a driver of its correlation rows.
-SUMMARY_KEEP_BUCKET_METRICS = frozenset({"n_buckets"})
+# (none: the summary carries distinct_minimizers, the same value as n_buckets, in the density band).
+SUMMARY_KEEP_BUCKET_METRICS: frozenset = frozenset()
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "n_seeds", "n_kmers"]
+    fields = ["dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
     for metric in SUMMARY_METRICS:
         if _METRIC_CATEGORY.get(metric) == "buckets" and metric not in SUMMARY_KEEP_BUCKET_METRICS:
             continue  # shown in the buckets sheet (bucket_field_order), not repeated here
@@ -894,13 +944,13 @@ XLSX_VARIANT_FIELDS = on.ID_FIELDS
 
 _ID_FIELDS = frozenset({
     "run_id", "dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "threads", "seed", "seed_idx",
-    "n_seeds", "n_kmers",
+    "n_repeats", "n_kmers",
 })
 _METRIC_CATEGORY = {
     # space
     "n_kmers": "space", "index_size_gb": "space", "index_disk_gb": "space", "bits_per_kmer": "space",
     # density
-    "density_factor": "density", "n_minimizer_positions": "density",
+    "density_factor": "density", "distinct_minimizers": "density", "n_minimizer_positions": "density",
     "minimizer_positions_per_minimizer": "buckets",
     # buckets
     "n_buckets_in_skew_index": "buckets", "minimizer_positions_in_skew_index": "buckets",
@@ -915,7 +965,8 @@ _METRIC_CATEGORY = {
     "singleton_bucket_pct": "buckets", "kmers_in_singleton_bucket_pct": "buckets",
     "heavy_bucket_threshold": "buckets", "expected_bucket_cost": "buckets",
     # build
-    "build_wall_s": "build", "build_max_rss_gb": "build", "build_steps_total_s": "build",
+    "build_wall_s": "build", "build_cpu_s": "build", "build_max_rss_gb": "build", "build_steps_total_s": "build",
+    "build_major_pagefaults": "build", "build_read_gb": "build",
     "build_step1_s": "build", "build_step2_s": "build", "build_step3_s": "build", "build_step4_s": "build",
     "build_step5_s": "build", "build_step6_s": "build", "build_step7_s": "build",
     # correctness
@@ -923,7 +974,8 @@ _METRIC_CATEGORY = {
     # bench (sshash's own internal micro-benchmark)
     "bench_positive_ns": "bench", "bench_negative_ns": "bench", "bench_access_ns": "bench", "bench_iterator_ns": "bench",
     # query (real FASTQ)
-    "query_wall_s": "query", "query_max_rss_gb": "query", "query_elapsed_ms": "query",
+    "query_wall_s": "query", "query_cpu_s": "query", "query_max_rss_gb": "query", "query_run_s": "query",
+    "query_load_s": "query", "query_major_pagefaults": "query", "query_read_gb": "query",
     "query_n_kmers": "query", "query_n_positive_kmers": "query", "query_n_negative_kmers": "query",
     "query_n_searches": "query", "query_n_extensions": "query", "query_extension_pct": "query",
     "query_n_skipped_singleton_lookups": "query", "query_n_bucket_cache_hits": "query",
@@ -931,7 +983,8 @@ _METRIC_CATEGORY = {
     # telemetry
     "sshash_version": "telemetry", "host": "telemetry", "build_exit_code": "telemetry",
     "check_exit_code": "telemetry", "bench_exit_code": "telemetry", "query_exit_code": "telemetry",
-    "python_wall_s": "telemetry",
+    "harness_wall_s": "telemetry", "build_pinned_cpus": "telemetry", "bench_pinned_cpus": "telemetry",
+    "query_pinned_cpus": "telemetry",
 }
 
 
@@ -984,7 +1037,7 @@ BUCKET_COLORED_RATIOS = frozenset({
 
 
 def _bucket_field_category(field: str) -> str:
-    if field in ("dataset", *on.ID_FIELDS, "modality", "n_seeds", "n_kmers"):
+    if field in ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"):
         return "id / params"
     base = field
     for suffix in ("_mean", "_std", "_ratio"):
@@ -1004,10 +1057,9 @@ def sheet_categories(raw_name: str, fields: Sequence[str]) -> list[str] | None:
     if raw_name == "space_breakdown":
         return [_space_field_category(f) for f in fields]
     if raw_name == "summary":
-        # n_buckets (M) next to the density column, as its own group
-        return ["minimizers" if f.startswith("n_buckets_") else _field_category(f) for f in fields]
-    if raw_name == "runs":
         return [_field_category(f) for f in fields]
+    if raw_name == "runs":
+        return ["space" if f == "n_kmers" else _field_category(f) for f in fields]
     if raw_name == "orders":
         return [_orders_field_category(f) for f in fields]
     if raw_name == "overview":
@@ -1038,7 +1090,7 @@ def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
 # dimensionless, so rows of different datasets are comparable.
 CORRELATION_DRIVERS = (
     ("correlation with density", "density_factor_ratio"),
-    ("correlation with distinct minimizers", "n_buckets_ratio"),
+    ("correlation with distinct minimizers", "distinct_minimizers_ratio"),
 )
 # The buckets sheet gets one such row, for its tag and light-array space ratios.
 BUCKET_CORRELATION_DRIVERS = (("correlation with distinct minimizers", "n_buckets_ratio"),)
@@ -1210,32 +1262,53 @@ def overview_rows() -> list[dict]:
         row("all", "mod_t", "t-mer length of the mod-minimizer orders (--mod-t): 4 + (m - 4) mod w for mod-minimizer-xor, the table's gm_k for mod-minimizer-greedymini; blank otherwise"),
         row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order; the app parameter, listed after the order columns (then threads in runs) and before the seed columns."),
         row("all", "n_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
-        row("summary", "n_seeds", "number of seed repeats aggregated into this row's mean/std"),
+        row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats only measure timing noise"),
+        row("summary/runs", "build_cpu_s / query_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / query step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
+        row("runs", "build_pinned_cpus / bench_pinned_cpus / query_pinned_cpus", "Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in {step}_pinned_cpus (run dir cpus.txt / cpus_bench.txt / cpus_query.txt; empty when the file is absent)"),
+        row("summary/runs", "query_run_s", "the timed query phase in seconds, as sshash reports it itself (elapsed_millisec / 1000); query_wall_s = query_load_s + query_run_s"),
+        row("runs", "harness_wall_s", "wall seconds of the whole harness run of this configuration (build + check + bench + query; meta.json python_wall_s), not a benchmark metric"),
+        row("runs", "build_wall_s / build_steps_total_s / build_step1_s .. build_step7_s", "build_wall_s = wall seconds of the whole sshash build process (/usr/bin/time -v); build_steps_total_s = sshash's own total_build_time_in_microsec / 1e6; build_step1_s .. build_step7_s = sshash's per-step build times in seconds (1 encode strings, 2 minimizer tuples, 3 merge tuples, 4 build MPHF, 5 replace minimizers by MPHF hashes, 6 merge minimizer tuples, 7 sparse and skew index)"),
+        row("runs", "run_id", "run directory of this row relative to the runs root (dataset/order variant/seed)"),
+        row("runs", "threads / seed / seed_idx", "threads = sshash -t of the run; seed = the order's seed value, seed_idx = the repeat index (0-based) it was run for"),
+        row("runs", "check_ok", "sshash check (the built index against the input) passed"),
+        row("runs", "host / sshash_version", "machine the run was made on and the sshash build (git version) that ran it"),
+        row("runs", "build_exit_code / check_exit_code / bench_exit_code / query_exit_code", "exit status of that step (0 = ok)"),
+        row("runs", "query_n_kmers / query_n_positive_kmers / query_n_negative_kmers", "k-mers sshash queried in the FASTQ run, and how many were found / not found"),
+        row("runs", "query_n_searches / query_n_extensions / query_extension_pct", "sshash query's own counters: full lookups, and lookups answered by extending the previous hit (the streaming shortcut); query_extension_pct = extensions as a share of all k-mers"),
+        row("runs", "query_n_skipped_singleton_lookups / query_n_bucket_cache_hits", "sshash query's counters: lookups that skipped the offsets access (singleton bucket) and lookups served from its bucket cache"),
+        row("runs", "bench_iterator_ns", "sshash bench: average nanoseconds per k-mer of iterating over the whole index (runs only; positive/negative/access are also in the summary)"),
+        row("runs", "mphf_bits_per_kmer / strings_offsets_bits_per_kmer / strings_bits_per_kmer / begin_buckets_bits_per_kmer", "bits per k-mer of the index component, from the build log's SPACE BREAKDOWN (see the space_breakdown sheet): the MPHF, the offsets into the strings, the strings (2 bits/base), and begin_buckets_of_size"),
+        row("runs", "max_bucket_size / log2_max_bucket_size", "occurrences of the largest bucket and its log2 (build log)"),
+        row("summary/runs", "query_load_s", "query_wall_s minus query_run_s: process time outside the timed query phase (index load + start-up), reported as its own runtime"),
+        row("runs", "build_major_pagefaults / build_read_gb / query_major_pagefaults / query_read_gb", "disk I/O each timed step needed (/usr/bin/time -v): major (I/O) page faults and file-system reads in decimal GB (512-byte blocks); ~0 = served from the page cache, so timings with different values are not directly comparable.."),
+        row("summary/runs", "distinct_minimizers", "M: number of distinct sampled m-mers (the same value as n_buckets, shown in the density band because it follows the density: lower density, fewer minimizers); the summary's correlation rows use its ratio"),
         row("summary/runs", "index_size_gb / index_disk_gb / build_max_rss_gb / query_max_rss_gb", "sizes and peak memory in decimal GB (1 GB = 10^9 bytes): index_size_gb = the index size build reports, index_disk_gb = the index file on disk, *_max_rss_gb = peak resident memory (GNU time, KiB converted). The per-k-mer metrics (bits_per_kmer, *_bits_per_kmer) are efficiency ratios and stay in bits"),
         row("summary/runs", "bits_per_kmer", "index_disk_gb * 1e9 * 8 / n_kmers (the on-disk index file size, os.path.getsize)"),
         row("summary/runs", "bench_*_ns", "sshash bench's internal avg_nanosec_per_kmer (the paper's own headline query-time metric)"),
-        row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, elapsed_millisec from sshash's own JSON)"),
+        row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, query_run_s = elapsed_millisec / 1000 from sshash's own JSON, i.e. the timed query phase in seconds)"),
         row("summary", "{metric}_ratio", "this variant's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
         row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
         row("summary/runs/orders", "w", "window size L - k + 1 (=11 for L=31, k=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
         row("summary/runs/orders", "density_factor", "particular (measured): (n_minimizer_positions/n_kmers) * (w+1) -- see scripts/density.py"),
+        row("orders", "description / cli", "what the order does and the sshash command-line flags that select it"),
+        row("orders", "{dataset}_particular_density_factor_mean / {dataset}_particular_density_factor_std", "measured density_factor of this order variant on that dataset (mean/std over the seeds), the per-dataset counterpart of the theoretical expected_density_factor"),
         row("orders", "k / w / L", "unified names shared by all apps: k = m (minimizer length, 21), w = window size in m-mers = sshash k - m + 1 (11), L = k + w - 1 = sshash's k-mer length (31). One row per (order variant, k, w, L)"),
-        row("orders", "expected_density_factor_mean/std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
-        row("buckets/summary/runs", "n_buckets / avg_bucket_size", "n_kmers / n_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
+        row("orders", "expected_density_factor_mean / expected_density_factor_std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
+        row("buckets/runs", "n_buckets / avg_bucket_size", "n_kmers / n_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
         row("buckets/summary/runs", "kmers_in_skew_index_pct", "share of k-mers whose bucket is large enough to go in sshash's skew index (the structure for heavy buckets); higher can mean slower lookups despite a smaller/denser index"),
         row("bucket_histogram", "bucket_type / log2_bucket_size / bucket_size_range / n_buckets / n_kmers_in_buckets", "one row per run x log2 bucket-size bin, the paper's logarithmic partitioning: bin b holds the sizes (2^(b-1), 2^b] (b = ceil(log2 size); 0 = singleton), the same intervals as the skew-index partitions. bucket_type: singleton (size 1), light (2 .. 2^l) or heavy (> 2^l, i.e. in the skew index; 2^l = 64 here). Bucket size = number of sampled-m-mer occurrences (super-k-mers). Only runs built with `--bucket-stats` (the harness passes it) have rows. sshash does not tally buckets larger than 4096 per size, so one aggregated row `>4096` (log2 >= 13) carries them (derived from the run's totals): the k-mer column then sums exactly to n_kmers and the bucket column to the number of sampled m-mers"),
         row("super_kmer_histogram", "kmers_in_super_kmer / n_super_kmers", "one row per run x super-k-mer length (k-mers per super-k-mer): how many super-k-mers have that length"),
         row("runs", "n_minimizer_positions", "Z: total occurrences of the sampled m-mers (super-k-mer start positions, build.log n_minimizer_positions); density_factor is Z / n_kmers * (w+1)"),
         row("buckets/runs", "minimizer_positions_per_minimizer", "Z / M (n_minimizer_positions / n_buckets): occurrences per distinct minimizer, i.e. how many positions a lookup scans in a light bucket and how much the data repeats a sampled m-mer. Density fixes Z, but M follows density only while this stays about the same"),
-        row("buckets/runs", "n_buckets_in_skew_index / minimizer_positions_in_skew_index(_pct)", "heavy buckets (more than 2^l occurrences) and their occurrences, i.e. the entries of H (heavy_load_buckets); build.log num_buckets_in_skew_index / num_minimizer_positions_of_buckets_in_skew_index; the pct is the share of all Z"),
+        row("buckets/runs", "n_buckets_in_skew_index / minimizer_positions_in_skew_index / minimizer_positions_in_skew_index_pct", "heavy buckets (more than 2^l occurrences) and their occurrences, i.e. the entries of H (heavy_load_buckets); build.log num_buckets_in_skew_index / num_minimizer_positions_of_buckets_in_skew_index; the pct is the share of all Z"),
         row("runs", "num_bits_per_offset", "width in bits of one position in S (build.log), which is also the width of an H entry"),
         row("buckets/runs", "skew_h_bits_per_kmer / skew_mphf_v_bits_per_kmer", "split of skew_index_bits_per_kmer: H = minimizer_positions_in_skew_index * num_bits_per_offset / n_kmers (exact, H is a compact vector of that width); the rest is the per-partition MPHFs f_i and the V_i arrays"),
-        row("summary", "correlation with density / distinct minimizers", "two rows right under the table: for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / n_buckets_ratio over the dataset x order rows (ratios are order / native for the same dataset, so datasets are comparable); blank for a constant column. No colour scale"),
+        row("summary", "correlation with density / distinct minimizers", "two rows right under the table: for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over the dataset x order rows (ratios are order / native for the same dataset, so datasets are comparable); blank for a constant column. No colour scale"),
         row("buckets", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset, for every bucket metric (the gain in space for the bits/k-mer breakdown and n_buckets); green (lower) -> red (higher) only on the space and n_buckets ratios, where lower is better"),
         row("buckets", "correlation with distinct minimizers", "one row right under the table: Excel CORREL between n_buckets_ratio and control_codewords_bits_per_kmer_ratio / mid_load_bits_per_kmer_ratio (the tag array and the light array L) over the dataset x order rows"),
         row("space_breakdown", "bits_* / saved_* / share_*_pct", "where the bits of the index go (mean bits/k-mer over the seeds, from the build log's SPACE BREAKDOWN: strings, strings_offsets, mphf, tags = control_codewords, light_L = mid_load_buckets array L, skew_fv = the skew index's MPHFs f_i and V_i arrays, skew_H = H, other = begin_buckets_of_size), the saving of each component over the same-modality native (native - order: positive = saved) and its share of the total saving (%). The weights (3e-6 bits/k-mer) are left out"),
         row("space_breakdown", "saved_by_minimizers / saved_by_occurrences", "the saving split by what sizes the component: by_minimizers = mphf + tags (one entry per distinct minimizer M); by_occurrences = light_L + skew_fv + skew_H (sized by the minimizer occurrences / the heavy tail, so it can be negative); the strings and offsets do not depend on the order"),
-        row("buckets/summary/runs", "n_buckets", "(also in the summary sheet: the correlation rows use its ratio) number of distinct sampled m-mers (num_minimizers, M): the MPHF and control-codeword array both have M entries"),
+        row("buckets/runs", "n_buckets", "number of distinct sampled m-mers (num_minimizers, M; the same value as distinct_minimizers in the density band): the MPHF and control-codeword array both have M entries"),
         row("buckets/summary/runs", "singleton_bucket_pct / kmers_in_singleton_bucket_pct", "share of buckets, and of k-mers, whose sampled m-mer occurs in exactly one super-k-mer (the fast singleton path, no OFFSETS access)"),
         row("runs", "heavy_bucket_threshold / expected_bucket_cost", "cost model (runs sheet only): the top 1% of k-mers (largest buckets) all cost one capped bucket size (= heavy_bucket_threshold); the rest cost their bucket size (number of super-k-mers to check). expected_bucket_cost = k-mer-weighted mean of that cost; lower is better"),
         row("buckets/summary/runs", "skew_index_bits_per_kmer / mid_load_bits_per_kmer / control_codewords_bits_per_kmer", "space breakdown for the bucket-count/size tradeoff: fewer buckets means less control_codewords/mid_load overhead but a bigger skew_index share"),
@@ -1371,7 +1444,7 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
     sheet leaves them out)."""
     out = []
     for r in summary:
-        row = {k: r.get(k) for k in ("dataset", *on.ID_FIELDS, "modality", "n_seeds", "n_kmers")}
+        row = {k: r.get(k) for k in ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers")}
         for metric in BUCKET_METRICS:
             row[f"{metric}_mean"] = r.get(f"{metric}_mean")
             row[f"{metric}_std"] = r.get(f"{metric}_std")
@@ -1381,7 +1454,7 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
 
 
 def bucket_field_order() -> list[str]:
-    fields = ["dataset", *on.ID_FIELDS, "modality", "n_seeds", "n_kmers"]
+    fields = ["dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
     for metric in BUCKET_METRICS:
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
@@ -1402,7 +1475,7 @@ SPACE_COMPONENTS = (
 )
 SPACE_BY_MINIMIZERS = ("mphf", "tags")            # one entry per distinct minimizer (M)
 SPACE_BY_OCCURRENCES = ("light_L", "skew_fv", "skew_H")  # sized by minimizer occurrences / heavy tail
-SPACE_ID_FIELDS = ("dataset", *on.ID_FIELDS, "modality", "n_seeds", "n_kmers")
+SPACE_ID_FIELDS = ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers")
 
 
 def space_rows(rows: list[dict], summary: list[dict], baseline: str = "native") -> list[dict]:
