@@ -96,8 +96,8 @@ def test_at1_runs_get_their_own_projection(tmp_path):
 def test_at1_not_pooled_into_at0_summary(tmp_path):
     summary = {r["projection"]: r for r in summary_xlsx_rows(_rows(tmp_path))}
     assert set(summary) == {"at0-cg1", "at1-cg0"}
-    assert summary["at0-cg1"]["n_seeds"] == 2
-    assert summary["at1-cg0"]["n_seeds"] == 2
+    assert summary["at0-cg1"]["n_repeats"] == 2
+    assert summary["at1-cg0"]["n_repeats"] == 2
     assert summary["at0-cg1"]["n_super_kmers_mean"] == 100
     assert summary["at1-cg0"]["n_super_kmers_mean"] == 110
     assert summary["at0-cg1"]["n_super_kmers_std"] == 0

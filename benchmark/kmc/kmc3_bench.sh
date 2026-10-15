@@ -184,7 +184,7 @@ case "$CMD" in
     KMC_BIN="$(resolve_kmc)"
     KMC_VERSION="$(kmc_version "$KMC_BIN")"
     run_schemes
-    export_results
+    [[ "${NO_EXPORT:-0}" == 1 ]] || export_results
     ;;
   all)
     cmd_download
