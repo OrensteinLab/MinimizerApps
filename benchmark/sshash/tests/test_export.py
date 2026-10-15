@@ -27,11 +27,11 @@ def test_log2_bucket_bins_follow_the_skew_partitions():
 
 def test_correlation_rows_formulas_and_cached_values():
     summary = [
-        {"density_factor_ratio": 1.0, "n_buckets_ratio": 1.0, "bits_per_kmer_ratio": 1.0, "const_ratio": 1.0},
-        {"density_factor_ratio": 0.9, "n_buckets_ratio": 0.9, "bits_per_kmer_ratio": 0.92, "const_ratio": 1.0},
-        {"density_factor_ratio": 0.8, "n_buckets_ratio": 0.8, "bits_per_kmer_ratio": 0.85, "const_ratio": 1.0},
+        {"density_factor_ratio": 1.0, "distinct_minimizers_ratio": 1.0, "bits_per_kmer_ratio": 1.0, "const_ratio": 1.0},
+        {"density_factor_ratio": 0.9, "distinct_minimizers_ratio": 0.9, "bits_per_kmer_ratio": 0.92, "const_ratio": 1.0},
+        {"density_factor_ratio": 0.8, "distinct_minimizers_ratio": 0.8, "bits_per_kmer_ratio": 0.85, "const_ratio": 1.0},
     ]
-    fields = ["density_factor_ratio", "n_buckets_ratio", "bits_per_kmer_ratio", "const_ratio"]
+    fields = ["density_factor_ratio", "distinct_minimizers_ratio", "bits_per_kmer_ratio", "const_ratio"]
     rows = correlation_rows(fields, summary)
     assert [r["label"] for r in rows] == ["correlation with density", "correlation with distinct minimizers"]
     cells = {f: (formula, value) for f, formula, value in rows[0]["cells"]}
@@ -103,7 +103,7 @@ def test_column_order():
     for f in (list(RUN_FIELDS), summary_field_order(), bucket_field_order(), space_field_order()):
         i = f.index("modality")
         assert f[i - 1] == "mod_t" or f[:i][-1] == "mod_t"
-        assert f[i + 1] in ("threads", "n_seeds")
+        assert f[i + 1] in ("threads", "n_repeats")
     r = list(RUN_FIELDS)
     assert r[r.index("modality"):r.index("modality") + 4] == ["modality", "threads", "seed", "seed_idx"]
 
@@ -132,7 +132,7 @@ def _row(dataset, order, seed_idx, n_kmers=1000, check_ok=True, pos_match=True, 
         "bench_negative_ns": 250.0,
         "bench_access_ns": 150.0,
         "query_wall_s": None,
-        "query_elapsed_ms": None,
+        "query_run_s": None,
         "check_ok": check_ok,
         "query_pos_match": pos_match,
         "query_neg_match": neg_match,
@@ -334,3 +334,19 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_runs_and_summary_bands_are_contiguous_and_renamed():
+    from scripts.export import RUN_FIELDS, summary_field_order, sheet_categories
+    for name, fields in (('runs', list(RUN_FIELDS)), ('summary', summary_field_order())):
+        seen, prev = set(), None
+        for f, c in zip(fields, sheet_categories(name, fields)):
+            if c != prev:
+                assert c not in seen, f"band {c!r} fragmented at {f}"
+                seen.add(c)
+                prev = c
+    for gone in ("n_seeds", "query_elapsed_ms", "python_wall_s"):
+        assert gone not in RUN_FIELDS and gone not in summary_field_order()
+    assert "n_repeats" in summary_field_order() and "query_run_s_mean" in summary_field_order()
+    assert "distinct_minimizers" in RUN_FIELDS and "distinct_minimizers_mean" in summary_field_order()
+    assert {"build_pinned_cpus", "bench_pinned_cpus", "query_pinned_cpus"} <= set(RUN_FIELDS)
