@@ -31,6 +31,38 @@ def parse_time_v(path: Path) -> dict:
     m = re.search(r"Percent of CPU this job got: (\d+)%", text)
     if m:
         out["cpu_percent"] = int(m.group(1))
+    # CPU seconds (user + system, all threads): with wall time it separates "ran longer" from
+    # "waited longer" (contention, I/O) -- CPU time is much less sensitive to other users' load
+    for key, label in (("user_s", r"User time \(seconds\)"), ("sys_s", r"System time \(seconds\)")):
+        m = re.search(label + r": ([0-9.]+)", text)
+        if m:
+            out[key] = float(m.group(1))
+    # I/O the step needed from disk: major faults and file-system reads (512-byte blocks on
+    # Linux); zero/near-zero means the input was served from the page cache
+    for key, label in (("major_pagefaults", r"Major \(requiring I/O\) page faults"),
+                       ("minor_pagefaults", r"Minor \(reclaiming a frame\) page faults"),
+                       ("fs_inputs", r"File system inputs"),
+                       ("fs_outputs", r"File system outputs")):
+        m = re.search(label + r": (\d+)", text)
+        if m:
+            out[key] = int(m.group(1))
+    return out
+
+
+def _step_extras(time_path: Path, cpus_name: str, map_log: bool = False) -> dict:
+    """CPUs the step was taskset to (written by lib/run.sh next to the time log) and, for the
+    map step, the seconds minimap2 spent loading the index (its "[M::main::<real>*<cpu>] loaded/
+    built the index" log line is stamped with the elapsed time since start)."""
+    out = {}
+    cpus = time_path.parent / cpus_name
+    if cpus.is_file():
+        out["pinned_cpus"] = cpus.read_text().strip() or None
+    if map_log:
+        log = time_path.parent / "map.log"
+        if log.is_file():
+            m = re.search(r"\[M::main::([0-9.]+)\*[0-9.]+\] loaded/built the index", log.read_text())
+            if m:
+                out["index_load_s"] = float(m.group(1))
     return out
 
 
@@ -83,8 +115,8 @@ def main(argv=None) -> int:
         "mid_occ": int(args.mid_occ) if args.mid_occ else None,
         "preset": args.preset,
         "threads": args.threads,
-        "build": parse_time_v(args.build_time),
-        "map": parse_time_v(args.map_time),
+        "build": {**parse_time_v(args.build_time), **_step_extras(args.build_time, "cpus_build.txt")},
+        "map": {**parse_time_v(args.map_time), **_step_extras(args.map_time, "cpus_map.txt", map_log=True)},
         "distinct_minimizers": args.density,
         "avg_occurrences": args.avg_occurrences,
     }

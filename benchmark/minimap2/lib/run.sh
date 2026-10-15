@@ -2,6 +2,12 @@
 # Single-config runner: build index -> map reads -> score accuracy -> meta.json.
 set -uo pipefail
 
+# wait_low_load: block until the (shared) machine is quiet before each timed step
+# (BENCH_LOAD_MAX, BENCH_WAIT_LOW_LOAD=0 disables; see benchmark/common/wait_low_load.sh).
+source "$(dirname "${BASH_SOURCE[0]}")/../../common/wait_low_load.sh"
+# bench_pin_cpus: every timed minimap2 step is taskset to one NUMA node, one thread per core (benchmark/common/pin_cpus.sh)
+source "$(dirname "${BASH_SOURCE[0]}")/../../common/pin_cpus.sh"
+
 run_one() {
   local order="$1" seed="${2:-0}" seed_idx="${3:-0}"
   local preset k t
@@ -77,16 +83,22 @@ run_one() {
   # chaining bandwidth, etc.) are map-time parameters and must be repeated
   # on the map invocation too, where the loaded index's own k/w/H silently
   # win over the preset's (a harmless, expected stderr warning).
+  wait_low_load
+  bench_pin_cpus "$THREADS"
+  printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_build.txt"
   echo "== [$odir] building index (-x $preset k=$k w=$W ${ORDER_FLAGS[*]:-}) ==" >&2
-  if ! /usr/bin/time -v -o "$build_time" \
+  if ! /usr/bin/time -v -o "$build_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
       "$MINIMAP2_BIN" -d "$mmi" -x "$preset" -k "$k" -w "$W" "${ORDER_FLAGS[@]}" -t "$THREADS" "$genome" 2> "$build_log"; then
     echo "  build FAILED, see $build_log" >&2
     tail -5 "$build_log" >&2
     return 1
   fi
 
+  wait_low_load
+  bench_pin_cpus "$THREADS"
+  printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_map.txt"
   echo "== [$odir] mapping ${reads##*/} ==" >&2
-  if ! /usr/bin/time -v -o "$map_time" \
+  if ! /usr/bin/time -v -o "$map_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
       "$MINIMAP2_BIN" -x "$preset" -c "${map_extra[@]}" -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
     echo "  map FAILED, see $map_log" >&2
     tail -5 "$map_log" >&2

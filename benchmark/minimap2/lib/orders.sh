@@ -94,9 +94,7 @@ build_order_flags() {
   fi
 }
 
-# native has no order-dependent behavior at all. Every other order takes
-# --order-seed (greedymini: the Gamma tie-break toggle) and is swept across
-# the full seed list, not just one.
-order_is_seed_dependent() {
-  [ "$1" != native ]
-}
+# Every order, native included, is swept across the full seed list (minimap2_bench.sh sweep). native
+# has no order-dependent behavior, so its seeds build identical indexes and its repeats only measure
+# run-to-run timing noise; they give the baseline the same number of runs as the other orders, which
+# the significance tests need. The other orders take --order-seed (greedymini: the Gamma tie-break toggle).
