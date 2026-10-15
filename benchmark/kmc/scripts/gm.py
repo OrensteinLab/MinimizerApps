@@ -27,7 +27,9 @@ GM_SIGMA_EXTEND_BIN = GM_SIGMA_EXTEND_DIR / "gm_sigma_extend"
 
 
 def make(build_dir: Path) -> None:
-    subprocess.run(["make", "-C", str(build_dir)], check=True)
+    # make's output goes to stderr: callers (lib/gm.sh's resolve_gm_path) capture this script's stdout
+    # as the table path, so any build chatter on stdout would end up inside the path
+    subprocess.run(["make", "-C", str(build_dir)], check=True, stdout=sys.stderr)
 
 
 def signature_len_effective(signature_len: int | None = None) -> int:
