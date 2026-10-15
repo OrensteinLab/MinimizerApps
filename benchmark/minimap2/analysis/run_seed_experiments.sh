@@ -14,6 +14,8 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # Same .env / PYTHON / MINIMAP2_BIN resolution as minimap2_bench.sh.
 source "$HERE/lib/env.sh"
 source "$HERE/lib/constants.sh"
+source "$HERE/../common/wait_low_load.sh"
+source "$HERE/../common/pin_cpus.sh"   # every timed step is pinned (seed_stats.py runs minimap2 -t 1)
 load_bench_env
 DATA="$MINIMAP2_DATA_DIR"
 RESULTS="$MINIMAP2_RESULTS_DIR"
@@ -62,13 +64,13 @@ for cap in "$@"; do
   for o in $VARIANTS; do
     idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"   # same index for both caps
     f="$out/seeds/$cap/${o//\//__}.csv"
-    [ -s "$f" ] || "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --seeds --preset "$preset" $flag
+    [ -s "$f" ] || { wait_low_load; bench_pin_cpus 1; ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --seeds --preset "$preset" $flag; }
   done
   for r in $(seq 1 "$reps"); do
     for o in $(printf '%s\n' $VARIANTS | shuf --random-source=<(yes $r)); do
       idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"
       f="$out/timing/$cap/${o//\//__}.r$r.csv"
-      [ -s "$f" ] || "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --preset "$preset" $flag
+      [ -s "$f" ] || { wait_low_load; bench_pin_cpus 1; ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --preset "$preset" $flag; }
     done
   done
 done

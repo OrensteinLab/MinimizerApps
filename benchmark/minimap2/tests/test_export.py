@@ -40,7 +40,7 @@ def _write_run(root: Path, order: str, params: dict, seed_idx: int, dens: float)
             "preset": "map-pb", "threads": 4, "distinct_minimizers": 1000, "avg_occurrences": 1.2,
             "density_factor": dens,
             "build": {"wall_time_sec": 2.0 + dens, "peak_rss_kb": 2048},
-            "map": {"wall_time_sec": 1.0 + dens, "peak_rss_kb": 4096},
+            "map": {"wall_time_sec": 1.0 + dens, "peak_rss_kb": 4096, "index_load_s": 0.5, "pinned_cpus": "2,6,10"},
             "accuracy": {"n_reads": 10, "frac_mapped": 0.9, "frac_correct": 0.8 - dens / 100,
                          "frac_incorrectly_mapped": 0.1, "mean_identity": 0.88}}
     (d / "meta.json").write_text(json.dumps(meta))
@@ -67,6 +67,10 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     assert hdr[:3] == ["dataset", "n_reads", "n_reads_in_repeat"] and hdr[3:6] == ["k", "w", "L"]
     assert hdr[6:11] == list(ID_FIELDS)
     assert hdr[11:15] == ["mid_occ_threshold", "threads", "seed", "seed_idx"]
+    assert hdr.index("avg_occurrences") + 1 == hdr.index("index_size_gb") and hdr.index("index_size_gb") + 1 == hdr.index("total_wall_s")
+    assert hdr[-2:] == ["build_pinned_cpus", "map_pinned_cpus"]
+    assert {"map_load_s", "map_run_s"} <= set(hdr) and not {"index_load_s", "map_only_s", "n_seeds"} & set(hdr)
+    assert runs[0]["map_pinned_cpus"] == "2,6,10" and runs[0]["map_load_s"] == "0.5" and runs[0]["map_run_s"] != ""
     greedy = [r for r in runs if r["order"] == "greedymini"]
     assert {r["projection"] for r in greedy} == {"at0-cg1", "at1-cg0"}
     assert {r["gm_k"] for r in greedy} == {"15"}
@@ -74,6 +78,8 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     summary = list(csv.DictReader((tmp_path / "csvs" / "minimap2_summary.csv").open()))
     assert len(summary) == 5 and summary[0]["order"] == "native"
     assert float(summary[0]["density_factor_ratio"]) == 1.0
+    assert "n_repeats" in summary[0] and "n_seeds" not in summary[0] and "map_run_s_mean" in summary[0]
+    assert "build_pinned_cpus" not in summary[0] and "index_size_gb_mean" in summary[0]
     orders = list(csv.DictReader((tmp_path / "csvs" / "minimap2_orders.csv").open()))
     assert [(o["order"], o["projection"]) for o in orders] == [
         ("native", ""), ("xor", ""), ("greedymini", "at0-cg1"), ("greedymini", "at1-cg0"),
