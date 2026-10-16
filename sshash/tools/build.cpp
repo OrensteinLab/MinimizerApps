@@ -122,6 +122,12 @@ int build(int argc, char** argv) {
         std::cerr << "Error: --regular does not apply to the mod-minimizer orders" << std::endl;
         return 1;
     }
+    if (is_mod_mode(build_config.order) and !mod_rule::window_length_ok(int(build_config.k))) {
+        std::cerr << "Error: the mod-minimizer orders need an odd k (the strand preference of a "
+                     "window ties for an even k)"
+                  << std::endl;
+        return 1;
+    }
 
     if (is_gm_mode(build_config.order) or is_mod_mode(build_config.order)) {
         /* fail early with a clear message (e.g. an odd m - gm_k,

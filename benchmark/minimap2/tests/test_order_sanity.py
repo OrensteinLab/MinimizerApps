@@ -7,7 +7,7 @@ the underlying alignment problem is solvable), even though their minimizer
 counts and exact identity differ.
 
 greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
-this test's fixed -k 15 -w 10), in both AT/CG projections (--gm-projection
+this test's fixed -k 15 -w 10; the mod-minimizer needs an odd w + k - 1 and runs at -w 11), in both AT/CG projections (--gm-projection
 at0-cg1 / at1-cg0, a parameter of greedymini rather than an order of its own).
 
 Run with: python3.11 -m pytest benchmark/minimap2/tests -q
@@ -53,14 +53,19 @@ def _order_flags(label: str) -> list[str]:
         return ["--minimizer-order", "greedymini", "--greedymini-file", str(GM_FILE), "--gm-projection", projection]
     flags = ["--minimizer-order", order, "--order-seed", "42"]
     if order.startswith("mod-minimizer-"):
-        flags += ["--mod-t", "5"]
+        flags += ["--mod-t", "4"]  # t = 4 + (15 - 4) mod 11
     return flags
+
+
+def _window(label: str) -> str:
+    """-w of a variant: the mod-minimizer needs an odd w + k - 1 (k = 15), so it runs at w = 11."""
+    return "11" if label.startswith("mod-minimizer-") else "10"
 
 
 def _build_and_map(dataset: Path, tmp_path: Path, order: str) -> tuple[dict, list[str]]:
     mmi = tmp_path / f"{order}.mmi"
     build = subprocess.run(
-        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", "10", *_order_flags(order), str(dataset / "genome.fa")],
+        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", _window(order), *_order_flags(order), str(dataset / "genome.fa")],
         capture_output=True, text=True,
     )
     assert build.returncode == 0, build.stderr
