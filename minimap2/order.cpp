@@ -320,13 +320,14 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // This variant (the rule of common/minimizer-orders/mod_minimizer_rule.h:
 // the canonical definition of simd-minimizers, Groot Koerkamp & Martayan,
 // bioRxiv 2025.01.27.634998, applied to mod-sampling) gives each window a
-// preferred strand: the one with more G/T bases, a tie
-// (even L) broken by W <= revcomp(W) lexicographically. A forward-preferred
-// window samples offset x_L mod w; a reverse-preferred one applies the same
-// rule from the other end: x_R = rightmost minimal t-mer, offset
-// (w-1) - (((T-1) - x_R) mod w). The reverse complement of a window then
-// samples the mirror k-mer, so both strands select the same loci (except in a
-// window that is its own reverse complement). Density: +0-1% over plain
+// preferred strand: the one with more G/T bases. L must be odd (mm_order_init
+// rejects an even w + k - 1): then the G/T counts of W and revcomp(W) differ,
+// exactly one of them is forward-preferred, and there is no tie to break. A
+// forward-preferred window samples offset x_L mod w; a reverse-preferred one
+// applies the same rule from the other end: x_R = rightmost minimal t-mer,
+// offset (w-1) - (((T-1) - x_R) mod w). The reverse complement of a window
+// then samples the mirror k-mer, so both strands select the same loci
+// (strictly canonical). Density: +0-1% over plain
 // mod-sampling (benchmark/minimap2/analysis/canonical_mod.py; validate_mod_minimizer.py checks
 // the code against a brute force of this definition).
 //
@@ -381,19 +382,19 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	std::memset(&tq, 0, sizeof(tq));
 	for (int a = 0; a < w; ++a) lring[a].valid = 0;
 
-	// The window's forward and reverse-complement 2-bit words when L <= 32
-	// (G/T count = popcount of the high bits, exact lexicographic tie-break);
-	// otherwise its bases in a ring (wb_pos = next slot) and a running G/T
-	// count. Per residue slot: whether its k-mer is selected but not yet
-	// emitted, and the slot the mirror rule picks for a rightmost minimal
-	// t-mer in that slot's residue class.
+	// The window's forward 2-bit word when L <= 32 (G/T count = popcount of the
+	// high bits); otherwise its bases in a ring (wb_pos = next slot, to drop the
+	// base leaving the window) and a running G/T count. Per residue slot:
+	// whether its k-mer is selected but not yet emitted, and the slot the mirror
+	// rule picks for a rightmost minimal t-mer in that slot's residue class.
 	const int L = w + k - 1;
+	assert(mod_rule::window_length_ok(L)); // mm_order_init rejects an even w + k - 1
 	const bool win_word = L <= 32;
 	std::vector<uint8_t> wbase(win_word ? 0 : (size_t)L);
 	std::vector<uint8_t> pending((size_t)w, 0);
 	std::vector<uint8_t> mirror_slot((size_t)w);
 	int wb_pos = 0, gt = 0;
-	uint64_t win_fw = 0, win_rc = 0;
+	uint64_t win_fw = 0;
 	const uint64_t win_mask = L >= 32 ? ~0ULL : (1ULL << (2 * L)) - 1;
 	const uint64_t win_hi = 0xAAAAAAAAAAAAAAAAULL & win_mask; // bit 1 of each base: G = 2, T = 3
 	// mirror rule: offset p = (w-1) - (((T-1) - x_R) mod w), slot (win + p) mod w;
@@ -420,7 +421,7 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		int c = seq_nt4_table[(uint8_t)str[i]];
 		if (c >= 4) { // ambiguous base: reset everything, same as native
 			flush_pending();
-			gt = 0; wb_pos = 0; win_fw = win_rc = 0;
+			gt = 0; wb_pos = 0; win_fw = 0;
 			for (int a = 0; a < w; ++a) lring[a].valid = 0;
 			run_pos = -1; t_cls = l_cls = 0; kmer_span = 0;
 			tq.count = tq.front = 0;
@@ -448,7 +449,6 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		kmer[1] = (kmer[1] >> 2) | (((uint64_t)(3 ^ c)) << k_shift1);
 		if (win_word) {
 			win_fw = ((win_fw << 2) | (uint64_t)c) & win_mask;
-			win_rc = (win_rc >> 2) | ((uint64_t)(3 ^ c) << (2 * (L - 1)));
 		} else {
 			uint8_t &slot_b = wbase[(size_t)wb_pos];
 			if (++wb_pos == L) wb_pos = 0;
@@ -495,16 +495,9 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 			min_rank = trank[(size_t)(win & rmask)], x_l = x_r = win;
 			for (ssize_t x = win + 1; x <= ot; ++x) take(trank[(size_t)(x & rmask)], x);
 		}
-		// Preferred strand, branch-free when L <= 32 (the choice is close to a
-		// fair coin per window, so a branch would mispredict half the time).
-		bool fwd;
-		if (win_word) { // the words compare as the base sequences do
-			fwd = mod_rule::prefer_forward_eager(2 * __builtin_popcountll(win_fw & win_hi) - L, win_fw <= win_rc);
-		} else { // the window's first base sits in ring slot wb_pos (oldest)
-			fwd = mod_rule::prefer_forward(2 * gt - L, [&]() {
-				return mod_rule::window_le_revcomp(L, [&](int j) { return (int)wbase[(size_t)((wb_pos + j) % L)]; });
-			});
-		}
+		// Preferred strand: more G/T bases than A/C (L is odd, so never equal).
+		const int two_gt = win_word ? 2 * __builtin_popcountll(win_fw & win_hi) : 2 * gt;
+		const bool fwd = mod_rule::prefer_forward(two_gt - L);
 		// Forward: the leftmost minimum's k-mer is in the residue slot of x_l
 		// ((win + (x_l mod w)) mod w == x_l mod w). Reverse: the rightmost
 		// minimal t-mer x_r -> mirror_slot of its class.
@@ -601,14 +594,14 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, errbuf, errbuf_len) != 0) {
+	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
 		delete ord;
 		return nullptr;
 	}
 	return ord;
 }
 
-extern "C" int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, size_t errbuf_len)
+extern "C" int mm_order_validate(const mm_order_t *ord, int k, int w, char *errbuf, size_t errbuf_len)
 {
 	char msg[160];
 	if (!ord) { set_err(errbuf, errbuf_len, "null order"); return -1; }
@@ -619,6 +612,13 @@ extern "C" int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, siz
 	}
 	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k)) {
 		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k (t = %d, k = %d)", ord->t, k);
+		set_err(errbuf, errbuf_len, msg);
+		return -1;
+	}
+	if (is_mod_kind(ord->kind) && w > 0 && !mod_rule::window_length_ok(w + k - 1)) {
+		std::snprintf(msg, sizeof msg, "mod-minimizer orders need an odd window length w + k - 1 "
+		              "(got w = %d, k = %d: %d); the strand preference of a window ties for an even length",
+		              w, k, w + k - 1);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}

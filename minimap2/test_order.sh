@@ -5,7 +5,9 @@
 # greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15) at this
 # script's -k 15 (no extension) and, centre-extended, at -k 19 (section 12),
 # with both AT/CG projections (the `greedymini_at1-cg0` test label = greedymini with --gm-projection at1-cg0). The
-# only mod-minimizer order is mod-minimizer-xor (strand-symmetric, O_t = xor).
+# only mod-minimizer order is mod-minimizer-xor (strand-symmetric, O_t = xor); it needs an odd
+# window length w + k - 1, so it runs at -w 11 here (k=15: L=25, t = 4 + (15-4) mod 11 = 4) and an
+# even length (-w 10) is rejected (section 15).
 #
 # Usage: ./test_order.sh (run from minimap2/, after `make all sketch_dump`)
 set -u
@@ -24,7 +26,8 @@ ORDERS_SEEDED="xor xor-pcg-hash"
 ORDERS_MOD="mod-minimizer-xor"
 ALL_TEST_ORDERS="native $ORDERS_SEEDED greedymini greedymini_at1-cg0 $ORDERS_MOD"
 SEED=42
-MOD_T=5
+MOD_T=4
+MOD_W=11   # the mod-minimizer needs an odd w + k - 1 (k=15 here)
 GM_FILE="$(cd .. && pwd)/orders/GreedyMini/w10_k15_canonical.gm"
 
 order_flags() {
@@ -32,7 +35,7 @@ order_flags() {
 		native) echo "" ;;
 		greedymini) echo "--minimizer-order greedymini --greedymini-file $GM_FILE" ;;
 		greedymini_at1-cg0) echo "--minimizer-order greedymini --greedymini-file $GM_FILE --gm-projection at1-cg0" ;;
-		mod-minimizer-*) echo "--minimizer-order $1 --order-seed $SEED --mod-t $MOD_T" ;;
+		mod-minimizer-*) echo "--minimizer-order $1 --order-seed $SEED --mod-t $MOD_T -w $MOD_W" ;;
 		*) echo "--minimizer-order $1 --order-seed $SEED" ;;
 	esac
 }
@@ -161,17 +164,17 @@ else
 	ok "--order-seed without --minimizer-order rejected"
 fi
 
-echo "== 9. t=5 / k=15,w=10 formula sanity (paper's r=4 formula: t = r + (k-r) mod w) =="
-r=4; k=15; w=10
+echo "== 9. t=4 / k=15,w=11 formula sanity (paper's r=4 formula: t = r + (k-r) mod w) =="
+r=4; k=15; w=$MOD_W
 t=$(( r + (k - r) % w ))
-if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
+if [ "$t" -eq "$MOD_T" ]; then ok "t formula gives $MOD_T for k=15,w=$MOD_W (matches --mod-t $MOD_T used above)"; else bad "t formula gave $t, expected $MOD_T"; fi
 
-echo "== 10. mod-minimizer at a large window (w=50): the deque ring is sized from w+k-t, not a fixed cap =="
+echo "== 10. mod-minimizer at a large window (w=51, L=65): the deque ring is sized from w+k-t, not a fixed cap =="
 for o in $ORDERS_MOD; do
-	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$MOD_T" -w 50 "$REF" "$QRY" > "$TMP/w50_$o.sam" 2>"$TMP/w50_$o.err"; then
-		ok "-w 50 builds+maps: $o"
+	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$MOD_T" -w 51 "$REF" "$QRY" > "$TMP/w51_$o.sam" 2>"$TMP/w51_$o.err"; then
+		ok "-w 51 builds+maps: $o"
 	else
-		bad "-w 50 builds+maps: $o ($(tail -1 "$TMP/w50_$o.err"))"
+		bad "-w 51 builds+maps: $o ($(tail -1 "$TMP/w51_$o.err"))"
 	fi
 done
 
@@ -265,6 +268,23 @@ n1=$(./sketch_dump greedymini 10 15 0x9E3779B97F4A7C15 0 "$GM_FILE" < "$TMP/ref.
 if [ "$n0" != "$n1" ]; then ok "--order-seed changes the greedymini selection"; else bad "--order-seed did not change the greedymini selection"; fi
 $BIN -a --minimizer-order greedymini --greedymini-file "$GM_FILE" --order-seed 7 "$TMP/gms.mmi" "$QRY" >/dev/null 2>"$TMP/gms_w.err"
 if grep -q 'Minimizer order options' "$TMP/gms_w.err"; then ok "a different greedymini seed than the prebuilt index's: warned"; else bad "no warning for a different greedymini seed"; fi
+
+echo "== 15. mod-minimizer needs an odd window length w + k - 1 (no tie rule for an even one) =="
+for ww in 10 12; do
+	if $BIN -a --minimizer-order mod-minimizer-xor --order-seed "$SEED" --mod-t "$MOD_T" -w $ww "$REF" "$QRY" >/dev/null 2>"$TMP/even_$ww.err"; then
+		bad "mod-minimizer-xor -k 15 -w $ww (L = $((ww + 14))) should be rejected"
+	elif grep -q "odd window length" "$TMP/even_$ww.err"; then
+		ok "mod-minimizer-xor -k 15 -w $ww (even L) rejected with a clear message"
+	else
+		bad "mod-minimizer-xor -k 15 -w $ww rejected without the odd-L message ($(tail -1 "$TMP/even_$ww.err"))"
+	fi
+done
+if $BIN -a --minimizer-order mod-minimizer-xor --order-seed "$SEED" --mod-t "$MOD_T" -k 16 -w 10 "$REF" "$QRY" >/dev/null 2>&1; then
+	ok "mod-minimizer-xor -k 16 -w 10 (odd L = 25, even k) accepted"
+else
+	bad "mod-minimizer-xor -k 16 -w 10 (odd L) rejected"
+fi
+if $BIN -a $(order_flags xor) -w 10 "$REF" "$QRY" >/dev/null 2>&1; then ok "plain xor order at an even window length still accepted"; else bad "plain xor order rejected at an even window length"; fi
 
 echo
 echo "== summary: $pass passed, $fail failed =="

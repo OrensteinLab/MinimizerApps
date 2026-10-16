@@ -21,6 +21,11 @@ struct dictionary_builder  //
         d.m_regular_parsing = build_config.regular_parsing;
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
+        if (is_mod_mode(build_config.order) and !mod_rule::window_length_ok(int(build_config.k))) {
+            throw std::invalid_argument(
+                "the mod-minimizer orders need an odd k (the strand preference of a window "
+                "ties for an even k)");
+        }
         d.m_hasher.seed(build_config.seed);
         d.m_hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
                              build_config.gm_proj, build_config.mod_t);

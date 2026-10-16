@@ -38,8 +38,8 @@ order; see below).
 ./minimap2 -a --minimizer-order greedymini --gm-projection at1-cg0 \
     --greedymini-file ../orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq   # A,T -> 1 / C,G -> 0 instead of the default at0-cg1
 
-# strand-symmetric mod-minimizer, xor as O_t
-./minimap2 -a --minimizer-order mod-minimizer-xor --order-seed 42 --mod-t 5 ref.fa reads.fq
+# strand-symmetric mod-minimizer, xor as O_t; w + k - 1 must be odd (k=15 -> w=11; t = 4 + (k-4) mod w = 4)
+./minimap2 -a --minimizer-order mod-minimizer-xor --order-seed 42 --mod-t 4 -w 11 ref.fa reads.fq
 ```
 
 Long-only flags (`--minimizer-order`, `--order-seed`, `--greedymini-file`,
@@ -87,8 +87,8 @@ different order. Custom orders take `-k` up to 28, as native minimap2 does.
   Koerkamp & Pibiri, WABI 2024) with simd-minimizers' canonical definition
   (Groot Koerkamp & Martayan, bioRxiv 2025.01.27.634998; the rule is shared
   with kraken2 and sshash in `common/minimizer-orders/mod_minimizer_rule.h`): each window of
-  `w+k-1` bases prefers the strand with more G/T (tie: the lexicographically
-  smaller strand); a forward-preferred window samples offset `x_L mod w`
+  `w+k-1` bases prefers the strand with more G/T (`w+k-1` must be odd, so
+  the counts never tie; `mm_order_init` and an index load reject an even length); a forward-preferred window samples offset `x_L mod w`
   (`x_L` = leftmost minimal t-mer, the paper's rule), a reverse-preferred one
   `(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T =
   w+k-t`). A read and its reverse complement thus select the same loci,

@@ -17,9 +17,9 @@ every rank is a strand-symmetric hash of the canonical t-mer / k-mer):
                       mirror rule, x' = (T-1) - x_R (x_R = rightmost minimal
                       t-mer), k-mer at offset (w-1) - (x' mod w).
 Preferred strand: the one with more G/T bases (equivalently W has more G/T
-than its reverse complement); a tie (even L) is broken by W <= rc(W)
-lexicographically, so exactly one of W, rc(W) is forward-preferred unless W
-is its own reverse complement.
+than its reverse complement). L = w + k - 1 must be odd, so the counts never tie
+and exactly one of W, rc(W) is forward-preferred; an even L is not supported
+(every method that uses the mod-minimizer needs a canonical scheme).
 
 Reported per (k, w, t, scheme): density factor (selected k-mer positions /
 k-mers * (w+1)) on i.i.d. random DNA, and strand agreement: the fraction of
@@ -56,9 +56,8 @@ def canon_hash(s: str, seed: int) -> int:
 def forward_preferred(win: str) -> bool:
     gt = sum(1 for ch in win if ch in "GT")
     L = len(win)
-    if 2 * gt != L:
-        return 2 * gt > L
-    return win <= revcomp(win)
+    assert L % 2 == 1, "the mod-minimizer needs an odd window length w + k - 1"
+    return 2 * gt > L
 
 
 def select(seq: str, k: int, w: int, t: int, scheme: str, seed: int) -> set[int]:
@@ -106,7 +105,7 @@ def main(argv=None) -> int:
     ap.add_argument("--n", type=int, default=50_000, help="random sequence length")
     ap.add_argument("--reps", type=int, default=3)
     args = ap.parse_args(argv)
-    configs = [(15, 10), (19, 10), (21, 11), (25, 10), (31, 11)]
+    configs = [(15, 11), (19, 11), (21, 11), (25, 11), (31, 11)]  # w + k - 1 odd
     schemes = ["minimizer", "canonical-minimizer", "mod-minimizer", "canonical-mod"]
     print("k  w  t  scheme               density(mean)  strand_agreement(mean)")
     for k, w in configs:
