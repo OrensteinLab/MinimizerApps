@@ -386,6 +386,7 @@ int main(int argc, char *argv[])
 		ipt.order_conf.greedymini_file = gm_file;
 		ipt.order_conf.t = mod_t_set ? mod_t : 0;
 		ipt.order_conf.k = ipt.k;
+		ipt.order_conf.w = ipt.w;
 	} else if (gm_file || order_seed || mod_t_set || gm_projection) {
 		fprintf(stderr, "[ERROR] --order-seed/--greedymini-file/--gm-projection/--mod-t given without --minimizer-order\n");
 		return 1;
