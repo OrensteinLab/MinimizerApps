@@ -612,9 +612,9 @@ inline uint64_t count_gt(Kmer const& kmer, const uint64_t k) {
 
 /*
     Whether the mod-minimizer samples the kmer from its forward strand: the strand with more G/T
-    bases is preferred (rc(x) has as many G/T as x has A/C); on a tie (even k only) the
-    numerically smaller of x and rc(x) -- exactly one of a kmer and its reverse complement is
-    forward-preferred unless it is its own reverse complement.
+    bases is preferred (rc(x) has as many G/T as x has A/C). k is odd (the builder rejects an even
+    k for the mod-minimizer orders), so the counts never tie and exactly one of a kmer and its
+    reverse complement is forward-preferred.
 */
 template <typename Kmer>
 inline bool mod_forward_preferred(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k) {
@@ -622,8 +622,8 @@ inline bool mod_forward_preferred(Kmer const& kmer, Kmer const& kmer_rc, const u
         (void)kmer, (void)kmer_rc, (void)k;
         return true;
     } else {
-        return mod_rule::prefer_forward(int(2 * count_gt(kmer, k)) - int(k),
-                                        [&]() { return !(kmer_rc < kmer); });
+        (void)kmer_rc;
+        return mod_rule::prefer_forward(int(2 * count_gt(kmer, k)) - int(k));
     }
 }
 
