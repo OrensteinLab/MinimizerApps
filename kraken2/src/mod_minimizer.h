@@ -18,9 +18,8 @@
  * canonical definition of simd-minimizers, Groot Koerkamp & Martayan, bioRxiv
  * 2025.01.27.634998; the same rule as the minimap2 fork's mod-minimizer-xor):
  * every window (the k bases of the k-mer) has a preferred strand, the one
- * with more G/T bases; k must be odd, so the G/T counts of a window and its
- * reverse complement differ and exactly one is forward-preferred (the sampler
- * rejects an even k). A forward-preferred window samples offset x_L mod w (x_L =
+ * with more G/T bases (a tie, possible only for even k, broken by window <=
+ * revcomp(window)). A forward-preferred window samples offset x_L mod w (x_L =
  * leftmost minimal t-mer, the paper's tie-break); a reverse-preferred one
  * applies the same rule from the window's other end: offset (w-1) - (((T-1) -
  * x_R) mod w), x_R = rightmost minimal t-mer. The reverse complement of a
@@ -79,9 +78,6 @@ class ModSampler {
       throw std::invalid_argument("mod-sampling on DNA needs the current revcom version");
     if (dna_bpc2_ && k_ > 64)  // one bit per window base in a 64-bit word
       throw std::invalid_argument("mod-sampling on DNA needs k <= 64");
-    // the strand preference (more G/T bases) ties for an even window length
-    if (dna_bpc2_ && !mod_rule::window_length_ok(k_))
-      throw std::invalid_argument("canonical mod-sampling on DNA needs an odd window length k");
     if (dna_bpc2_)
       wmask_ = (k_ >= 64) ? ~0ULL : ((1ULL << k_) - 1ULL);
     if (l < kDefaultR)
@@ -164,7 +160,7 @@ class ModSampler {
     lmer_ring_ix_ = (int)(origin % w_);
     lmers_stored_ = 0;
     dq_head_ = dq_tail_ = 0;
-    whi_ = 0;
+    whi_ = wlo_ = 0;
     if (t_ranker_)
       t_ranker_->Reset();
   }
@@ -287,6 +283,7 @@ class ModSampler {
       // bit planes of the recent bases, newest lowest: G = 2, T = 3 have bit
       // 1 set, so the window's G/T count is a popcount of the high plane
       whi_ = (whi_ << 1) | (uint64_t)(base_code >> 1);
+      wlo_ = (wlo_ << 1) | (uint64_t)(base_code & 1);
     }
     switch (kind_) {
       case K_XOR:      push_base_k<K_XOR>(base_code); break;
@@ -497,17 +494,27 @@ class ModSampler {
   }
 
   // The window (its last k pushed bases) prefers the forward strand when it
-  // has more G/T than A/C; k is odd (checked in the constructor), so the counts
-  // of a window and its reverse complement never tie and exactly one of them
-  // is forward-preferred.
+  // has more G/T than A/C; on a tie (even k), when it is <= its reverse
+  // complement lexicographically (exactly one of a window and its reverse
+  // complement wins unless it is its own reverse complement).
   MOD_ALWAYS_INLINE bool forward_preferred() const {
-    return mod_rule::prefer_forward(2 * __builtin_popcountll(whi_ & wmask_) - k_);
+    return mod_rule::prefer_forward(
+        2 * __builtin_popcountll(whi_ & wmask_) - k_,  // tie only for even k
+        [this]() { return forward_preferred_tie(); });
+  }
+
+  bool forward_preferred_tie() const {
+    // window base j is the (k-1-j)-th newest
+    return mod_rule::window_le_revcomp(k_, [this](int j) {
+      const int i = k_ - 1 - j;
+      return (int)((((whi_ >> i) & 1) << 1) | ((wlo_ >> i) & 1));
+    });
   }
 
   int k_, l_, bpc_;
   bool dna_bpc2_;
   Order order_;
-  uint64_t whi_ = 0;            // DNA: bit 1 (G/T) of the last bases
+  uint64_t whi_ = 0, wlo_ = 0;  // DNA: bits 1 / 0 of the last bases
   uint64_t wmask_ = 0;          // the window's k bases
   uint8_t mirror_slot_[kMaxResidues] = {};  // DNA: mirror-rule slot per class
   int revcom_version_;

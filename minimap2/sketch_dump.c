@@ -41,7 +41,6 @@ int main(int argc, char *argv[])
 		conf.seed = strtoull(argv[4], 0, 0);
 		conf.t = atoi(argv[5]);
 		conf.k = k;
-		conf.w = w;
 		if (argc > 6) conf.greedymini_file = argv[6];
 		if (argc > 7 && strcmp(argv[7], "at1-cg0") == 0) conf.gm_projection = MM_GM_PROJ_AT1_CG0;
 		if ((ord = mm_order_init(&conf, errbuf, sizeof errbuf)) == 0) {

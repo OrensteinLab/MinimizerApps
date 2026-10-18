@@ -13,14 +13,14 @@
  * https://www.biorxiv.org/content/10.1101/2025.01.27.634998v1.full.pdf):
  * every window gets a preferred strand by its G/T count, and the scheme's
  * rule is applied from that strand's side. Applying it to mod-sampling, and
- * the tie rules between equal minimal t-mers below, are these forks' own:
+ * the tie rules below (including even L), are these forks' own:
  *
  *  - prefer_forward: the strand with more G/T bases (the reverse complement
- *    has as many G/T as the window has A/C). The window length L must be odd,
- *    so that the counts of a window and its reverse complement differ and
- *    exactly one of them is forward-preferred; there is no tie rule, and the
- *    kraken2, minimap2 and sshash forks reject an even L for the mod-minimizer
- *    (every method that uses it needs a canonical scheme).
+ *    has as many G/T as the window has A/C); a tie, possible only for even L,
+ *    goes to the forward strand when window <= revcomp(window), so exactly
+ *    one of a window and its reverse complement is forward-preferred unless
+ *    it is its own reverse complement. kraken2 and minimap2 compare
+ *    lexicographically (window_le_revcomp); sshash compares its packed words.
  *  - offset: a forward-preferred window samples x mod w, a reverse-preferred
  *    one applies the same rule from the other end, (w-1) - (((T-1) - x) mod w).
  *    The reverse complement of a window then samples the mirror k-mer.
@@ -42,15 +42,36 @@
 
 namespace mod_rule {
 
-// Whether the window prefers its forward strand: more G/T bases than A/C
-// (two_gt_minus_len = 2 * (G/T count) - L). L is odd, so this is never 0.
-inline bool prefer_forward(int two_gt_minus_len) {
+// Whether the window prefers its forward strand. two_gt_minus_len = 2 * (G/T
+// count) - L; tie() (called only when it is 0) breaks the tie.
+template <typename Tie>
+inline bool prefer_forward(int two_gt_minus_len, Tie tie) {
+#if defined(__GNUC__) || defined(__clang__)
+  if (__builtin_expect(two_gt_minus_len == 0, 0))
+#else
+  if (two_gt_minus_len == 0)
+#endif
+    return tie();
   return two_gt_minus_len > 0;
 }
 
-// The mod-minimizer needs an odd window length L = w + k - 1.
-inline bool window_length_ok(int L) {
-  return (L & 1) != 0;
+// The same, branch-free, when the tie-break is cheap to evaluate eagerly
+// (le_revcomp = window <= revcomp(window)).
+inline bool prefer_forward_eager(int two_gt_minus_len, bool le_revcomp) {
+  return (two_gt_minus_len > 0) | ((two_gt_minus_len == 0) & le_revcomp);
+}
+
+// window <= revcomp(window) lexicographically, for 2-bit bases with
+// complement 3 - b (A,C,G,T = 0,1,2,3): base_at(j) is the window's j-th base.
+template <typename BaseAt>
+inline bool window_le_revcomp(int len, BaseAt base_at) {
+  for (int j = 0; j < len; ++j) {
+    const int a = base_at(j);
+    const int b = 3 - base_at(len - 1 - j);
+    if (a != b)
+      return a < b;
+  }
+  return true;
 }
 
 // The sampled k-mer's offset in the window for the minimal t-mer at locus x.
