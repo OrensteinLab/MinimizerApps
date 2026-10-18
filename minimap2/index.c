@@ -591,7 +591,7 @@ mm_idx_t *mm_idx_load(FILE *fp)
 	if (has_order) { // an index whose order cannot be restored is refused, not mapped with the native order
 		char errbuf[256];
 		mm_order_t *ord = mm_order_load(fp, errbuf, sizeof errbuf);
-		if (ord && mm_order_validate(ord, mi->k, mi->w, errbuf, sizeof errbuf) != 0) {
+		if (ord && mm_order_validate(ord, mi->k, errbuf, sizeof errbuf) != 0) {
 			mm_order_destroy(ord);
 			ord = 0;
 		}

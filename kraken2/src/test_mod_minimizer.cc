@@ -37,8 +37,8 @@ static uint64_t xor_rank(uint64_t canonical, uint64_t toggle_mask) {
 }
 
 // Slow reference MOD stream (no fast-path LUTs/counters): w residue deques,
-// and the window's preferred strand from its k bases (more G/T; k is odd, so
-// the counts never tie). Forward-preferred: offset x_L mod w (x_L =
+// and the window's preferred strand from its k bases (more G/T; tie: window
+// <= its reverse complement). Forward-preferred: offset x_L mod w (x_L =
 // leftmost minimal t-mer); reverse-preferred: (w-1) - (((T-1) - x_R) mod w)
 // (x_R = rightmost minimal t-mer).
 class NaiveModReference {
@@ -1099,8 +1099,8 @@ static void test_gm_scanner_revcom_v0() {
 
 // MOD+GM: GMRanker on raw t-mers (ACGT→ATCG σ-extend); ℓ-mer store is masked.
 static void test_mod_gm_matches_naive() {
-  auto table = synthetic_gm_k4();  // gm_k=4 == t for (k,l)=(7,4)
-  const int k = 7, l = 4;  // k is odd (DNA mod-sampling needs it)
+  auto table = synthetic_gm_k4();  // gm_k=4 == t for (k,l)=(6,4)
+  const int k = 6, l = 4;
   const uint64_t toggle = DEFAULT_TOGGLE_MASK;
   std::mt19937_64 rng(21);
   std::string dna(400, 'A');
@@ -1185,10 +1185,10 @@ static void test_mod_kinds_and_logs() {
       {35, 31, Order::RANDOM_XOR, false, 0, 1},
       {35, 31, Order::RANDOM_XOR, false, smask, 1},
       {35, 31, Order::RANDOM_PCG, false, smask, 1},   // t=6: canonical LUT
-      {45, 31, Order::RANDOM_PCG, false, smask, 1},   // t=16: ranker, no LUT (k odd)
-      {45, 31, Order::RANDOM_XOR, false, 0, 1},       // t=16 xor
-      {7, 4, Order::GM, true, 0, 1},                  // t=4: raw LUT
-      {7, 4, Order::GM, true, 0x3fULL << 2, 1},
+      {40, 31, Order::RANDOM_PCG, false, smask, 1},   // t=11: ranker, no LUT
+      {40, 31, Order::RANDOM_XOR, false, 0, 1},       // t=11 xor
+      {6, 4, Order::GM, true, 0, 1},                  // t=4: raw LUT
+      {6, 4, Order::GM, true, 0x3fULL << 2, 1},
   };
   for (const Cfg &c : cfgs) {
     std::shared_ptr<const GreedyMiniTable> table;
@@ -1257,7 +1257,7 @@ static std::string revcomp_string(const std::string &s) {
 }
 
 // The definition, per k-mer window (no shared state with ModSampler): the
-// preferred strand has more G/T (k odd: no tie); forward ->
+// preferred strand has more G/T (tie: window <= revcomp(window)); forward ->
 // x_L mod w (x_L = leftmost minimal t-mer), reverse -> (w-1) - (((T-1) - x_R)
 // mod w) (x_R = rightmost); the window's canonical l-mer at that offset.
 static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
@@ -1275,7 +1275,11 @@ static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
     int gt = 0;
     for (int i = 0; i < k; i++)
       gt += dna_lut(dna[s + (size_t)i]) >> 1;
-    const bool fwd = 2 * gt > k;
+    bool fwd = 2 * gt > k;
+    if (2 * gt == k) {
+      const std::string win = dna.substr(s, (size_t)k);
+      fwd = win <= revcomp_string(win);
+    }
     std::vector<uint64_t> r((size_t)T);
     for (int x = 0; x < T; x++)
       r[(size_t)x] = dna_canonical_representation(pack(s + (size_t)x, t), (uint8_t)t,
@@ -1296,7 +1300,7 @@ static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
 static void test_matches_string_definition() {
   std::mt19937_64 rng(31);
   const char *bases = "ACGT";
-  for (int k : {35, 37, 39}) {  // w = 5, 7, 9 (k is odd: the G/T counts never tie)
+  for (int k : {35, 36, 37}) {  // w = 5, 6 (even window: G/T ties), 7
     std::string dna(3000, 'A');
     for (char &c : dna)
       c = bases[rng() & 3ULL];
@@ -1327,7 +1331,8 @@ static std::vector<std::pair<bool, uint64_t>> window_selections(
 }
 
 // A read and its reverse complement select the same l-mers, window by window
-// in reverse order (k is odd, so no window is its own reverse complement).
+// in reverse order -- except at a window that is its own reverse complement
+// (possible only for even k), which has no preferred strand.
 static size_t strand_mismatches(const std::string &dna, int k, int l, Order order,
                                 std::shared_ptr<const GreedyMiniTable> table) {
   const auto f = window_selections(dna, k, l, order, table);
@@ -1335,6 +1340,9 @@ static size_t strand_mismatches(const std::string &dna, int k, int l, Order orde
   std::reverse(r.begin(), r.end());
   size_t bad = f.size() != r.size() ? 1 : 0;
   for (size_t i = 0; i < f.size() && i < r.size(); i++) {
+    const std::string win = dna.substr(i, (size_t)k);
+    if (win == revcomp_string(win))
+      continue;
     if (f[i].first != r[i].first || (f[i].first && f[i].second != r[i].second))
       bad++;
   }
@@ -1349,32 +1357,13 @@ static void test_strand_symmetric() {
     c = bases[rng() & 3ULL];
   check(strand_mismatches(dna, 35, 31, Order::RANDOM_XOR, nullptr) == 0,
         "MOD xor: read and reverse complement select the same l-mers");
-  check(strand_mismatches(dna, 37, 31, Order::RANDOM_XOR, nullptr) == 0,
-        "MOD xor, k=37: same l-mers on both strands");
+  check(strand_mismatches(dna, 36, 31, Order::RANDOM_XOR, nullptr) == 0,
+        "MOD xor, even k: same l-mers on both strands");
   check(strand_mismatches(dna, 35, 31, Order::RANDOM_PCG, nullptr) == 0,
         "MOD xor-pcg-hash: same l-mers on both strands");
-  auto table = synthetic_gm_k4();  // gm_k = t = 4 for (k, l) = (7, 4)
-  check(strand_mismatches(dna, 7, 4, Order::GM, table) == 0,
+  auto table = synthetic_gm_k4();  // gm_k = t = 4 for (k, l) = (6, 4)
+  check(strand_mismatches(dna, 6, 4, Order::GM, table) == 0,
         "MOD greedymini: same l-mers on both strands");
-}
-
-// The strand preference (more G/T bases) ties for an even window length, so the DNA sampler
-// requires an odd k and rejects an even one.
-static void test_even_k_rejected() {
-  bool threw = false;
-  try {
-    ModSampler ms(36, 31, 2, DEFAULT_TOGGLE_MASK, true, Order::RANDOM_XOR, CURRENT_REVCOM_VERSION);
-  } catch (const std::invalid_argument &) {
-    threw = true;
-  }
-  check(threw, "MOD on DNA rejects an even window length k");
-  threw = false;
-  try {
-    ModSampler ms(35, 31, 2, DEFAULT_TOGGLE_MASK, true, Order::RANDOM_XOR, CURRENT_REVCOM_VERSION);
-  } catch (const std::invalid_argument &) {
-    threw = true;
-  }
-  check(!threw, "MOD on DNA accepts an odd window length k");
 }
 
 int main() {
@@ -1423,7 +1412,6 @@ int main() {
   test_mod_kinds_and_logs();
   test_matches_string_definition();
   test_strand_symmetric();
-  test_even_k_rejected();
 
   if (failures) {
     std::cerr << failures << " failure(s)\n";

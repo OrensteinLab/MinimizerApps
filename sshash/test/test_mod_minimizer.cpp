@@ -47,7 +47,7 @@ static std::string random_dna(uint64_t n, std::mt19937_64& gen, bool low) {
     specification hash_reference of the raw t-mer); every minimal locus x offers the offset
     x mod w (forward-preferred kmer) or (w-1) - (((T-1) - x) mod w); the offset closest to
     (w-1)/2 wins, two equally close ones by the strand (smaller if forward-preferred);
-    preferred strand by the G/T count (k is odd: never a tie); value the
+    preferred strand by the G/T count (tie: the numerically smaller packed kmer); value the
     canonical packed m-mer at the offset.
 */
 template <typename kmer_t>
@@ -72,7 +72,12 @@ static minimizer_info reference(std::string const& s, uint64_t k, uint64_t m, ui
         if (h[x] == mn) tied.push_back(x);
     }
     const uint64_t gt = std::count(s.begin(), s.end(), 'G') + std::count(s.begin(), s.end(), 'T');
-    const bool fwd = 2 * gt > k;  // k is odd: the G/T counts never tie
+    bool fwd = 2 * gt > k;
+    if (2 * gt == k) {
+        const kmer_t a = util::string_to_uint_kmer<kmer_t>(s.c_str(), k);
+        const kmer_t b = util::string_to_uint_kmer<kmer_t>(revcomp(s).c_str(), k);
+        fwd = !(b < a);
+    }
     std::vector<uint64_t> offsets;
     for (uint64_t x : tied) offsets.push_back(fwd ? x % w : (w - 1) - (((T - 1) - x) % w));
     auto dist = [&](uint64_t p) { return std::max(2 * p, w - 1) - std::min(2 * p, w - 1); };
@@ -111,6 +116,7 @@ static void test_config(uint64_t k, uint64_t m, hasher_type const& hasher, uint6
             break;
         }
         const minimizer_info rc = util::compute_minimizer(kmer_rc, kmer, k, m, hasher);
+        if (s == revcomp(s)) continue;  // no preferred strand (even k only)
         if (rc.minimizer != got.minimizer or rc.pos_in_kmer + got.pos_in_kmer != k - m) {
             fail(label + ": kmer " + s + " and its reverse complement sample loci " +
                  std::to_string(got.pos_in_kmer) + " and " + std::to_string(rc.pos_in_kmer));
@@ -174,13 +180,13 @@ int main(int argc, char** argv) {
 
     std::cout << "mod-minimizer-xor:" << std::endl;
     struct cfg { uint64_t k, m, t; };
-    for (cfg c : {cfg{31, 21, 10}, cfg{31, 21, 11}, cfg{31, 20, 9}, cfg{29, 20, 10},
-                  cfg{15, 11, 5}, cfg{21, 13, 4}, cfg{13, 8, 3}}) {
+    for (cfg c : {cfg{31, 21, 10}, cfg{31, 21, 11}, cfg{31, 20, 9}, cfg{30, 20, 10},
+                  cfg{15, 11, 5}, cfg{21, 13, 4}, cfg{12, 8, 3}}) {
         hasher_type hasher(seed);
         hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
     }
-    for (cfg c : {cfg{47, 31, 8}, cfg{63, 31, 4}, cfg{41, 30, 10}}) {
+    for (cfg c : {cfg{47, 31, 8}, cfg{63, 31, 4}, cfg{40, 30, 10}}) {
         hasher_type hasher(seed);
         hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<wide_kmer_t>(c.k, c.m, hasher, seed, gen, 20000);

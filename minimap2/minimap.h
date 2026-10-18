@@ -107,8 +107,6 @@ typedef struct {
 	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
 	int k;                        // the minimizer length this order is used with (validated
 	                               // against the GreedyMini table's own gm_k at init time)
-	int w;                        // the window size (k-mers); the mod-minimizer needs an odd
-	                               // w + k - 1 (0: not checked)
 } mm_order_conf_t;
 
 typedef struct mm_order_s mm_order_t; // opaque; see order.h/order.cpp
