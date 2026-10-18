@@ -69,7 +69,8 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
     """(n_kmers, n_super) of the strand-symmetric mod-minimizer
     (util::compute_mod_minimizer in sshash/include/util.hpp): per k-mer, the
     T = k - t + 1 canonical t-mers are hashed by `hash_fn`; the k-mer prefers its
-    forward strand when it has more G/T (G=3, T=2: code >= 2; k is odd, so no tie); a minimal t-mer at x samples the m-mer at x mod w, or
+    forward strand when it has more G/T (G=3, T=2: code >= 2; a tie, even k only, is
+    broken by the numeric order of the packed k-mer and its reverse complement); a minimal t-mer at x samples the m-mer at x mod w, or
     (w-1) - (((T-1) - x) mod w) on the reverse strand; with several minimal t-mers,
     the sampled offset closest to (w-1)/2 (two equally close: the smaller on the
     forward strand). n_super counts changes of the sampled position along the
@@ -79,12 +80,10 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
     t-mers and k-mers are packed as sshash packs them (kmer.hpp: drop_char shifts
     the first base out of the low bits), first base least significant -- not this
     module's MSB-first packing of the plain orders -- so the canonical t-mer (and
-    hence its xor hash) match the compiled order exactly."""
+    hence its xor hash) and the strand tie match the compiled order exactly."""
     n = len(dna_stream)
     w = k - m + 1
     T = k - t + 1
-    if k % 2 == 0:
-        raise ValueError("the mod-minimizer needs an odd k (the strand preference ties for an even k)")
     if n < k:
         return 0, 0
     top = 2 * (t - 1)
@@ -102,7 +101,13 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
             gt += (dna_stream[s + k - 1] >= 2) - (dna_stream[s - 1] >= 2)
         r = ranks[s:s + T]
         mn = min(r)
-        fwd = 2 * gt > k  # k is odd: the G/T counts never tie
+        if 2 * gt != k:
+            fwd = 2 * gt > k
+        else:
+            kv = 0
+            for j, b in enumerate(dna_stream[s:s + k]):
+                kv |= b << (2 * j)
+            fwd = kv <= dna_reverse_complement(kv, k)  # !(kmer_rc < kmer)
         offs = [x % w if fwd else (w - 1) - (((T - 1) - x) % w)
                 for x in range(T) if r[x] == mn]
         if len(offs) == 1:

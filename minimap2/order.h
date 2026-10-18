@@ -58,10 +58,9 @@ int mm_order_dump(const mm_order_t *ord, FILE *fp);
 mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len);
 
 // Checks that ord can sketch the index's k-mers (k <= 28; for mod-minimizer
-// 0 < t < k and an odd window length w + k - 1, checked when w > 0; for greedymini
-// a table built for length k), as mm_idx_load does for an order read from an .mmi.
-// Returns 0, or -1 with a message in errbuf.
-int mm_order_validate(const mm_order_t *ord, int k, int w, char *errbuf, size_t errbuf_len);
+// 0 < t < k; for greedymini a table built for length k), as mm_idx_load does
+// for an order read from an .mmi. Returns 0, or -1 with a message in errbuf.
+int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, size_t errbuf_len);
 
 // 1 if conf (the command-line order) describes ord (an index's stored order):
 // same kind, seed, mod t, projection and, when conf names one, the same

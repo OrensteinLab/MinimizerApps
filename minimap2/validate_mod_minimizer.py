@@ -5,8 +5,8 @@ strand-symmetric mod-minimizer-xor sketch.
 brute_force() applies the definition window by window (no deques, no
 incremental state): for the window of L = w+k-1 bases starting at k-mer
 ordinal `win`, the T = w+k-t t-mers are ranked as canonical t-mer XOR seed;
-the preferred strand has more G/T bases (L is odd, so never a tie; an even L is
-rejected by the compiled code, checked below); a forward-preferred window samples the k-mer at
+the preferred strand has more G/T bases (tie, even L: window <= its reverse
+complement lexicographically); a forward-preferred window samples the k-mer at
 offset x_L mod w (x_L = leftmost minimal t-mer, as in Groot Koerkamp & Pibiri,
 WABI 2024), a reverse-preferred one at (w-1) - (((T-1) - x_R) mod w) (x_R =
 rightmost minimal t-mer).
@@ -15,7 +15,8 @@ On many random (w, k, t, seed) configs the compiled code, via the sketch_dump
 test driver (`make sketch_dump`), must emit exactly the brute force's loci,
 including sequences with N runs (every N resets the scan) and even k
 (palindromic k-mers are skipped, as in native mm_sketch()); and a sequence and
-its reverse complement must select mirrored loci (strictly canonical).
+its reverse complement must select mirrored loci, except inside windows that
+are their own reverse complement (no preferred strand).
 """
 from __future__ import annotations
 
@@ -67,7 +68,10 @@ def brute_force(seq: list[int], w: int, k: int, t: int, seed: int) -> list[int]:
     for win in range(len(seq) - L + 1):
         bases = seq[win:win + L]
         gt = sum(1 for b in bases if b >= 2)
-        fwd = 2 * gt > L  # L is odd: the counts never tie
+        if 2 * gt != L:
+            fwd = 2 * gt > L
+        else:
+            fwd = bases <= [3 - b for b in reversed(bases)]
         ranks = [xor(canon(t_raw[win + x], t), seed) for x in range(T)]
         m = min(ranks)
         if fwd:
@@ -136,46 +140,50 @@ def run_case(rng: random.Random, w: int, k: int, t: int, seed: int, seq_len: int
             i = next((i for i, (a, b) in enumerate(zip(exp, got)) if a != b), min(len(exp), len(got)))
             return (f"compiled order.cpp vs brute force differ at emission {i} (with_n={with_n}, "
                     f"exp_len={len(exp)} got_len={len(got)})")
-    # a sequence and its reverse complement select mirrored loci (L is odd, so no window is
-    # its own reverse complement and every window has exactly one preferred strand)
+    # a sequence and its reverse complement select mirrored loci
     n = len(plain[0])
     rc_s = plain[0][::-1].translate(str.maketrans("ACGT", "TGCA"))
     fwd = set(run_binary(plain[0], w, k, t, seed))
     mirrored = {(n - 1) - (e - k + 1) for e in run_binary(rc_s, w, k, t, seed)}
-    if fwd != mirrored:
-        return f"{len(fwd ^ mirrored)} loci differ between the strands"
+    # The only allowed exception: a window that is its own reverse complement
+    # (possible only for even L) has no preferred strand, so both strands use
+    # the forward rule there.
+    L = w + k - 1
+    codes = plain[1][0][1]
+    palin_kmers = set()
+    for st in range(len(codes) - L + 1):
+        win = codes[st:st + L]
+        if win == [3 - b for b in reversed(win)]:
+            palin_kmers.update(range(st, st + w))
+    unexplained = {e for e in fwd ^ mirrored if (e - k + 1) not in palin_kmers}
+    if unexplained:
+        return f"{len(unexplained)} loci differ between the strands outside self-reverse-complement windows"
     return None
 
 
 def main() -> int:
     configs = [
-        # (w, k, t, seq_len); w + k - 1 must be odd
-        (11, 15, 4, 4000),   # the benchmark's k15 (map-ont preset), t = 4 + (15-4) mod 11
-        (11, 19, 8, 20000),  # the benchmark's k19 (map-pb preset), t = 4 + (19-4) mod 11
-        (51, 15, 5, 6000),   # large window, L = 65 > 32 (ring path)
-        (13, 15, 6, 3000),
-        (10, 20, 8, 4000),
-        (6, 12, 4, 3000),    # even k (w even): palindromic k-mers possible
-        (16, 20, 7, 5000),   # L = 35 > 32
-        (3, 9, 2, 2000),
+        # (w, k, t, seq_len)
+        (10, 15, 5, 4000),   # the benchmark's own k15_w10, t=5
+        (10, 19, 9, 20000),  # the benchmark's k19_w10, t=9
+        (50, 15, 5, 6000),   # large window, L > 32 (ring path)
+        (11, 15, 5, 3000),
+        (10, 21, 8, 4000),
+        (5, 12, 4, 3000),    # even k: palindromes possible
+        (16, 20, 7, 5000),   # L = 35 > 32, odd
+        (3, 8, 2, 2000),     # even L: preference ties
         (2, 6, 2, 1500),
-        (1, 7, 3, 1200),     # w=1
-        (101, 15, 5, 8000),
-        (11, 15, 14, 3000),  # t close to k
+        (1, 6, 3, 1200),     # w=1
+        (100, 15, 5, 8000),
+        (10, 15, 14, 3000),  # t close to k
     ]
     seeds = [0x2545F4914F6CDD1D, 0x9E3779B97F4A7C15, 0x1234567890ABCDEF, 0, 1]
     if not SKETCH_DUMP.is_file():
         print(f"error: {SKETCH_DUMP.name} not built (make sketch_dump)", file=sys.stderr)
         return 1
 
-    # an even window length is rejected by the compiled code (no tie rule exists for it)
     n_cases = 0
     failures = []
-    for (w, k, t) in ((10, 15, 5), (12, 19, 8), (3, 8, 2)):
-        res = subprocess.run([str(SKETCH_DUMP), "mod-minimizer-xor", str(w), str(k), "0x1", str(t)],
-                             input="ACGT" * 40, capture_output=True, text=True)
-        if res.returncode == 0 or "odd window length" not in res.stderr:
-            failures.append(f"(w={w},k={k},t={t}): even L = {w + k - 1} was not rejected")
     rng = random.Random(1234567)
     for (w, k, t, seq_len) in configs:
         for seed in seeds:
@@ -190,7 +198,7 @@ def main() -> int:
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print("all cases match the brute-force reference; selections are strand-symmetric; even L is rejected")
+    print("all cases match the brute-force reference; selections are strand-symmetric")
     return 0
 
 

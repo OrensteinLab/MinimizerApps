@@ -188,8 +188,8 @@ run it at all) for `w >= k`.
 **mod-minimizer-xor is strand-symmetric**: plain mod-sampling ("reduce the
 winning t-mer's position mod w") is not reverse-complement symmetric, so
 minimap2's mod-minimizer-xor uses a canonical variant (this repo, not a
-published scheme): each window prefers the strand with more G/T bases (`w+k-1` must
-be odd, so there is no tie, and an even length is rejected); forward-preferred windows use the
+published scheme): each window prefers the strand with more G/T bases (tie:
+the lexicographically smaller strand); forward-preferred windows use the
 mod-sampling rule, reverse-preferred ones its mirror (rightmost minimal t-mer,
 offset counted from the window's right end). A read and its reverse
 complement then select the same loci, as for the per-locus canonical orders.

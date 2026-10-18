@@ -25,7 +25,7 @@ inside backticks all mean the k-mer.
 | `pcg_rxs_m_xs.h` | `pcg_rxs_m_xs64(x)`: `count = x>>59; x ^= x>>(5+count); x *= 12605985483714917081; return x ^ (x>>43)` | `PcgRanker` | `plain_hasher` | `RankState<XOR_PCG_HASH>` | `build_gm_rank_by_dna` |
 | `greedymini_rank.h` | key/tie-break extraction (`gm_acgt_to_atcg`, `gm_extract_dna_key/_tb`, `pext`/SWAR), `GreedyMiniTable` (uint16 ranks, `kInfRank = 0xFFFF`), `.gm` I/O (`load_gm_file_raw`, `write_gm_file_raw`, `load_gm_table`) | yes (via `kraken2/src/greedymini_rank.h`) | yes | yes | yes (`CMmer::DnaToBinaryKey`, `load_gm_file_raw`) |
 | `greedymini_centre.h` | namespace `gm_centre`: `Order` (centre extension, two packings), `TwoBitPlanes<SigmaXor>`, `roll_in_low/high`, `validate_table`, `Reference`, `density_factor` | `GMRanker` | `custom_order_hasher` | `order.cpp` | not used |
-| `mod_minimizer_rule.h` | namespace `mod_rule`: `prefer_forward`, `window_length_ok`, `offset`, `mirror_slot`, `select_slot`, `centre_tie_offset` | `ModSampler` | `util.hpp` | `sketch_mod_minimizer` | not used |
+| `mod_minimizer_rule.h` | namespace `mod_rule`: `prefer_forward`, `window_le_revcomp`, `offset`, `mirror_slot`, `select_slot`, `centre_tie_offset` | `ModSampler` | `util.hpp` | `sketch_mod_minimizer` | not used |
 | `dna_revcomp.h` | `dna_reverse_complement` on packed 2-bit k-mers | own copy in `dna_kmer.h` | own encoding | own loops | `CMmer::DnaReverseComplement` |
 | `gm_serializer.cpp` (+ `Makefile`) | builds a `.gm` from a rank-list `.txt`; `--canonical` gives each listed k-mer and its reverse the same rank | tool | tool | tool | tool |
 
@@ -182,12 +182,9 @@ sshash `k, m`; minimap2 `w, k`); the minimal t-mer at locus `x` selects the
 k-mer at offset `x mod w`.
 Strand-symmetric rule (`mod_minimizer_rule.h`):
 
-- `prefer_forward(2*GT - L)`: the strand with more G/T bases. L must be odd
-  (`window_length_ok`): the G/T counts of a window and its reverse complement
-  then differ, exactly one is forward-preferred, and the scheme is strictly
-  canonical. There is no tie rule: kraken2 (window k), minimap2 (`w + k - 1`)
-  and sshash (k) reject an even length for the mod-minimizer, since every
-  method that uses it needs a canonical scheme.
+- `prefer_forward(2*GT - L, tie)`: the strand with more G/T bases; on a tie
+  (even L) `window_le_revcomp` (kraken2, minimap2) or `!(kmer_rc < kmer)` on
+  packed words (sshash). `prefer_forward_eager` is the branch-free variant.
 - `offset(x, w, T, fwd)`: forward `x % w`; reverse `(w-1) - (((T-1)-x) % w)`.
 - Ties between equal minimal t-mers: kraken2 and minimap2 take the leftmost
   (`x_L`) on a forward window and the rightmost (`x_R`) otherwise; sshash uses
