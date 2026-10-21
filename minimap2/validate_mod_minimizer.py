@@ -4,19 +4,19 @@ strand-symmetric mod-minimizer-xor sketch.
 
 brute_force() applies the definition window by window (no deques, no
 incremental state): for the window of L = w+k-1 bases starting at k-mer
-ordinal `win`, the T = w+k-t t-mers are ranked as canonical t-mer XOR seed;
-the preferred strand has more G/T bases (tie, even L: window <= its reverse
-complement lexicographically); a forward-preferred window samples the k-mer at
-offset x_L mod w (x_L = leftmost minimal t-mer, as in Groot Koerkamp & Pibiri,
-WABI 2024), a reverse-preferred one at (w-1) - (((T-1) - x_R) mod w) (x_R =
-rightmost minimal t-mer).
+ordinal `win`, the T = w+k-t t-mers are ranked as canonical t-mer XOR seed
+(t == k mod w); every minimal t-mer x offers the offset x mod w, the one
+closest to the centre (w-1)/2 wins, and between two equally close ones the
+left if the window <= its reverse complement lexicographically, the right
+otherwise (the centre rule, common/minimizer-orders/mod_minimizer_rule.h).
 
-On many random (w, k, t, seed) configs the compiled code, via the sketch_dump
-test driver (`make sketch_dump`), must emit exactly the brute force's loci,
-including sequences with N runs (every N resets the scan) and even k
-(palindromic k-mers are skipped, as in native mm_sketch()); and a sequence and
-its reverse complement must select mirrored loci, except inside windows that
-are their own reverse complement (no preferred strand).
+On (w, k, t, seed) configs the compiled code, via the sketch_dump test driver
+(`make sketch_dump`), must emit exactly the brute force's loci, including
+sequences with N runs (every N resets the scan), low-complexity sequences
+(many ties) and even k (palindromic k-mers are skipped, as in native
+mm_sketch()); a sequence and its reverse complement must select mirrored loci,
+except inside windows that are their own reverse complement (both strands then
+take the left offset); and the selected loci never move backwards (forward).
 """
 from __future__ import annotations
 
@@ -59,28 +59,29 @@ def rolling_values(seq: list[int], length: int) -> list[int]:
     return out
 
 
-def brute_force(seq: list[int], w: int, k: int, t: int, seed: int) -> list[int]:
-    """Sorted distinct k-mer ordinals selected by the definition above."""
+def window_selections(seq: list[int], w: int, k: int, t: int, seed: int) -> list[int]:
+    """The k-mer ordinal each window selects, by the definition above."""
+    assert t % w == k % w, "the centre rule needs t == k (mod w)"
     T = w + k - t
     L = w + k - 1
     t_raw = rolling_values(seq, t)
-    out = set()
+    out = []
     for win in range(len(seq) - L + 1):
         bases = seq[win:win + L]
-        gt = sum(1 for b in bases if b >= 2)
-        if 2 * gt != L:
-            fwd = 2 * gt > L
-        else:
-            fwd = bases <= [3 - b for b in reversed(bases)]
         ranks = [xor(canon(t_raw[win + x], t), seed) for x in range(T)]
         m = min(ranks)
-        if fwd:
-            off = ranks.index(m) % w
-        else:
-            x_r = T - 1 - ranks[::-1].index(m)
-            off = (w - 1) - (((T - 1) - x_r) % w)
-        out.add(win + off)
-    return sorted(out)
+        offs = {x % w for x in range(T) if ranks[x] == m}
+        best = min(abs(2 * p - (w - 1)) for p in offs)
+        lo, hi = min(p for p in offs if abs(2 * p - (w - 1)) == best), max(
+            p for p in offs if abs(2 * p - (w - 1)) == best)
+        left = bases <= [3 - b for b in reversed(bases)]
+        out.append(win + (lo if lo == hi or left else hi))
+    return out
+
+
+def brute_force(seq: list[int], w: int, k: int, t: int, seed: int) -> list[int]:
+    """Sorted distinct k-mer ordinals selected by the definition above."""
+    return sorted(set(window_selections(seq, w, k, t, seed)))
 
 
 def expected_end_positions(segments: list[tuple[int, list[int]]], w: int, k: int, t: int, seed: int) -> list[int]:
@@ -95,9 +96,10 @@ def expected_end_positions(segments: list[tuple[int, list[int]]], w: int, k: int
     return out
 
 
-def make_sequence(rng: random.Random, seq_len: int, with_n: bool) -> tuple[str, list[tuple[int, list[int]]]]:
-    """A random ACGT string (optionally with a few N runs) and its N-free
-    segments as (raw start, 2-bit codes)."""
+def make_sequence(rng: random.Random, seq_len: int, with_n: bool,
+                  alphabet: str = "ACGT") -> tuple[str, list[tuple[int, list[int]]]]:
+    """A random string over `alphabet` (optionally with a few N runs) and its
+    N-free segments as (raw start, 2-bit codes)."""
     chars = []
     i = 0
     while i < seq_len:
@@ -106,7 +108,7 @@ def make_sequence(rng: random.Random, seq_len: int, with_n: bool) -> tuple[str, 
             chars.extend("N" * n)
             i += n
         else:
-            chars.append("ACGT"[rng.randrange(4)])
+            chars.append(alphabet[rng.randrange(len(alphabet))])
             i += 1
     s = "".join(chars)
     segments, cur, cur_start = [], [], 0
@@ -133,7 +135,11 @@ def run_binary(s: str, w: int, k: int, t: int, seed: int) -> list[int]:
 def run_case(rng: random.Random, w: int, k: int, t: int, seed: int, seq_len: int) -> str | None:
     plain = make_sequence(rng, seq_len, with_n=False)
     with_n_seq = make_sequence(rng, seq_len, with_n=True)
-    for with_n, (s_, segs) in ((False, plain), (True, with_n_seq)):
+    low = make_sequence(rng, seq_len, with_n=False, alphabet="AC")
+    sel = window_selections(low[1][0][1], w, k, t, seed)
+    if any(b < a for a, b in zip(sel, sel[1:])):
+        return "the definition moved backwards on a low-complexity sequence"
+    for with_n, (s_, segs) in ((False, plain), (True, with_n_seq), ("low", low)):
         exp = expected_end_positions(segs, w, k, t, seed)
         got = run_binary(s_, w, k, t, seed)
         if exp != got:
@@ -146,8 +152,7 @@ def run_case(rng: random.Random, w: int, k: int, t: int, seed: int, seq_len: int
     fwd = set(run_binary(plain[0], w, k, t, seed))
     mirrored = {(n - 1) - (e - k + 1) for e in run_binary(rc_s, w, k, t, seed)}
     # The only allowed exception: a window that is its own reverse complement
-    # (possible only for even L) has no preferred strand, so both strands use
-    # the forward rule there.
+    # (possible only for even L) takes the left offset on both strands.
     L = w + k - 1
     codes = plain[1][0][1]
     palin_kmers = set()
@@ -163,19 +168,18 @@ def run_case(rng: random.Random, w: int, k: int, t: int, seed: int, seq_len: int
 
 def main() -> int:
     configs = [
-        # (w, k, t, seq_len)
+        # (w, k, t, seq_len), t == k (mod w)
         (10, 15, 5, 4000),   # the benchmark's own k15_w10, t=5
         (10, 19, 9, 20000),  # the benchmark's k19_w10, t=9
-        (50, 15, 5, 6000),   # large window, L > 32 (ring path)
-        (11, 15, 5, 3000),
-        (10, 21, 8, 4000),
-        (5, 12, 4, 3000),    # even k: palindromes possible
-        (16, 20, 7, 5000),   # L = 35 > 32, odd
-        (3, 8, 2, 2000),     # even L: preference ties
+        (11, 15, 4, 3000),
+        (10, 21, 1, 4000),   # t = 1: ties in almost every window
+        (5, 12, 2, 3000),    # even k: palindromes possible
+        (16, 20, 4, 5000),   # L = 35 > 32, odd
+        (3, 8, 2, 2000),     # even L
         (2, 6, 2, 1500),
         (1, 6, 3, 1200),     # w=1
-        (100, 15, 5, 8000),
-        (10, 15, 14, 3000),  # t close to k
+        (13, 26, 13, 4000),  # even L = 38
+        (27, 28, 1, 6000),   # the widest window, L = 54
     ]
     seeds = [0x2545F4914F6CDD1D, 0x9E3779B97F4A7C15, 0x1234567890ABCDEF, 0, 1]
     if not SKETCH_DUMP.is_file():

@@ -3,36 +3,34 @@
  * minimap2 and sshash forks. Header only, C++11; each app keeps its own scan
  * (deque or ring) and calls these to decide which k-mer a window samples.
  *
- * Mod-sampling (Groot Koerkamp & Pibiri, WABI 2024): a window of w k-mers
+ * Mod-sampling (Groot Koerkamp & Pibiri, WABI 2024): a window v of w k-mers
  * (L = w + k - 1 bases) holds T = w + k - t t-mers; with x the locus of its
- * minimal t-mer, plain mod-sampling picks the k-mer at offset x mod w. That
- * is not reverse-complement symmetric. For the canonical variant we use the
- * definition of canonical sampling in simd-minimizers (Groot Koerkamp &
- * Martayan, "SimdMinimizers: Computing random minimizers, fast", bioRxiv
- * 2025.01.27.634998,
- * https://www.biorxiv.org/content/10.1101/2025.01.27.634998v1.full.pdf):
- * every window gets a preferred strand by its G/T count, and the scheme's
- * rule is applied from that strand's side. Applying it to mod-sampling, and
- * the tie rules below (including even L), are these forks' own:
+ * minimal t-mer, mod-sampling picks the k-mer at offset p = x mod w.
  *
- *  - prefer_forward: the strand with more G/T bases (the reverse complement
- *    has as many G/T as the window has A/C); a tie, possible only for even L,
- *    goes to the forward strand when window <= revcomp(window), so exactly
- *    one of a window and its reverse complement is forward-preferred unless
- *    it is its own reverse complement. kraken2 and minimap2 compare
- *    lexicographically (window_le_revcomp); sshash compares its packed words.
- *  - offset: a forward-preferred window samples x mod w, a reverse-preferred
- *    one applies the same rule from the other end, (w-1) - (((T-1) - x) mod w).
- *    The reverse complement of a window then samples the mirror k-mer.
- *  - Ties at the minimum (several minimal t-mers):
- *      kraken2, minimap2: x = the leftmost minimal t-mer when forward-
- *        preferred, the rightmost otherwise (in a residue-class ring the
- *        rightmost one's slot is mirror_slot of its class);
- *      sshash: centre_tie_offset, the offset closest to the centre (w-1)/2
- *        over all minimal t-mers, which keeps the scheme forward when
- *        t == m mod w (sshash's builder relies on that).
- *  With t = 4 + (m - 4) mod w (m = minimizer length), T-1 == w-1 (mod w) and
- *  both offset rules reduce to x mod w.
+ * We require t == k (mod w) (t_is_canonical; the usual t = r + (k - r) mod w
+ * satisfies it). Then T - 1 == w - 1 (mod w): the mirror locus T-1-x of x in
+ * RC(v) has offset w-1-p, so with strand-invariant t-mer ranks the minimal
+ * t-mers of RC(v) offer exactly the mirror offsets of those of v.
+ *
+ * Ties at the minimum (several minimal t-mers in different residue classes,
+ * which select different k-mers) are broken by the centre rule of Cologni and
+ * Pibiri ("Canonical Schemes and Minimizers", Proposition 24; SSHash v6.0.0,
+ * PR 93, which applies it to plain minimizers):
+ *   1. the offset closest to the window centre (w-1)/2, i.e. the smallest
+ *      doubled distance |2p - (w-1)|;
+ *   2. between the two equally close mirror offsets p and w-1-p, the left one
+ *      if v <= RC(v), the right one otherwise.
+ * RC(v) then samples the mirror k-mer (canonical), and since a tied offset
+ * stays put while the window slides and new candidates enter on the right,
+ * the selection never moves backwards (forward). A unique minimum needs no
+ * strand computation at all; v <= RC(v) is evaluated only on an exact
+ * two-way tie. The comparison is any fixed total order on windows: kraken2
+ * and minimap2 compare lexicographically (le_revcomp_planes,
+ * window_le_revcomp), sshash compares its packed words as its plain rule does.
+ *
+ * This replaces the G/T-strand rule of SimdMinimizers (Groot Koerkamp &
+ * Martayan, bioRxiv 2025.01.27.634998: leftmost minimum on the strand with
+ * more G/T bases), which is canonical but not forward.
  */
 
 #ifndef MINIMIZER_ORDERS_MOD_MINIMIZER_RULE_H_
@@ -42,27 +40,80 @@
 
 namespace mod_rule {
 
-// Whether the window prefers its forward strand. two_gt_minus_len = 2 * (G/T
-// count) - L; tie() (called only when it is 0) breaks the tie.
-template <typename Tie>
-inline bool prefer_forward(int two_gt_minus_len, Tie tie) {
-#if defined(__GNUC__) || defined(__clang__)
-  if (__builtin_expect(two_gt_minus_len == 0, 0))
-#else
-  if (two_gt_minus_len == 0)
-#endif
-    return tie();
-  return two_gt_minus_len > 0;
+// Whether the centre rule applies: t == k (mod w).
+inline bool t_is_canonical(int k, int w, int t) {
+  return w > 0 && t > 0 && t % w == k % w;
 }
 
-// The same, branch-free, when the tie-break is cheap to evaluate eagerly
-// (le_revcomp = window <= revcomp(window)).
-inline bool prefer_forward_eager(int two_gt_minus_len, bool le_revcomp) {
-  return (two_gt_minus_len > 0) | ((two_gt_minus_len == 0) & le_revcomp);
+// Doubled distance of offset p from the centre (w-1)/2 of w offsets.
+inline uint64_t centre_dist2(uint64_t p, uint64_t w) {
+  return 2 * p > w - 1 ? 2 * p - (w - 1) : (w - 1) - 2 * p;
 }
 
-// window <= revcomp(window) lexicographically, for 2-bit bases with
-// complement 3 - b (A,C,G,T = 0,1,2,3): base_at(j) is the window's j-th base.
+// The centre rule over candidate offsets added one by one (any order).
+struct CentrePick {
+  uint64_t best = ~uint64_t(0), lo = 0, hi = 0;
+
+  void add(uint64_t p, uint64_t w) {
+    const uint64_t d = centre_dist2(p, w);
+    if (d < best) {
+      best = d;
+      lo = hi = p;
+    } else if (d == best) {  // the mirror offset, or p itself again
+      lo = p < lo ? p : lo;
+      hi = p > hi ? p : hi;
+    }
+  }
+
+  // le_rc() = v <= RC(v), called only when two offsets remain.
+  template <typename LeRc>
+  uint64_t pick(LeRc le_rc) const {
+    return lo == hi || le_rc() ? lo : hi;
+  }
+};
+
+// The offset over the loci x in [x_l, x_r] with is_min(x).
+template <typename IsMin, typename LeRc>
+inline uint64_t centre_tie_offset(uint64_t x_l, uint64_t x_r, uint64_t w,
+                                  IsMin is_min, LeRc le_rc) {
+  CentrePick c;
+  for (uint64_t x = x_l; x <= x_r; ++x)
+    if (is_min(x))
+      c.add(x % w, w);
+  return c.pick(le_rc);
+}
+
+// Reverse the low n bits (n in 1..64) of v.
+inline uint64_t reverse_low_bits(uint64_t v, int n) {
+  v = __builtin_bswap64(v);
+  v = ((v >> 4) & 0x0F0F0F0F0F0F0F0FULL) | ((v & 0x0F0F0F0F0F0F0F0FULL) << 4);
+  v = ((v >> 2) & 0x3333333333333333ULL) | ((v & 0x3333333333333333ULL) << 2);
+  v = ((v >> 1) & 0x5555555555555555ULL) | ((v & 0x5555555555555555ULL) << 1);
+  return v >> (64 - n);
+}
+
+// window <= revcomp(window) lexicographically, in O(1), for len <= 64 bases
+// with 2-bit codes A,C,G,T = 0,1,2,3 (complement 3 - b) held as two bit
+// planes: bit i of hi / lo is bit 1 / bit 0 of the base len-1-i, i.e. the
+// first base is the highest bit and the newest the lowest (a plane rolled by
+// (plane << 1) | bit). Bits at and above len are ignored.
+inline bool le_revcomp_planes(uint64_t hi, uint64_t lo, int len) {
+  const uint64_t mask = len >= 64 ? ~0ULL : (1ULL << len) - 1;
+  hi &= mask;
+  lo &= mask;
+  // RC base j = 3 - base len-1-j: complement both planes, reverse their order
+  const uint64_t rhi = reverse_low_bits(~hi, len);
+  const uint64_t rlo = reverse_low_bits(~lo, len);
+  const uint64_t diff = ((hi ^ rhi) | (lo ^ rlo)) & mask;
+  if (diff == 0)  // its own reverse complement
+    return true;
+  const int b = 63 - __builtin_clzll(diff);  // the first differing base
+  const unsigned a = (unsigned)(((hi >> b) & 1) << 1 | ((lo >> b) & 1));
+  const unsigned r = (unsigned)(((rhi >> b) & 1) << 1 | ((rlo >> b) & 1));
+  return a < r;
+}
+
+// The same for any length, base_at(j) = the window's j-th base (0..3).
 template <typename BaseAt>
 inline bool window_le_revcomp(int len, BaseAt base_at) {
   for (int j = 0; j < len; ++j) {
@@ -72,50 +123,6 @@ inline bool window_le_revcomp(int len, BaseAt base_at) {
       return a < b;
   }
   return true;
-}
-
-// The sampled k-mer's offset in the window for the minimal t-mer at locus x.
-inline uint64_t offset(uint64_t x, uint64_t w, uint64_t T, bool forward) {
-  return forward ? x % w : (w - 1) - (((T - 1) - x) % w);
-}
-
-// Residue-class rings (slot = k-mer position mod w): a reverse-preferred
-// window whose rightmost minimal t-mer is in class cls samples the k-mer in
-// slot (cls + (w-1) - (T-1)) mod w, independent of the window's position.
-inline int mirror_slot(int cls, int w, int T) {
-  return (cls + (w - 1) - (T - 1) % w) % w;
-}
-
-// Branch-free choice between the forward slot and the mirror slot (the
-// preference is close to a fair coin per window).
-inline int select_slot(int forward_slot, int mirror, bool forward) {
-  const int fmask = -(int)forward;
-  return mirror ^ ((forward_slot ^ mirror) & fmask);
-}
-
-// sshash's tie rule: over the loci x in [x_l, x_r] with is_min(x), the offset
-// closest to the centre (w-1)/2 (doubled distance |2p - (w-1)|), and between
-// two equally close ones (mirror images p and w-1-p) the smaller on a
-// forward-preferred window, the larger otherwise.
-template <typename IsMin>
-inline uint64_t centre_tie_offset(uint64_t x_l, uint64_t x_r, uint64_t w,
-                                  uint64_t T, bool forward, IsMin is_min) {
-  uint64_t best = ~uint64_t(0), lo = 0, hi = 0;
-  for (uint64_t x = x_l; x <= x_r; ++x) {
-    if (!is_min(x))
-      continue;
-    const uint64_t p = offset(x, w, T, forward);
-    const uint64_t d = 2 * p > w - 1 ? 2 * p - (w - 1) : (w - 1) - 2 * p;
-    if (d < best) {
-      best = d;
-      lo = p;
-      hi = p;
-    } else if (d == best) {
-      lo = p < lo ? p : lo;
-      hi = p > hi ? p : hi;
-    }
-  }
-  return forward ? lo : hi;
 }
 
 }  // namespace mod_rule

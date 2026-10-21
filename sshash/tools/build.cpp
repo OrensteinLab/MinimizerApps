@@ -123,6 +123,14 @@ int build(int argc, char** argv) {
         return 1;
     }
 
+    if (is_mod_mode(build_config.order) and
+        !mod_rule::t_is_canonical(int(m), int(k - m + 1), int(build_config.mod_t))) {
+        std::cerr << "Error: the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie "
+                     "rule; e.g. t = 4 + (m - 4) mod (k - m + 1))"
+                  << std::endl;
+        return 1;
+    }
+
     if (is_gm_mode(build_config.order) or is_mod_mode(build_config.order)) {
         /* fail early with a clear message (e.g. an odd m - gm_k,
            or a table that is not mirror-symmetric) instead of an uncaught exception */

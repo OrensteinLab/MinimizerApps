@@ -591,88 +591,47 @@ minimizer_info compute_minimizer_ranked(Kmer kmer, Kmer const& kmer_rc, const ui
 }
 
 /*
-    Number of G and T bases of a kmer: in both nucleotide encodings (A=00, C=01, G=11, T=10 and
-    the traditional A=00, C=01, G=10, T=11) exactly G and T have bit 1 set.
+    v <= RC(v) for the centre tie rule of the mod-minimizer: the same comparison of packed words
+    as resolve_tie's `!(kmer_rc < kmer)`; true without strands (plain mod-sampling).
 */
 template <typename Kmer>
-inline uint64_t count_gt(Kmer const& kmer, const uint64_t k) {
-    static_assert(Kmer::bits_per_char == 2, "DNA kmers only");
-    constexpr uint64_t hi_bits = 0xAAAAAAAAAAAAAAAAull;
-    const uint64_t lo = uint64_t(kmer);
-    if (2 * k <= 64) {
-        const uint64_t mask = 2 * k == 64 ? ~uint64_t(0) : (uint64_t(1) << (2 * k)) - 1;
-        return uint64_t(__builtin_popcountll(lo & hi_bits & mask));
-    }
-    uint64_t hi = 0;
-    if constexpr (sizeof(kmer.bits) > 8) hi = uint64_t(kmer.bits >> 64);
-    const uint64_t hmask = 2 * k - 64 == 64 ? ~uint64_t(0) : (uint64_t(1) << (2 * k - 64)) - 1;
-    return uint64_t(__builtin_popcountll(lo & hi_bits)) +
-           uint64_t(__builtin_popcountll(hi & hi_bits & hmask));
-}
-
-/*
-    Whether the mod-minimizer samples the kmer from its forward strand: the strand with more G/T
-    bases is preferred (rc(x) has as many G/T as x has A/C); on a tie (even k only) the
-    numerically smaller of x and rc(x) -- exactly one of a kmer and its reverse complement is
-    forward-preferred unless it is its own reverse complement.
-*/
-template <typename Kmer>
-inline bool mod_forward_preferred(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k) {
-    if constexpr (!Kmer::has_reverse_complement) {  // no strands: plain mod-sampling
-        (void)kmer, (void)kmer_rc, (void)k;
+inline bool mod_le_rc(Kmer const& kmer, Kmer const& kmer_rc) {
+    if constexpr (!Kmer::has_reverse_complement) {
+        (void)kmer, (void)kmer_rc;
         return true;
     } else {
-        return mod_rule::prefer_forward(int(2 * count_gt(kmer, k)) - int(k),
-                                        [&]() { return !(kmer_rc < kmer); });
+        return !(kmer_rc < kmer);
     }
-}
-
-/* The offset of the sampled m-mer for the minimal t-mer at locus x (see compute_mod_minimizer). */
-inline uint64_t mod_offset(uint64_t x, uint64_t w, uint64_t T, bool forward_preferred) {
-    return mod_rule::offset(x, w, T, forward_preferred);
 }
 
 /* Tie at the minimum of the mod-minimizer: every locus in [x_l, x_r] whose hash
-   (hashes[(base + x) & 63]) is min_hash offers the offset mod_offset(x); take the offset closest
-   to the centre (w-1)/2 of the kmer's m-mers (doubled distance |2p - (w-1)|), and between two
-   equally close ones (mirror images p and w-1-p) the smaller on a forward-preferred kmer, the
-   larger otherwise. */
-inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t T, uint64_t w,
-                               uint64_t min_hash, uint64_t x_l, uint64_t x_r,
-                               bool forward_preferred) {
+   (hashes[(base + x) & 63]) is min_hash offers the offset x mod w; the centre rule
+   (mod_rule::centre_tie_offset) picks one, calling le_rc() only on an exact two-way tie. */
+template <typename LeRc>
+inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t w, uint64_t min_hash,
+                               uint64_t x_l, uint64_t x_r, LeRc le_rc) {
     return mod_rule::centre_tie_offset(
-        x_l, x_r, w, T, forward_preferred,
-        [&](uint64_t x) { return hashes[(base + x) & 63] == min_hash; });
+        x_l, x_r, w, [&](uint64_t x) { return hashes[(base + x) & 63] == min_hash; }, le_rc);
 }
 
 /*
-    Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with a
-    preferred strand per kmer as in simd-minimizers' canonical definition, Groot Koerkamp and
-    Martayan, bioRxiv 2025.01.27.634998; the rule of the minimap2 and kraken2 forks'
-    mod-minimizer, except for ties, see below; shared definition in
-    common/minimizer-orders/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers
-    are ranked by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its
-    hash being strand invariant); x is the locus of the minimal hash. A forward-preferred kmer
-    (mod_forward_preferred) samples the m-mer at offset x mod w, w = k - m + 1, as plain
-    mod-sampling does; otherwise the same rule is applied from the other end of the kmer:
-    offset (w-1) - (((T-1) - x) mod w). rc(x) then samples the mirror locus k-m-p of the m-mer
-    x samples at p, whose canonical value is the same: a kmer and its reverse complement share
-    the bucket and the mirrored position, as with compute_minimizer.
+    Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with the
+    centre tie rule of compute_minimizer; shared definition with the minimap2 and kraken2 forks
+    in common/minimizer-orders/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers are ranked
+    by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its hash being
+    strand invariant); a minimal t-mer at locus x offers the m-mer at offset x mod w,
+    w = k - m + 1. The builder requires t == m (mod w), so T-1 == w-1 (mod w) and the mirror
+    locus T-1-x in rc(kmer) offers the mirror offset w-1-p, whose m-mer has the same canonical
+    value: a kmer and its reverse complement share the bucket and the mirrored position.
 
-    A tie at the minimum (equal canonical t-mers, ~1e-3 of the kmers on real data) is broken in
-    the spirit of compute_minimizer's own (resolve_tie), on the sampled positions: every tied
-    t-mer offers its offset, and the offset closest to the centre (w-1)/2 of the kmer's m-mers
-    wins; between two equally close ones (mirror images) the smaller on a forward-preferred
-    kmer, the larger otherwise. (minimap2 and kraken2 take the leftmost / rightmost tied t-mer
-    by strand instead, which on a strand flip can return to an abandoned position.)
-
-    With t = r + (m - r) mod w (r = 4), T-1 = (w-1) mod w and both offset rules give x mod w:
-    the scheme keeps mod-sampling's density and is forward -- a tied t-mer's sampled position
-    stays put while the window slides, new candidates enter on the right, and the candidate
-    closest to a centre moving right never lies left of the previous choice (the builder checks
-    it, see minimizers_tuples). For other t the strand rules disagree, the density degrades
-    badly and the scheme is not forward; the builder then admits a (minimizer, position) pair
-    in more than one super-kmer.
+    A unique minimum samples its offset. A tie at the minimum (equal canonical t-mers, ~1e-3 of
+    the kmers on real data) is broken as compute_minimizer's own (resolve_tie), on the offered
+    offsets: the one closest to the centre (w-1)/2 of the kmer's m-mers, and between two
+    equally close ones (mirror images) the smaller if kmer <= rc(kmer) (packed words), the
+    larger otherwise. The scheme keeps mod-sampling's density and is forward -- a tied t-mer's
+    offset stays put while the window slides, new candidates enter on the right, and the
+    candidate closest to a centre moving right never lies left of the previous choice (the
+    builder checks it, see minimizers_tuples).
 
     The definition evaluated directly (O(T) hashes); mod_minimizer_iterator computes the same
     incrementally.
@@ -738,9 +697,9 @@ minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, cons
             }
         }
     }
-    const bool fwd = mod_forward_preferred(kmer, kmer_rc, k);
-    const uint64_t p = x_l == x_r ? mod_offset(x_l, w, T, fwd)
-                                  : mod_tie_offset(hashes, 0, T, w, min_hash, x_l, x_r, fwd);
+    const uint64_t p = x_l == x_r ? x_l % w
+                                  : mod_tie_offset(hashes, 0, w, min_hash, x_l, x_r,
+                                                   [&]() { return mod_le_rc(kmer, kmer_rc); });
     Kmer mwin = kmer;
     mwin.drop_chars(p);
     return {canonical_mmer_at<Kmer>(mwin, kmer_rc, k, m, p), p};

@@ -14,18 +14,17 @@
  * MINIMIZER+GM on ℓ-mers.
  *
  * Plain mod-sampling is not strand-symmetric, so on DNA this sampler uses the
- * canonical variant of common/minimizer-orders/mod_minimizer_rule.h (the
- * canonical definition of simd-minimizers, Groot Koerkamp & Martayan, bioRxiv
- * 2025.01.27.634998; the same rule as the minimap2 fork's mod-minimizer-xor):
- * every window (the k bases of the k-mer) has a preferred strand, the one
- * with more G/T bases (a tie, possible only for even k, broken by window <=
- * revcomp(window)). A forward-preferred window samples offset x_L mod w (x_L =
- * leftmost minimal t-mer, the paper's tie-break); a reverse-preferred one
- * applies the same rule from the window's other end: offset (w-1) - (((T-1) -
- * x_R) mod w), x_R = rightmost minimal t-mer. The reverse complement of a
- * window then selects the mirror l-mer, so a read and its reverse complement
- * give the same minimizers (the t-mer ranks are strand-invariant for every
- * order here). Protein (no strands) keeps the plain rule above.
+ * canonical variant of common/minimizer-orders/mod_minimizer_rule.h (the same
+ * rule as the minimap2 and sshash forks' mod-minimizers): t == l (mod w), so
+ * the offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in
+ * the reverse complement correspond; a unique minimum samples its offset, and
+ * a tie at the minimum takes the offset closest to the window centre
+ * (w-1)/2, between two equally close ones the left if the window (the k bases
+ * of the k-mer) is <= its reverse complement lexicographically, the right
+ * otherwise (the centre rule of Cologni & Pibiri, as in SSHash). A read and
+ * its reverse complement then give the same minimizers (the t-mer ranks are
+ * strand-invariant for every order here), and the selection never moves
+ * backwards. Protein (no strands) keeps the plain rule above.
  */
 
 #ifndef KRAKEN2_MOD_MINIMIZER_H_
@@ -78,16 +77,14 @@ class ModSampler {
       throw std::invalid_argument("mod-sampling on DNA needs the current revcom version");
     if (dna_bpc2_ && k_ > 64)  // one bit per window base in a 64-bit word
       throw std::invalid_argument("mod-sampling on DNA needs k <= 64");
-    if (dna_bpc2_)
-      wmask_ = (k_ >= 64) ? ~0ULL : ((1ULL << k_) - 1ULL);
     if (l < kDefaultR)
       throw std::invalid_argument("ModSampler requires l >= r=4");
     t_ = kDefaultR + ((l - kDefaultR) % w_);
     if (t_ < 1 || t_ > l)
       throw std::invalid_argument("ModSampler: invalid t");
+    if (dna_bpc2_ && !mod_rule::t_is_canonical(l_, w_, t_))
+      throw std::invalid_argument("ModSampler: the centre rule needs t == l (mod w)");
     tmer_span_ = w_ + l - t_;
-    for (int a = 0; a < w_; ++a)
-      mirror_slot_[a] = (uint8_t)mod_rule::mirror_slot(a, w_, tmer_span_);
     const int t_bits = t_ * bpc_;
     t_mask_ = (t_bits >= 64) ? ~0ULL : ((1ULL << t_bits) - 1ULL);
     toggle_t_ = toggle_mask & t_mask_;
@@ -279,9 +276,8 @@ class ModSampler {
   }
 
   MOD_ALWAYS_INLINE void push_dispatch(uint8_t base_code) {
-    if (dna_bpc2_) { // the window's k bases, for its preferred strand
-      // bit planes of the recent bases, newest lowest: G = 2, T = 3 have bit
-      // 1 set, so the window's G/T count is a popcount of the high plane
+    if (dna_bpc2_) { // the window's k bases, for the centre rule's v <= RC(v)
+      // bit planes of the recent bases, newest lowest
       whi_ = (whi_ << 1) | (uint64_t)(base_code >> 1);
       wlo_ = (wlo_ << 1) | (uint64_t)(base_code & 1);
     }
@@ -422,8 +418,7 @@ class ModSampler {
 
   // Window minimum over the single monotone deque. The entries equal to the
   // front rank are exactly the window t-mers of minimal rank. DNA picks among
-  // them with canonical_slot (leftmost or mirror-rule rightmost, by the
-  // window's preferred strand). Protein uses plain mod-sampling: the smallest
+  // them with centre_slot (the centre rule). Protein uses plain mod-sampling: the smallest
   // offset p = (pos - win) mod w (ties between residues -> smallest p),
   // identical to combining w residue deques. Non-finite ranks (UINT64_MAX,
   // non-UHS t-mers) are never candidates.
@@ -452,7 +447,7 @@ class ModSampler {
     if (best_rank == UINT64_MAX)
       return false;
     if (dna_bpc2_) {
-      *out_lmer = lmer_ring_[(size_t)canonical_slot(best_rank)];
+      *out_lmer = lmer_ring_[(size_t)centre_slot(best_rank, wm)];
       return true;
     }
     // protein: plain mod-sampling, smallest p over the minimal t-mers
@@ -479,44 +474,39 @@ class ModSampler {
 
   // DNA: l-mer ring slot of the window's selection. Equal minimal ranks
   // sit at the deque front in position order (a push pops only strictly
-  // larger ranks): the first is x_L, whose slot is its residue class; the
-  // last is x_R, whose mirror-rule slot depends on its class only. The
-  // strand picks one without a branch (the preference is ~50/50).
-  MOD_ALWAYS_INLINE int canonical_slot(uint64_t best_rank) const {
-    uint32_t r = dq_head_;
-    while (r + 1 != dq_tail_ && dq_[(r + 1) & kDqMask].rank == best_rank)
-      ++r;
-    // mirror slot (win + (w-1) - (((T-1) - x_R) mod w)) mod w, with
-    // x_R mod w = cls - win (mod w), is (cls + (w-1) - (T-1)) mod w
-    return mod_rule::select_slot(dq_[dq_head_ & kDqMask].cls,
-                                 mirror_slot_[dq_[r & kDqMask].cls],
-                                 forward_preferred());
+  // larger ranks). The l-mer ring is indexed by residue class, so a minimal
+  // t-mer's l-mer is in the slot of its class; its offset in the window is
+  // (cls - wm) mod w. A unique minimum (the common case) needs nothing else.
+  MOD_ALWAYS_INLINE int centre_slot(uint64_t best_rank, int wm) const {
+    const Ent &front = dq_[dq_head_ & kDqMask];
+    uint32_t r = dq_head_ + 1;
+    if (r == dq_tail_ || dq_[r & kDqMask].rank != best_rank)
+      return front.cls;
+    return tie_slot(best_rank, wm);
   }
 
-  // The window (its last k pushed bases) prefers the forward strand when it
-  // has more G/T than A/C; on a tie (even k), when it is <= its reverse
-  // complement lexicographically (exactly one of a window and its reverse
-  // complement wins unless it is its own reverse complement).
-  MOD_ALWAYS_INLINE bool forward_preferred() const {
-    return mod_rule::prefer_forward(
-        2 * __builtin_popcountll(whi_ & wmask_) - k_,  // tie only for even k
-        [this]() { return forward_preferred_tie(); });
-  }
-
-  bool forward_preferred_tie() const {
-    // window base j is the (k-1-j)-th newest
-    return mod_rule::window_le_revcomp(k_, [this](int j) {
-      const int i = k_ - 1 - j;
-      return (int)((((whi_ >> i) & 1) << 1) | ((wlo_ >> i) & 1));
+  // A tie at the minimum: the centre rule over the tied entries' offsets.
+  int tie_slot(uint64_t best_rank, int wm) const {
+    mod_rule::CentrePick c;
+    for (uint32_t r = dq_head_;
+         r != dq_tail_ && dq_[r & kDqMask].rank == best_rank; ++r) {
+      int p = dq_[r & kDqMask].cls - wm;
+      if (p < 0)
+        p += w_;
+      c.add((uint64_t)p, (uint64_t)w_);
+    }
+    // the window is the last k pushed bases, newest in bit 0 of the planes
+    const int p = (int)c.pick([this]() {
+      return mod_rule::le_revcomp_planes(whi_, wlo_, k_);
     });
+    const int slot = wm + p;
+    return slot >= w_ ? slot - w_ : slot;
   }
 
   int k_, l_, bpc_;
   bool dna_bpc2_;
   Order order_;
   uint64_t whi_ = 0, wlo_ = 0;  // DNA: bits 1 / 0 of the last bases
-  uint64_t wmask_ = 0;          // the window's k bases
-  uint8_t mirror_slot_[kMaxResidues] = {};  // DNA: mirror-rule slot per class
   int revcom_version_;
   int w_, t_, tmer_span_;
   uint64_t t_mask_, toggle_t_, lmer_mask_, spaced_seed_mask_;

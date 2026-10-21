@@ -21,6 +21,12 @@ struct dictionary_builder  //
         d.m_regular_parsing = build_config.regular_parsing;
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
+        if (is_mod_mode(build_config.order) and
+            !mod_rule::t_is_canonical(int(build_config.m), int(build_config.k - build_config.m + 1),
+                                      int(build_config.mod_t))) {
+            throw std::invalid_argument(
+                "the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie rule)");
+        }
         d.m_hasher.seed(build_config.seed);
         d.m_hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
                              build_config.gm_proj, build_config.mod_t);
