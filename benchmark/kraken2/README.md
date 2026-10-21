@@ -238,7 +238,7 @@ results/
   app-parameter column (after `mod_t`, before `n_repeats` / `seed_idx`; column order: dataset, order, app parameter, seed, metrics) / slice key and are sorted dataset → minimum_hit_groups →
   order; `build` / `build_runs` do not (building is independent of it). The
   replicates are the seeds (one classify run each; no repeats, no cold round),
-  so `_std` is across seeds; `n_repeats` = number of runs (repeats) aggregated into the row's mean / std. `runs` and `build_runs` also carry I/O telemetry (`build_major_pagefaults`, `build_read_gb`, `classify_major_pagefaults`, `classify_read_gb`; runs-only, not in `build` / `summary`) and, in a `telemetry` band at the end, the text columns `build_pinned_cpus` (`cpus_build.txt`) and `classify_pinned_cpus` (`classification_performance_<dataset>_mhg<n>_cpus.txt`): every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (`benchmark/common/pin_cpus.sh`); blank when the file is absent. The `overview` legend only lists sheets and columns that exist in the workbook. Sheets, in order:
+  so `_std` is across seeds; `n_repeats` = number of runs (repeats) aggregated into the row's mean / std. `runs` and `build_runs` also carry I/O telemetry (`build_major_pagefaults`, `build_read_gb`, `classify_major_pagefaults`, `classify_read_gb`; runs-only, not in `build` / `summary`) and, in a `telemetry` band at the end, the text columns `build_pinned_cpus` (`cpus_build.txt`) and `classify_pinned_cpus` (`classification_performance_<dataset>_mhg<n>_cpus.txt`): every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (`benchmark/common/pin_cpus.sh`, `bench_step.py`); blank when the file is absent. The `overview` legend only lists sheets and columns that exist in the workbook. Sheets, in order:
 
   | Sheet | Rows |
   |---|---|
@@ -464,10 +464,12 @@ Raw sweep rows: `tables/gm_centre_density_*.csv`.
 
 ## Measurement protocol
 
-Every build and classify is timed under the protocol in [`../README.md`](../README.md): quiet-machine wait,
-`taskset` pinning (build: `--threads` cores + 2 spare; classify, which is `--threads 1`: 2 + 2 spare = 4 cores; one NUMA
-node, one thread per core; lists in `cpus_build.txt` and `classification_performance_<dataset>_mhg<n>_cpus.txt`,
-exported as `build_pinned_cpus` / `classify_pinned_cpus`) and per-step wall, CPU (`build_cpu_s`,
+Every build and classify is timed under the protocol in [`../README.md`](../README.md): node-quiet wait (classify
+also waits for free huge-page memory), pinning (build: `--threads` cores + 2 spare; classify, which is
+`--threads 1`: 2 + 2 spare = 4 cores; one NUMA node, one thread per core; lists in `cpus_build.txt` and
+`classification_performance_<dataset>_mhg<n>_cpus.txt`, exported as `build_pinned_cpus` /
+`classify_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_*.json`, exported as `build|classify_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol)). The headline classify time is
+`classify_run_s` (without the database load) and per-step wall, CPU (`build_cpu_s`,
 `classify_cpu_s`), RSS, major page faults and reads (`*_major_pagefaults`, `*_read_gb`, runs sheets only).
 Classify wall time splits into `classify_load_s` (database load) and `classify_run_s` (the reads); compare
 orders on `classify_run_s`. kraken2 has no native run: the reference order is `xor`. `experiments/full_run.sh`

@@ -463,9 +463,9 @@ Catalog and reference CSVs in `benchmark/data/` (committed; not under per-datase
 
 ## Measurement protocol
 
-Every kmc call is timed under the protocol in [`../README.md`](../README.md): it waits for a quiet machine,
-runs `taskset`-pinned (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; the list is in
-`cpus.txt` of the run directory and exported as `count_pinned_cpus`), and records wall and CPU seconds
+Every kmc call is timed under the protocol in [`../README.md`](../README.md): it waits for its node to be quiet,
+runs pinned (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; the list is in
+`cpus.txt` of the run directory and exported as `count_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_count.json`, exported as `count_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol)), and records wall and CPU seconds
 (`count_wall_s`, `count_cpu_s`), the KMC stages, peak RSS, major page faults and file-system reads
 (`major_pagefaults`, `fs_inputs` in 512-byte blocks, `read_gb`). Stage 1 reads the input, so `read_gb` > 0
 means a cold input and a slower stage 1; stage 2 and `count_cpu_s` are the cache-independent numbers.

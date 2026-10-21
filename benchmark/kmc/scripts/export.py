@@ -42,6 +42,7 @@ import order_names
 from paths import bench_paths
 import orders_sheet
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib
+import step_record
 from scripts.common import die, load_dotenv
 from scripts.config import data_dir
 from correlation import correlation_rows
@@ -301,6 +302,7 @@ RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "read_gb",
             "fs_outputs",
             "count_pinned_cpus",
+            *step_record.names("count"),
             "ctx_voluntary",
             "ctx_involuntary",
             "harness_wall_s",
@@ -838,8 +840,10 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
         # file-system reads in decimal GB ('File system inputs' counts 512-byte blocks); ~0 = input served from the page cache
         "read_gb": gb_from_blocks(tinfo["fs_inputs"]),
         "fs_outputs": tinfo["fs_outputs"],
-        # CPUs the timed kmc call was taskset to (cpus.txt, written by lib/run.sh); absent in older runs
+        # CPUs the timed kmc call was pinned to (cpus.txt, written by lib/run.sh); absent in older runs
         "count_pinned_cpus": ((run_dir / "cpus.txt").read_text().strip() or None) if (run_dir / "cpus.txt").is_file() else None,
+        # node / page-size / foreign-load record of the timed call (common/bench_step.py)
+        **step_record.columns(run_dir / "step_count.json", "count"),
         "ctx_voluntary": tinfo["ctx_voluntary"],
         "ctx_involuntary": tinfo["ctx_involuntary"],
         "n_unique": stats["n_unique"],
@@ -1366,8 +1370,8 @@ def overview_field_order() -> list[str]:
 
 
 PINNING_NOTE = (
-    "Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores "
-    "(benchmark/common/pin_cpus.sh); the CPU list is in count_pinned_cpus"
+    "Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its "
+    "memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in count_pinned_cpus"
 )
 
 # column -> (meaning, notes). Metric columns are generated below.
@@ -1449,6 +1453,7 @@ _COLUMN_MEANING: dict[str, tuple[str, str]] = {
     "host": ("host the run was executed on", ""),
     "exit_code": ("exit code of the timed kmc call", "0 = success"),
     "count_pinned_cpus": ("CPU list the timed step was pinned to (from the run's cpus.txt)", PINNING_NOTE + "; empty for runs without it"),
+    **{"count_" + f: (d, "from the run's step_count.json; empty for runs without it") for f, d in step_record.DOC.items()},
     "paper_platform": ("platform of the published KMC 3 numbers (xeon_hdd | xeon_ssd)", ""),
     "paper_count_wall_s": ("published KMC 3 paper wall time", "seconds"),
     "paper_count_max_rss_gb": ("published KMC 3 paper memory", "decimal GB"),

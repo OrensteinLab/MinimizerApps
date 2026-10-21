@@ -2,7 +2,7 @@
 # Full minimap2 benchmark (all datasets, both repeat-filter conditions, scheme analysis, export)
 # into a fresh results dir, one step at a time under low machine load.
 #
-#   RESULTS_NAME=results_r2 THREADS=16 experiments/full_run.sh
+#   RESULTS_NAME=results THREADS=16 experiments/full_run.sh
 #
 # Per dataset: `sweep` with minimap2's own default mid_occ, then `sweep` with MID_OCC fixed to
 # native's effective threshold (every order filters repeats by the same rule), then
@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE"
 source lib/env.sh
 load_bench_env
-export MINIMAP2_RESULTS_DIR="$MINIMAP2_BENCH_ROOT/${RESULTS_NAME:-results_r2}"
+export MINIMAP2_RESULTS_DIR="$MINIMAP2_BENCH_ROOT/${RESULTS_NAME:-results}"
 export THREADS="${THREADS:-16}"
 mkdir -p "$MINIMAP2_RESULTS_DIR/runs" "$MINIMAP2_RESULTS_DIR/csvs"
 source lib/constants.sh

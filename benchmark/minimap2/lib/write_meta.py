@@ -50,7 +50,7 @@ def parse_time_v(path: Path) -> dict:
 
 
 def _step_extras(time_path: Path, cpus_name: str, map_log: bool = False) -> dict:
-    """CPUs the step was taskset to (written by lib/run.sh next to the time log) and, for the
+    """CPUs the step was pinned to (written by lib/run.sh next to the time log) and, for the
     map step, the seconds minimap2 spent loading the index (its "[M::main::<real>*<cpu>] loaded/
     built the index" log line is stamped with the elapsed time since start)."""
     out = {}

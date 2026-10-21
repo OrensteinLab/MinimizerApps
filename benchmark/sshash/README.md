@@ -325,9 +325,10 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 
 ## Measurement protocol
 
-Build, bench and query are timed under the protocol in [`../README.md`](../README.md): quiet-machine wait,
-`taskset` pinning (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; lists in `cpus.txt`,
-`cpus_bench.txt`, `cpus_query.txt`, exported as `build_/bench_/query_pinned_cpus`) and per-step wall and CPU
+Build, bench and query are timed under the protocol in [`../README.md`](../README.md): node-quiet wait (bench and
+query also wait for free huge-page memory), pinning (build `$THREADS` cores + 2 spare, the single-threaded bench
+and query 1 + 1; one NUMA node, one thread per core; lists in `cpus.txt`, `cpus_bench.txt`, `cpus_query.txt`,
+exported as `build_/bench_/query_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_*.json`, exported as `build|bench|query_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol)) and per-step wall and CPU
 seconds, RSS, major page faults and reads (runs sheets only). Query wall time splits into `query_load_s`
 (index load and start-up) and `query_run_s` (sshash's own timed queries, seconds). `native` runs once per seed
 like every other order. `experiments/full_run.sh` needs the default-encoding binary

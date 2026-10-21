@@ -49,6 +49,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from bench_const import REF_SCHEME, scheme_rank  # noqa: E402
+sys.path.insert(0, os.path.join(HERE, "..", "common"))
+import step_record  # noqa: E402
 import order_names  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
 import units  # noqa: E402
@@ -575,6 +577,9 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
     proc_s = parse_processing_s(cf)
     build_pinned = read_cpu_list(os.path.join(out, "cpus_build.txt"))
     class_pinned = read_cpu_list(os.path.splitext(cf)[0] + "_cpus.txt")
+    # node / page-size / foreign-load record of each step (common/bench_step.py)
+    records = dict(step_record.columns(os.path.join(out, "step_build.json"), "build"))
+    records.update(step_record.columns(os.path.splitext(cf)[0] + "_step.json", "classify"))
     n_reads, n_class = parse_classify_counts(cf)
     db_load_s = None
     if class_s is not None and proc_s is not None:
@@ -629,6 +634,7 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "db_load_s": db_load_s,
         "build_pinned_cpus": build_pinned,
         "classify_pinned_cpus": class_pinned,
+        **records,
         "class_proc_s": proc_s,
         "class_gb": class_gb,
         "mrd_min": speed,

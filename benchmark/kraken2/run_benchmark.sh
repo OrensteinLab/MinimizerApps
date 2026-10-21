@@ -31,7 +31,8 @@ source "${SCRIPT_DIR}/benchmark_interface.sh"
 # build, classify). BENCH_WAIT_LOW_LOAD=0 disables; see ../common/wait_low_load.sh.
 # shellcheck source=../common/wait_low_load.sh
 source "${SCRIPT_DIR}/../common/wait_low_load.sh"
-# bench_pin_cpus: taskset every timed k2 step to the least-busy CPUs (../common/pin_cpus.sh; pinning is not optional)
+# bench_pin_cpus: pin every timed k2 step to the least-busy CPUs of one node, memory bound to it (../common/pin_cpus.sh;
+# pinning is not optional); the step records (step_build.json, *_step.json) keep the node's memory state
 # shellcheck source=../common/pin_cpus.sh
 source "${SCRIPT_DIR}/../common/pin_cpus.sh"
 
@@ -436,8 +437,8 @@ build_database() {
         ln -sfn "${SHARED_DB}/library" "${DB_DIR}/library"
         echo "[*] Building ${SCHEME_CONTEXT} (toggle ${SEED})..."
         local build_output="${OUTPUT_DIR}/build_performance.txt"
-        wait_low_load
-        bench_pin_cpus "${SCHEME_THREADS}"
+        wait_low_load 16 0 $((SCHEME_THREADS + 2))
+        bench_pin_cpus "${SCHEME_THREADS}" "${OUTPUT_DIR}/step_build.json"
         printf '%s\n' "${BENCH_PIN_LIST}" > "${OUTPUT_DIR}/cpus_build.txt"
         if ! "${TIME_BIN}" -v ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${K2:-k2}" build \
             --db "${DB_DIR}" \
@@ -517,9 +518,10 @@ classify_once() {
     local r2="$6"
     local mhg="$7"
     rm -f "${nextmin_file}"
-    wait_low_load
-    # classify runs --threads 1 (one worker plus the reader), so it is pinned to 2 CPUs
-    bench_pin_cpus 2
+    # classify runs --threads 1 (one worker plus the reader), so it is pinned to 2 CPUs; it is a
+    # stream of random hash-table lookups, fast only when the table sits in huge pages
+    wait_low_load 16 12 4
+    bench_pin_cpus 2 "${time_file%.txt}_step.json"
     printf '%s\n' "${BENCH_PIN_LIST}" > "${time_file%.txt}_cpus.txt"
     env KRAKEN2_MINIMIZER_PROF="${nextmin_file}" \
         "${TIME_BIN}" -v ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${K2:-k2}" classify \

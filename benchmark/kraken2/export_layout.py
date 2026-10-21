@@ -77,6 +77,7 @@ for _p in (HERE, _COMMON):
         sys.path.insert(0, _p)
 
 import order_names  # noqa: E402
+import step_record  # noqa: E402
 import orders_sheet  # noqa: E402
 import units  # noqa: E402
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
@@ -311,7 +312,12 @@ BAND_COUNTS = "accuracy: read counts (TP / VP / FP / FN)"
 BAND_EXCLUDED = "accuracy: excluded reads (true taxon not in the library)"
 BAND_EXCLUDED_CALLS = "accuracy: calls on excluded reads (cami only)"
 
-PIN_DOC = "Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in {step}_pinned_cpus"
+PIN_DOC = "Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus"
+
+
+def _telemetry(v):
+    """A telemetry cell: blank for a missing value, kept as is otherwise (0 / 0.0 are values)."""
+    return None if v is None or v == "" else v
 
 # Column groups in the SSHash order: id / params, density, minimizers, space, build.
 BUILD_METRICS = [
@@ -322,15 +328,24 @@ BUILD_METRICS = [
     ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
     ("build_cpu_s", CAT_BUILD, "k2 build CPU seconds (user + system, summed over all threads; GNU time -v). Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both", "lower", "build_cpu_s"),
     ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS in decimal GB (GNU time KiB x 1024 / 10^9)", "lower", "build_gb"),
-    ("build_major_pagefaults", CAT_BUILD, "major (I/O) page faults of the k2 build (GNU time -v); with build_read_gb the disk I/O the build needed -- ~0 = served from the page cache, so timings with different values are not directly comparable. Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in build_pinned_cpus. Neutral", None, "build_major_pf"),
+    ("build_major_pagefaults", CAT_BUILD, "major (I/O) page faults of the k2 build (GNU time -v); with build_read_gb the disk I/O the build needed -- ~0 = served from the page cache, so timings with different values are not directly comparable. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in build_pinned_cpus. Neutral", None, "build_major_pf"),
     ("build_read_gb", CAT_BUILD, "file-system reads of the k2 build in decimal GB (GNU time 'File system inputs', 512-byte blocks). Neutral", None, "build_read_gb"),
 ]
-# text telemetry columns at the end of runs / build_runs (CPU list of the taskset pinning; blank when the file is absent)
+# text telemetry columns at the end of runs / build_runs (CPU list of the pinning; blank when the file is absent)
 TELEMETRY_METRICS = [
-    ("build_pinned_cpus", CAT_TELEMETRY, "CPU list (taskset -c) the k2 build was pinned to, read from cpus_build.txt next to build_performance.txt. " + PIN_DOC.replace("{step}", "build") + ". Blank when the file is absent (runs before pinning was recorded)", "build_pinned_cpus"),
-    ("classify_pinned_cpus", CAT_TELEMETRY, "CPU list (taskset -c) the classify run was pinned to, read from classification_performance_<dataset>_mhg<n>_cpus.txt. " + PIN_DOC.replace("{step}", "classify") + ". Blank when the file is absent", "classify_pinned_cpus"),
+    ("build_pinned_cpus", CAT_TELEMETRY, "CPU list the k2 build was pinned to, read from cpus_build.txt next to build_performance.txt. " + PIN_DOC.replace("{step}", "build") + ". Blank when the file is absent (runs before pinning was recorded)", "build_pinned_cpus"),
+    ("classify_pinned_cpus", CAT_TELEMETRY, "CPU list the classify run was pinned to, read from classification_performance_<dataset>_mhg<n>_cpus.txt. " + PIN_DOC.replace("{step}", "classify") + ". Blank when the file is absent", "classify_pinned_cpus"),
 ]
-BUILD_TELEMETRY = ["build_pinned_cpus"]
+# node / page-size / foreign-load record of each step (common/bench_step.py): classify on runs,
+# build on build_runs only (build columns never repeat per classify run)
+def _record_metrics(step, where):
+    return [("%s_%s" % (step, f), CAT_TELEMETRY, d + " (" + step + " step; read from " + where + "; blank when absent)",
+             "%s_%s" % (step, f)) for f, d in step_record.DOC.items()]
+
+
+TELEMETRY_METRICS += _record_metrics("classify", "classification_performance_<dataset>_mhg<n>_step.json")
+BUILD_RECORD_METRICS = _record_metrics("build", "step_build.json next to build_performance.txt")
+BUILD_TELEMETRY = ["build_pinned_cpus"] + step_record.names("build")
 # I/O telemetry: runs / build_runs only (not aggregated into summary / build)
 IO_NAMES = ("build_major_pagefaults", "build_read_gb", "classify_major_pagefaults", "classify_read_gb")
 # build properties repeated (per order and seed) on summary / runs
@@ -341,7 +356,7 @@ CLASSIFY_METRICS = [
     ("classify_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_run_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
     ("classify_run_s", CAT_CLASSIFY, "time classifying the reads (s) = the `processed in` seconds of the classify summary line, without the database load", "lower", "class_proc_s"),
     ("classify_max_rss_gb", CAT_CLASSIFY, "classify peak RSS of the run in decimal GB (GNU time KiB x 1024 / 10^9)", "lower", "class_gb"),
-    ("classify_major_pagefaults", CAT_CLASSIFY, "major (I/O) page faults of the classify run (GNU time -v); with classify_read_gb the disk I/O it needed -- mostly the database load, so a non-zero value explains a slow classify_load_s. Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in classify_pinned_cpus. Neutral", None, "class_major_pf"),
+    ("classify_major_pagefaults", CAT_CLASSIFY, "major (I/O) page faults of the classify run (GNU time -v); with classify_read_gb the disk I/O it needed -- mostly the database load, so a non-zero value explains a slow classify_load_s. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in classify_pinned_cpus. Neutral", None, "class_major_pf"),
     ("classify_read_gb", CAT_CLASSIFY, "file-system reads of the classify run in decimal GB (GNU time 'File system inputs', 512-byte blocks). Neutral", None, "class_read_gb"),
     ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads (read pairs) per minute of classify_run_s (database load excluded; wall time if the processing time is missing)", "higher", "mrd_min"),
     ("classified_pct", CAT_CLASSIFY, "percent of reads classified (any taxon). Neutral: more classified is not better or worse by itself (it can be false positives)", None, "cls_pct"),
@@ -422,7 +437,7 @@ METRIC_CAT = {}
 for _m in BUILD_METRICS + CLASSIFY_METRICS + PROFILE_METRICS + VSREF_METRICS:
     METRIC_DIR[_m[0]] = _m[3]
     METRIC_CAT[_m[0]] = _m[1]
-for _m in TELEMETRY_METRICS:
+for _m in TELEMETRY_METRICS + BUILD_RECORD_METRICS:
     METRIC_CAT[_m[0]] = _m[1]
 for _m in RUN_ONLY:
     METRIC_CAT[_m[0]] = _m[1]
@@ -612,7 +627,8 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             for m in BUILD_METRICS:
                 if m[4]:
                     b[m[0]] = clean_value(row.get(m[4]))
-            b["build_pinned_cpus"] = row.get("build_pinned_cpus") or None
+            for c in BUILD_TELEMETRY:
+                b[c] = _telemetry(row.get(c))
             b["distinct_minimizers"] = _distinct_minimizers(run_root, odir, seed_idx)
             b["index_size_gb"] = _index_size_gb(run_root, odir, seed_idx)
             d = _dens_for(dens_rows, idd, seed_idx)
@@ -630,7 +646,7 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
         for m in RUN_ONLY:
             out[m[0]] = clean_value(row.get(m[3]))
         for m in TELEMETRY_METRICS:
-            out[m[0]] = row.get(m[3]) or None
+            out[m[0]] = _telemetry(row.get(m[3]))
         picked = idx.get((id_tuple(idd), ds, mhg, seed_idx), {})
         for c in ACC_COLS:
             sel = c["sel"].get(ds)
@@ -1354,6 +1370,8 @@ def overview_rows(tables=None):
         add("vs_reference", cat, name, meaning, name)
     for name, cat, meaning, _src in TELEMETRY_METRICS:
         add("build_runs/runs" if name.startswith("build") else "runs", cat, name, meaning, name)
+    for name, cat, meaning, _src in BUILD_RECORD_METRICS:
+        add("build_runs", cat, name, meaning, name)
     return rows
 
 

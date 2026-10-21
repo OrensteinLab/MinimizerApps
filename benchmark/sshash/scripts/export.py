@@ -73,6 +73,7 @@ from scripts.config import gm_table_file
 from scripts.orders import BASELINES, ORDERS, order_dir_name, variant_key
 import order_names as on
 import orders_sheet as osh
+import step_record
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 from xlsx_book import DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv, xml_escape
@@ -503,6 +504,9 @@ RUN_FIELDS = (
     "build_pinned_cpus",
     "bench_pinned_cpus",
     "query_pinned_cpus",
+    *step_record.names("build"),
+    *step_record.names("bench"),
+    *step_record.names("query"),
 )
 
 
@@ -702,10 +706,14 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
         "bench_exit_code": meta.get("bench_exit_code"),
         "query_exit_code": meta.get("query_exit_code"),
         "harness_wall_s": meta.get("python_wall_s"),
-        # CPUs each timed step was taskset to (lib/run.sh); empty when the file is absent (older runs)
+        # CPUs each timed step was pinned to (lib/run.sh); empty when the file is absent (older runs)
         "build_pinned_cpus": _read_cpus(run_dir / "cpus.txt"),
         "bench_pinned_cpus": _read_cpus(run_dir / "cpus_bench.txt"),
         "query_pinned_cpus": _read_cpus(run_dir / "cpus_query.txt"),
+        # node, page-size, remote-memory and foreign-load record of each step (common/bench_step.py)
+        **step_record.columns(run_dir / "step_build.json", "build"),
+        **step_record.columns(run_dir / "step_bench.json", "bench"),
+        **step_record.columns(run_dir / "step_query.json", "query"),
     }
     return row
 
@@ -985,6 +993,7 @@ _METRIC_CATEGORY = {
     "check_exit_code": "telemetry", "bench_exit_code": "telemetry", "query_exit_code": "telemetry",
     "harness_wall_s": "telemetry", "build_pinned_cpus": "telemetry", "bench_pinned_cpus": "telemetry",
     "query_pinned_cpus": "telemetry",
+    **{c: "telemetry" for st in ("build", "bench", "query") for c in step_record.names(st)},
 }
 
 
@@ -1264,7 +1273,8 @@ def overview_rows() -> list[dict]:
         row("all", "n_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
         row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats only measure timing noise"),
         row("summary/runs", "build_cpu_s / query_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / query step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
-        row("runs", "build_pinned_cpus / bench_pinned_cpus / query_pinned_cpus", "Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in {step}_pinned_cpus (run dir cpus.txt / cpus_bench.txt / cpus_query.txt; empty when the file is absent)"),
+        row("runs", "build_pinned_cpus / bench_pinned_cpus / query_pinned_cpus", "Every timed step is pinned to one NUMA node, one thread per physical core plus spare cores (build: $THREADS + 2; bench and query, single-threaded: 1 + 1), with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus (run dir cpus.txt / cpus_bench.txt / cpus_query.txt; empty when the file is absent)"),
+        *[row("runs", "{build,bench,query}_" + f, d + " (run dir step_build.json / step_bench.json / step_query.json; blank for runs without a record)") for f, d in step_record.DOC.items()],
         row("summary/runs", "query_run_s", "the timed query phase in seconds, as sshash reports it itself (elapsed_millisec / 1000); query_wall_s = query_load_s + query_run_s"),
         row("runs", "harness_wall_s", "wall seconds of the whole harness run of this configuration (build + check + bench + query; meta.json python_wall_s), not a benchmark metric"),
         row("runs", "build_wall_s / build_steps_total_s / build_step1_s .. build_step7_s", "build_wall_s = wall seconds of the whole sshash build process (/usr/bin/time -v); build_steps_total_s = sshash's own total_build_time_in_microsec / 1e6; build_step1_s .. build_step7_s = sshash's per-step build times in seconds (1 encode strings, 2 minimizer tuples, 3 merge tuples, 4 build MPHF, 5 replace minimizers by MPHF hashes, 6 merge minimizer tuples, 7 sparse and skew index)"),

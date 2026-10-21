@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Choose the CPUs a timed benchmark step is pinned to (used by pin_cpus.sh).
 
-    pin_cpus.py N [--spare S] [--window SECONDS]   ->  prints "<numa node> <cpu list>"
+    pin_cpus.py N [--spare S] [--window SECONDS] [--node K]   ->  prints "<numa node> <cpu list>"
 
 One NUMA node, one logical CPU per physical core:
   * topology from sysfs (node cpulists, thread_siblings_list), load from two /proc/stat samples;
@@ -12,8 +12,12 @@ One NUMA node, one logical CPU per physical core:
     single node whose best N + S cores are least busy (ties -> lowest node id); only one thread
     of each core is used. If the best node has fewer than N + S cores, its second hardware
     threads are added (same node); if that is still not enough, the remaining nodes are added.
-Linux's default memory policy allocates on the node of the CPU that touches a page, so confining
-the threads to one node also keeps the step's own memory local (no numactl needed).
+--node K restricts the choice to node K (a benchmark slot owns one node, see full_run_all.sh).
+Linux's default memory policy allocates on the node of the CPU that touches a page, but falls back
+to another node when the local one is short; bench_step.py binds the step's memory to the node.
+Also the per-node memory state the gate and the step records use: node_meminfo (MemFree, from
+/sys/devices/system/node/nodeK/meminfo) and free_2mb_gb (free blocks of 2 MB or more, the ones a
+transparent huge page can use, from /proc/buddyinfo).
 Python >= 3.6, standard library only.
 """
 import argparse
@@ -85,6 +89,42 @@ def core_of(allowed):
     return core
 
 
+def node_cpus(nd):
+    """CPUs of NUMA node nd (empty if sysfs has no node info)."""
+    return set(parse_list(read("/sys/devices/system/node/node%d/cpulist" % nd)))
+
+
+def node_meminfo(nd):
+    """{field: kB} of node nd (MemTotal, MemFree, AnonHugePages, ...)."""
+    out = {}
+    for line in read("/sys/devices/system/node/node%d/meminfo" % nd).splitlines():
+        m = re.match(r"Node\s+\d+\s+([\w()]+):\s+(\d+)", line)
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def node_available_gb(nd):
+    """GB the node can give a new allocation without swapping: free memory plus reclaimable page
+    cache and slab (a node-level MemAvailable). MemFree alone ignores the page cache, which a
+    long run fills with its own input reads (with its memory bound to the node, all on that node)."""
+    m = node_meminfo(nd)
+    kb = m.get("MemFree", 0) + m.get("Inactive(file)", 0) + m.get("Active(file)", 0) + m.get("SReclaimable", 0)
+    return kb / 1048576.0
+
+
+def free_2mb_gb(text=None):
+    """node -> GB of free memory in buddy blocks of 2 MB or more (order >= 9 with 4 KB pages)."""
+    out = {}
+    for line in (text if text is not None else read("/proc/buddyinfo")).splitlines():
+        m = re.match(r"Node\s+(\d+), zone\s+\S+\s+(.*)", line)
+        if m:
+            counts = [int(x) for x in m.group(2).split()]
+            mb = sum(c * (4 << o) // 1024 for o, c in enumerate(counts) if o >= 9)
+            out[int(m.group(1))] = out.get(int(m.group(1)), 0) + mb / 1024.0
+    return out
+
+
 def cpu_times():
     t = {}
     for line in open("/proc/stat"):
@@ -149,8 +189,14 @@ def main(argv=None):
     ap.add_argument("n", type=int, help="threads of the step")
     ap.add_argument("--spare", type=int, default=2, help="extra cores for helper threads (default 2)")
     ap.add_argument("--window", type=float, default=1.0, help="load sampling window in seconds (default 1)")
+    ap.add_argument("--node", type=int, default=None, help="choose only among the CPUs of this NUMA node")
     a = ap.parse_args(argv)
     allowed = allowed_cpus()
+    if a.node is not None:
+        allowed &= node_cpus(a.node)
+        if not allowed:
+            print("error: no allowed CPU on node %d" % a.node, file=sys.stderr)
+            return 1
     nd, cpus = choose(a.n, a.spare, allowed, node_of(allowed), core_of(allowed), busy_fractions(allowed, a.window))
     print(nd, fmt_list(cpus))
     return 0

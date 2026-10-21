@@ -3,7 +3,7 @@
 # h_sapiens_3 -m32 as in datasets.csv) into a fresh results dir, each timed kmc invocation waiting
 # for a quiet machine (benchmark/common/wait_low_load.sh), then export.
 #
-#   RESULTS_NAME=results_r2 experiments/full_run.sh
+#   RESULTS_NAME=results experiments/full_run.sh
 #
 # Per dataset 30 runs, same set as the existing results (config dirs gzip_n1024_t24_m{12,32} and gm_proj_n1024_t24):
 #   default x5; xor x5; xor-pcg-hash x5; greedymini lut_dna at0-cg1 x5   (one `-O all -n 5` call, interleaved)
@@ -19,7 +19,7 @@ if [ -z "${KMC3_BENCH_ROOT:-}" ] && [ -f .env ]; then
 fi
 : "${KMC3_BENCH_ROOT:?KMC3_BENCH_ROOT is not set (benchmark/kmc/.env)}"
 export KMC3_BENCH_ROOT
-RES="$KMC3_BENCH_ROOT/${RESULTS_NAME:-results_r2}"
+RES="$KMC3_BENCH_ROOT/${RESULTS_NAME:-results}"
 OLD="${OLD_RESULTS:-$KMC3_BENCH_ROOT/results}"
 export KMC3_RESULTS_DIR="$RES"
 DATASETS="${DATASETS:-f_vesca g_gallus m_balbisiana h_sapiens_2 h_sapiens_3}"

@@ -17,6 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 K2 = os.path.dirname(HERE)
 sys.path.insert(0, K2)
 sys.path.insert(0, os.path.join(os.path.dirname(K2), "common"))
+import step_record  # noqa: E402
 
 import export_layout as E  # noqa: E402
 import order_names  # noqa: E402
@@ -205,8 +206,10 @@ class ExportLayout(unittest.TestCase):
         for sheet in ("summary", "runs"):
             for f in tables[sheet][0]:
                 self.assertFalse(f.startswith(("build_", "index_size", "rank_")) and f != "build_pinned_cpus", (sheet, f))
-        self.assertEqual(tables["runs"][0][-2:], ["build_pinned_cpus", "classify_pinned_cpus"])
-        self.assertEqual(tables["build_runs"][0][-1], "build_pinned_cpus")
+        n_rec = len(step_record.FIELDS)   # step-record columns follow the CPU lists
+        self.assertEqual(tables["runs"][0][-2 - n_rec:], ["build_pinned_cpus", "classify_pinned_cpus"]
+                         + step_record.names("classify"))
+        self.assertEqual(tables["build_runs"][0][-1 - n_rec:], ["build_pinned_cpus"] + step_record.names("build"))
         for sheet in ("build", "summary"):
             self.assertFalse([f for f in tables[sheet][0] if "pagefaults" in f or "read_gb" in f], sheet)
 

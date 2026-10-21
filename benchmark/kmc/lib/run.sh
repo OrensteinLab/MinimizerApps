@@ -3,7 +3,8 @@
 # wait_low_load: block until the (shared) machine is quiet before each timed kmc invocation
 # (BENCH_LOAD_MAX; BENCH_WAIT_LOW_LOAD=0 disables; benchmark/common/wait_low_load.sh).
 source "${BASH_SOURCE[0]%/*}/../../common/wait_low_load.sh"
-# bench_pin_cpus: taskset the timed kmc invocation to $THREADS least-busy CPUs (benchmark/common/pin_cpus.sh; pinning is not optional)
+# bench_pin_cpus: pin the timed kmc invocation to $THREADS least-busy CPUs of one node, memory bound to it
+# (benchmark/common/pin_cpus.sh; pinning is not optional); step_count.json records the node's memory state
 source "${BASH_SOURCE[0]%/*}/../../common/pin_cpus.sh"
 
 # Elapsed seconds between two $EPOCHREALTIME samples ("sec.usec" strings),
@@ -165,8 +166,8 @@ run_one() {
 
   local t0 wall rc cmd_file
   cmd_file="$(mktemp)"
-  wait_low_load
-  bench_pin_cpus "$THREADS"
+  wait_low_load 40 0 $((THREADS + 2))
+  bench_pin_cpus "$THREADS" "$run_dir/step_count.json"
   printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus.txt"
   if [[ -x "$TIME_BIN" ]]; then
     wrapped=("$TIME_BIN" -v -o "$time_path" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${kmc_cmd[@]}")

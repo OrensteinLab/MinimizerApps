@@ -76,6 +76,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
+import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
 from order_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
 from orders_sheet import EXPECTED_FIELDS, missing_cells, orders_fields, particular_fields, span_length, with_klw  # noqa: E402
@@ -116,6 +117,7 @@ RUN_FIELDS = [
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
     "build_pinned_cpus", "map_pinned_cpus",
+    *step_record.names("build"), *step_record.names("map"),
 ]
 
 # mid_occ_threshold (shown after the order columns): the effective repeat-filter threshold minimap2 mapped
@@ -339,8 +341,15 @@ def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]
             row["mid_occ_threshold"] = _map_log_mid_occ(meta_path.parent / "map.log")
         if row["threads"] is None:
             row["threads"] = _log_threads(meta_path.parent / "build.log")
-        mmi = meta_path.parent / "index.mmi"
-        row["index_size_gb"] = gb_from_bytes(mmi.stat().st_size) if mmi.is_file() else None
+        mmi, size_txt = meta_path.parent / "index.mmi", meta_path.parent / "index_bytes.txt"
+        if mmi.is_file():
+            row["index_size_gb"] = gb_from_bytes(mmi.stat().st_size)
+        elif size_txt.is_file():   # seeds other than 0: index deleted after mapping (lib/run.sh)
+            row["index_size_gb"] = gb_from_bytes(int(size_txt.read_text().split()[0]))
+        else:
+            row["index_size_gb"] = None
+        for step in ("build", "map"):   # node / page-size / foreign-load record (common/bench_step.py)
+            row.update(step_record.columns(meta_path.parent / ("step_%s.json" % step), step))
         rows.append(row)
     return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r), int(r.get("seed_idx") or 0)))
 
@@ -721,6 +730,7 @@ _METRIC_CATEGORY = {
     "frac_correct_strict50": "accuracy", "frac_correct_strict50_in_repeat": "accuracy",
     "mean_identity": "accuracy",
     "build_pinned_cpus": "telemetry", "map_pinned_cpus": "telemetry",
+    **{c: "telemetry" for st in ("build", "map") for c in step_record.names(st)},
 }
 
 
@@ -782,7 +792,8 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("summary/runs", "build_cpu_s / map_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / map step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
         row("summary/runs", "map_load_s / map_run_s", "map_wall_s split: seconds minimap2 spent loading the prebuilt index (its own 'loaded/built the index' elapsed stamp; meta.json key index_load_s) and the remainder (reads, seeding, chaining, alignment, output); map_run_s is the index-independent mapping time"),
         row("runs", "build_major_pagefaults / build_read_gb / map_major_pagefaults / map_read_gb", "disk I/O each step needed (/usr/bin/time -v): major (I/O) page faults and file-system reads in decimal GB (512-byte blocks); ~0 = served from the page cache, so timings with different values are not directly comparable."),
-        row("runs", "build_pinned_cpus / map_pinned_cpus", "CPU list the build / map step was taskset to (meta.json build.pinned_cpus / map.pinned_cpus; older runs: cpus_build.txt / cpus_map.txt in the run directory), e.g. 2,6,10. Every timed step is taskset to one NUMA node, one thread per physical core plus 2 spare cores (benchmark/common/pin_cpus.sh); the CPU list is in {step}_pinned_cpus"),
+        row("runs", "build_pinned_cpus / map_pinned_cpus", "CPU list the build / map step was pinned to (meta.json build.pinned_cpus / map.pinned_cpus; older runs: cpus_build.txt / cpus_map.txt in the run directory), e.g. 2,6,10. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus"),
+        *[row("runs", "{build,map}_" + f, d + " (run dir step_build.json / step_map.json; blank for runs without a record)") for f, d in step_record.DOC.items()],
         row("summary/runs", "map_wall_s / map_max_rss_gb", f"mapping (minimap2 -x <preset> -c -t {threads} [-f cap], as the paper's -cx map-pb / -cx map-ont): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
         # --- accuracy
         row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads (1 - frac_mapped = the paper's 'unmapped reads'); the only accuracy metric for chm13_rel3_ont (real reads, no truth), as in the paper"),

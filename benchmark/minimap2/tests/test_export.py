@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO_ROOT / "benchmark" / "common"))
 
 import export  # noqa: E402
 import expected_density  # noqa: E402
+import step_record  # noqa: E402
 from order_names import ID_FIELDS  # noqa: E402
 from xlsx_check import check_xlsx  # noqa: E402
 from xlsx_util import load_xlsx  # noqa: E402
@@ -68,7 +69,9 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     assert hdr[6:11] == list(ID_FIELDS)
     assert hdr[11:15] == ["mid_occ_threshold", "threads", "seed", "seed_idx"]
     assert hdr.index("avg_occurrences") + 1 == hdr.index("index_size_gb") and hdr.index("index_size_gb") + 1 == hdr.index("total_wall_s")
-    assert hdr[-2:] == ["build_pinned_cpus", "map_pinned_cpus"]
+    n_rec = 2 * len(step_record.FIELDS)   # step-record columns of build and map at the end
+    assert hdr[-2 - n_rec:-n_rec] == ["build_pinned_cpus", "map_pinned_cpus"]
+    assert hdr[-n_rec:] == step_record.names("build") + step_record.names("map")
     assert {"map_load_s", "map_run_s"} <= set(hdr) and not {"index_load_s", "map_only_s", "n_seeds"} & set(hdr)
     assert runs[0]["map_pinned_cpus"] == "2,6,10" and runs[0]["map_load_s"] == "0.5" and runs[0]["map_run_s"] != ""
     greedy = [r for r in runs if r["order"] == "greedymini"]

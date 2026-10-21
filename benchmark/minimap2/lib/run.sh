@@ -5,7 +5,7 @@ set -uo pipefail
 # wait_low_load: block until the (shared) machine is quiet before each timed step
 # (BENCH_LOAD_MAX, BENCH_WAIT_LOW_LOAD=0 disables; see benchmark/common/wait_low_load.sh).
 source "$(dirname "${BASH_SOURCE[0]}")/../../common/wait_low_load.sh"
-# bench_pin_cpus: every timed minimap2 step is taskset to one NUMA node, one thread per core (benchmark/common/pin_cpus.sh)
+# bench_pin_cpus: every timed minimap2 step is pinned to one NUMA node, one thread per core, memory bound to it (benchmark/common/pin_cpus.sh)
 source "$(dirname "${BASH_SOURCE[0]}")/../../common/pin_cpus.sh"
 
 run_one() {
@@ -83,8 +83,8 @@ run_one() {
   # chaining bandwidth, etc.) are map-time parameters and must be repeated
   # on the map invocation too, where the loaded index's own k/w/H silently
   # win over the preset's (a harmless, expected stderr warning).
-  wait_low_load
-  bench_pin_cpus "$THREADS"
+  wait_low_load 16 0 $((THREADS + 2))
+  bench_pin_cpus "$THREADS" "$run_dir/step_build.json"
   printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_build.txt"
   echo "== [$odir] building index (-x $preset k=$k w=$W ${ORDER_FLAGS[*]:-}) ==" >&2
   if ! /usr/bin/time -v -o "$build_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
@@ -94,8 +94,8 @@ run_one() {
     return 1
   fi
 
-  wait_low_load
-  bench_pin_cpus "$THREADS"
+  wait_low_load 16 0 $((THREADS + 2))
+  bench_pin_cpus "$THREADS" "$run_dir/step_map.json"
   printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_map.txt"
   echo "== [$odir] mapping ${reads##*/} ==" >&2
   if ! /usr/bin/time -v -o "$map_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
@@ -143,7 +143,14 @@ run_one() {
     rm -f "$meta_json.tmp"
     return 1
   fi
+  # Indexes are 5-8 GB each; the scheme analysis reads only seed 0's of every variant, so the others
+  # are deleted once mapped (their size is kept in index_bytes.txt, written before meta.json marks
+  # the run complete). KEEP_ALL_INDEXES=1 keeps them.
+  stat -c %s "$mmi" > "$run_dir/index_bytes.txt"
   mv -f "$meta_json.tmp" "$meta_json"
+  if [ "$seed_idx" != 0 ] && [ "${KEEP_ALL_INDEXES:-0}" != 1 ]; then
+    rm -f "$mmi"
+  fi
 
   echo "  -> $meta_json"
 }

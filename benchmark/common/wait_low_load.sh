@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# Source this file, then call `wait_low_load` before each timed step.
+# Source this file, then call `wait_low_load [MEM_GB [HUGE_GB [CORES]]]` before each timed step.
+#
+# With BENCH_NODE set (a slot owning one NUMA node, see full_run_all.sh), the gate is the node's:
+# node_gate.py waits until the node has CORES quiet physical cores (the step's threads + spare) and
+# fewer than BENCH_NODE_LOAD_MAX (default 8) busy cores in all (gives up after BENCH_LOAD_WAIT s,
+# default 3600), MEM_GB available (free + reclaimable cache; BENCH_MEM_WAIT s, default 1800) and,
+# for memory-latency-bound steps, HUGE_GB in free 2 MB blocks (huge pages; compacts the node if
+# short; BENCH_HUGE_WAIT s, default 1800). A timed-out wait is logged and the step runs; its record
+# keeps the load and memory state. The rest of this comment describes the
+# machine-wide gate used without BENCH_NODE.
 #
 # The benchmarks are timing measurements on a shared host: block until the
 # machine is quiet. "Quiet" = fewer than BENCH_LOAD_MAX busy cores (default 4)
@@ -17,9 +26,18 @@ _bench_busy_cores() {  # busy cores over a $1-second window
   awk -v u=$((u2-u1)) -v t=$((t2-t1)) -v n="$(nproc)" 'BEGIN{printf "%.1f", (t > 0 ? u/t*n : 0)}'
 }
 
+_BENCH_GATE_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/node_gate.py"
+
 wait_low_load() {
   [ "${BENCH_WAIT_LOW_LOAD:-1}" = "0" ] && return 0
   local max="${BENCH_LOAD_MAX:-4}" need="${BENCH_LOAD_STABLE:-1}" win="${BENCH_LOAD_WINDOW:-5}"
+  if [ -n "${BENCH_NODE:-}" ]; then
+    python3 "$_BENCH_GATE_PY" --node "$BENCH_NODE" --max-busy "${BENCH_NODE_LOAD_MAX:-8}" --window "$win" \
+      --mem-gb "${1:-0}" --huge-gb "${2:-0}" --cores "${3:-0}" --load-wait "${BENCH_LOAD_WAIT:-3600}" \
+      --mem-wait "${BENCH_MEM_WAIT:-1800}" --huge-wait "${BENCH_HUGE_WAIT:-1800}" \
+      || { echo "error: node gate failed (node_gate.py)" >&2; exit 1; }
+    return 0
+  fi
   local ok=0 busy waited=0 first=""
   while :; do
     busy=$(_bench_busy_cores "$win")

@@ -59,18 +59,17 @@ cmd_sweep() {
   if [ ${#orders[@]} -eq 0 ]; then
     IFS=',' read -r -a orders <<< "$DEFAULT_ORDERS"
   fi
-  local fail=0
-  for o in "${orders[@]}"; do
-    # greedymini: one sweep per projection (separate runs/rows)
-    local projs=("")
-    if order_needs_gm "$o"; then
-      IFS=',' read -r -a projs <<< "$PROJECTIONS"
-    fi
-    local p
-    for p in "${projs[@]}"; do
-      [ -n "$p" ] && PROJECTION="$p"
-      local i
-      for i in "${!ALL_SEEDS[@]}"; do
+  # Seed-major: every order (and greedymini projection) runs for seed 0, then for seed 1, ...,
+  # so time-varying conditions (load, the other benchmark slot's disk use) hit all orders alike.
+  local fail=0 i o p
+  for i in "${!ALL_SEEDS[@]}"; do
+    for o in "${orders[@]}"; do
+      local projs=("")
+      if order_needs_gm "$o"; then
+        IFS=',' read -r -a projs <<< "$PROJECTIONS"
+      fi
+      for p in "${projs[@]}"; do
+        [ -n "$p" ] && PROJECTION="$p"
         run_one "$o" "${ALL_SEEDS[$i]}" "$i" || fail=1
       done
     done

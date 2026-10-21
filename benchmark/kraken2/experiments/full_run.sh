@@ -5,7 +5,7 @@
 # (benchmark/common/wait_low_load.sh), then density microbench + comparison + export (one
 # run_benchmark.sh invocation does all of these).
 #
-#   RESULTS_NAME=results_r2 experiments/full_run.sh
+#   RESULTS_NAME=results experiments/full_run.sh
 #
 # Re-running resumes: databases with a hash.k2d are not rebuilt; classification of a seed is
 # redone for that seed. Re-uses db/strain_exclusion (library + taxonomy) and data/ as they are.
@@ -19,7 +19,7 @@ if [ -z "${KRAKEN2_BENCH_ROOT:-}" ] && [ -f .env ]; then
 fi
 : "${KRAKEN2_BENCH_ROOT:?KRAKEN2_BENCH_ROOT is not set (benchmark/kraken2/.env)}"
 export KRAKEN2_BENCH_ROOT
-export KRAKEN2_RESULTS_DIR="$KRAKEN2_BENCH_ROOT/${RESULTS_NAME:-results_r2}"
+export KRAKEN2_RESULTS_DIR="$KRAKEN2_BENCH_ROOT/${RESULTS_NAME:-results}"
 mkdir -p "$KRAKEN2_RESULTS_DIR"
 echo "results: $KRAKEN2_RESULTS_DIR  $(date -Is)"
 CMD=(./run_benchmark.sh -E -n 5 -t 16 -j 1 -P at0-cg1,at1-cg0

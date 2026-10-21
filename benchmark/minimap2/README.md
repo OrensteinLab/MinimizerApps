@@ -179,10 +179,10 @@ MID_OCC=1244 ./minimap2_bench.sh sweep    # same sweep, map-time repeat cap fixe
 
 ## Measurement protocol
 
-Index build and mapping are timed under the protocol in [`../README.md`](../README.md): quiet-machine wait,
-`taskset` pinning (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; lists in `cpus_build.txt`
-and `cpus_map.txt`, exported as `build_pinned_cpus` / `map_pinned_cpus`; the per-read seed experiments
-use `-t 1`) and per-step wall and CPU seconds (`build_cpu_s`, `map_cpu_s`), RSS, major page faults and reads
+Index build and mapping are timed under the protocol in [`../README.md`](../README.md): node-quiet wait,
+pinning (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; lists in `cpus_build.txt`
+and `cpus_map.txt`, exported as `build_pinned_cpus` / `map_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_*.json`, exported as `build|map_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol); the
+per-read seed experiments use `-t 1`; `sweep` runs seed-major: all orders for seed 0, then seed 1, ...) and per-step wall and CPU seconds (`build_cpu_s`, `map_cpu_s`), RSS, major page faults and reads
 (runs sheet). The mapping time splits into `map_load_s` (minimap2's own "loaded/built the index" stamp) and
 `map_run_s`. `sweep` runs every order for every seed, `native` included (its repeats build identical indexes
 and give the baseline replicates). Every `index.mmi` is kept (the sweep needs about 620 GB);

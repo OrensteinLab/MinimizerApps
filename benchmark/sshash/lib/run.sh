@@ -4,7 +4,8 @@
 # wait_low_load: block until the (shared) machine is quiet before each timed step
 # (BENCH_LOAD_MAX; BENCH_WAIT_LOW_LOAD=0 disables; benchmark/common/wait_low_load.sh).
 source "${BASH_SOURCE[0]%/*}/../../common/wait_low_load.sh"
-# bench_pin_cpus: taskset every timed sshash step to $THREADS least-busy CPUs (benchmark/common/pin_cpus.sh; pinning is not optional)
+# bench_pin_cpus: pin every timed sshash step to least-busy CPUs of one node, memory bound to it (benchmark/common/pin_cpus.sh;
+# pinning is not optional): build $THREADS threads, bench and query one CPU; step_*.json record the memory state
 source "${BASH_SOURCE[0]%/*}/../../common/pin_cpus.sh"
 
 # Elapsed seconds between two $EPOCHREALTIME samples ("sec.usec" strings) --
@@ -114,8 +115,8 @@ run_one() {
   } >"$cmd_file"
 
   local t0 wall build_rc
-  wait_low_load
-  bench_pin_cpus "$THREADS"
+  wait_low_load 32 0 $((THREADS + 2))
+  bench_pin_cpus "$THREADS" "$run_dir/step_build.json"
   printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus.txt"
   wrapped=(${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${build_cmd[@]}")
   [[ -x "$TIME_BIN" ]] && wrapped=("$TIME_BIN" -v -o "$build_time" "${wrapped[@]}")
@@ -142,8 +143,10 @@ run_one() {
     grep -q "EVERYTHING OK!" "$check_log" && check_ok=1
 
     local bench_log="$run_dir/bench.log"
-    wait_low_load
-    bench_pin_cpus "$THREADS"
+    # bench and query are single-threaded random lookups: one CPU (+1 spare core), and the node must
+    # have room for the index in huge pages (their speed depends on the page size, see step records)
+    wait_low_load 8 6 2
+    BENCH_PIN_SPARE=1 bench_pin_cpus 1 "$run_dir/step_bench.json"
     printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus_bench.txt"
     set +e
     ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$SSHASH_BIN" bench -i "$index_path" >"$bench_log" 2>&1
@@ -157,8 +160,8 @@ run_one() {
       local query_log="$run_dir/query.log" query_time="$run_dir/query_time.txt"
       local query_cmd=("$SSHASH_BIN" query -i "$index_path" -q "$qpath" --verbose)
       local wrapped_q
-      wait_low_load
-      bench_pin_cpus "$THREADS"
+      wait_low_load 8 6 2
+      BENCH_PIN_SPARE=1 bench_pin_cpus 1 "$run_dir/step_query.json"
       printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus_query.txt"
       wrapped_q=(${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${query_cmd[@]}")
       [[ -x "$TIME_BIN" ]] && wrapped_q=("$TIME_BIN" -v -o "$query_time" "${wrapped_q[@]}")
