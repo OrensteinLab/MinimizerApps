@@ -259,36 +259,50 @@ def rolling_values(dna_stream: list[int], length: int) -> list[int]:
     return out
 
 
+def mod_centre_selections(ranks: list[int], w: int, T: int, le_rc) -> list[int]:
+    """The k-mer position each window selects under the strand-symmetric
+    mod-minimizer of the kraken2, minimap2 and sshash forks
+    (common/minimizer-orders/mod_minimizer_rule.h). `ranks` holds one
+    strand-invariant rank per t-mer position; window s holds the T t-mers
+    ranks[s:s+T] (T = w + k - t, t == k mod w). Every minimal t-mer x offers
+    the offset x mod w; the offset closest to the centre (w-1)/2 wins, and
+    between the two equally close mirror offsets the left if le_rc(s) (window s
+    <= its reverse complement, in the app's own order), else the right. le_rc
+    is called only on such a two-way tie. Returns s + offset per window."""
+    out = []
+    for s in range(len(ranks) - T + 1):
+        r = ranks[s:s + T]
+        mn = min(r)
+        offs = {x % w for x in range(T) if r[x] == mn}
+        best = min(abs(2 * p - (w - 1)) for p in offs)
+        close = [p for p in offs if abs(2 * p - (w - 1)) == best]
+        p = close[0] if len(close) == 1 else (min(close) if le_rc(s) else max(close))
+        out.append(s + p)
+    return out
+
+
+def is_forward(selections: list[int]) -> bool:
+    """Whether a scheme's per-window selections never move backwards."""
+    return all(b >= a for a, b in zip(selections, selections[1:]))
+
+
 def mod_sampling_density(
     dna_stream: list[int], k: int, w: int, t: int, hash_fn, seed: int,
 ) -> tuple[int, int]:
     """(n_kmers, n_selected) of the strand-symmetric mod-minimizer as
     minimap2's mod-minimizer-xor and kraken2's mod-minimizer define it
-    (minimap2/order.cpp, kraken2/src/mod_minimizer.h):
-    per window of L = w+k-1 bases the preferred strand has more G/T (tie: the
-    window <= its reverse complement); forward-preferred -> k-mer offset
-    x_L mod w (x_L = leftmost minimal canonical t-mer), reverse-preferred ->
-    (w-1) - (((T-1) - x_R) mod w) (x_R = rightmost), T = w+k-t. Not a forward
-    scheme, so this counts distinct selected positions instead of
-    super-k-mer boundaries; density_factor(n_selected, n_kmers, w)."""
+    (minimap2/order.cpp, kraken2/src/mod_minimizer.h): windows of L = w+k-1
+    bases, canonical t-mers ranked by hash_fn, the centre rule of
+    mod_centre_selections with window <= its reverse complement compared
+    lexicographically. The scheme is forward, so the distinct selected
+    positions are its super-k-mers; density_factor(n_selected, n_kmers, w)."""
     n = len(dna_stream)
     L, T = w + k - 1, w + k - t
     ranks = [hash_fn(canonical_mmer(v, t), seed) for v in rolling_values(dna_stream, t)]
-    gt = sum(1 for b in dna_stream[:L] if b >= 2)
-    selected: set[int] = set()
-    for s in range(n - L + 1):
-        if s:
-            gt += (dna_stream[s + L - 1] >= 2) - (dna_stream[s - 1] >= 2)
-        if 2 * gt != L:
-            fwd = 2 * gt > L
-        else:
-            win = dna_stream[s:s + L]
-            fwd = win <= [3 - b for b in reversed(win)]
-        r = ranks[s:s + T]
-        m = min(r)
-        if fwd:
-            off = r.index(m) % w
-        else:
-            off = (w - 1) - (((T - 1) - (T - 1 - r[::-1].index(m))) % w)
-        selected.add(s + off)
+
+    def le_rc(s: int) -> bool:
+        win = dna_stream[s:s + L]
+        return win <= [3 - b for b in reversed(win)]
+
+    selected = set(mod_centre_selections(ranks, w, T, le_rc)) if n >= L else set()
     return max(0, n - k + 1), len(selected)

@@ -125,7 +125,10 @@ def compute_all_orders(
     )
 
 
-EXPECTED_ORDERS_FIELDS = (*on.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS)
+EXPECTED_ORDERS_FIELDS = (*on.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule")
+# The mod-minimizer tie rule the cached rows were computed with; a cache without it
+# (the retired G/T-strand rule) is recomputed.
+MOD_TIE_RULE = "centre"
 
 
 def expected_orders_csv_path(results: Path) -> Path:
@@ -169,8 +172,10 @@ def ensure_expected_orders(
         load=lambda: load_expected_orders(results),
         compute=lambda todo: compute_all_orders(m, w, seeds, n_bases=n_bases, variants=todo),
         accept=lambda cached: all(
-            int(r.get("k") or r.get("m") or 0) == m and int(r.get("w") or 0) == w for r in cached.values()),
+            int(r.get("k") or r.get("m") or 0) == m and int(r.get("w") or 0) == w
+            and r.get("mod_tie_rule") == MOD_TIE_RULE for r in cached.values()),
         merge=True,
+        stamp={"mod_tie_rule": MOD_TIE_RULE},
         force=force,
     )
 

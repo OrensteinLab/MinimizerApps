@@ -189,7 +189,7 @@ ORDER_DESCRIPTIONS = {
         "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/<gm_table>.gm --gm-projection <projection> --order-seed SEED",
     },
     "mod-minimizer-xor": {
-        "description": "Strand-symmetric mod-minimizer (mod-sampling, WABI 2024, with a per-window preferred strand; this repo, not published): ranks t-mers by xor; the strand with more G/T is preferred, forward-preferred windows sample the k-mer at the leftmost minimal t-mer's position mod w, reverse-preferred ones by the mirror rule (rightmost minimal t-mer, offset counted from the right), so a sequence and its reverse complement select the same loci",
+        "description": "Strand-symmetric mod-minimizer (mod-sampling, WABI 2024, with the centre tie rule of Cologni & Pibiri as in SSHash; this repo): ranks t-mers by xor, t == k mod w; the minimal t-mer at x samples the k-mer at offset x mod w, a tie the offset closest to the window centre (two equally close ones: the left if the window <= its reverse complement), so a sequence and its reverse complement select the same loci and the scheme is forward",
         "cli": "--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
     },
 }

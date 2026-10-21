@@ -1271,11 +1271,10 @@ def order_info(v: dict) -> dict:
     flip_txt = (", with the DNA->binary projection polarity flipped (AT->1, CG->0 instead of AT->0, CG->1)"
                 if flipped else "")
     if on.is_mod_minimizer(order):
-        common = ("Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri 2024, with a "
-                  "per-k-mer preferred strand -- more G/T; this repo, not published): the k-mer's t-mers "
-                  "are ranked, the m-mer at x_L mod w is sampled (x_L = leftmost minimal t-mer), or the "
-                  "mirror rule on a reverse-preferred k-mer, so a k-mer and its reverse complement share "
-                  "the bucket; ")
+        common = ("Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri 2024, with the "
+                  "centre tie rule of the plain orders; this repo): the k-mer's t-mers are ranked, the "
+                  "minimal t-mer at x samples the m-mer at x mod w (t == m mod w), a tie the offset "
+                  "closest to the k-mer's centre, so a k-mer and its reverse complement share the bucket; ")
         if order == "mod-minimizer-xor":
             return {"description": common + "t-mers ranked by xor, t = 4 + (m - 4) mod w",
                     "cli": "-O mod-minimizer-xor --mod-t T -s SEED"}

@@ -68,19 +68,18 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
                       seed: int) -> tuple[int, int]:
     """(n_kmers, n_super) of the strand-symmetric mod-minimizer
     (util::compute_mod_minimizer in sshash/include/util.hpp): per k-mer, the
-    T = k - t + 1 canonical t-mers are hashed by `hash_fn`; the k-mer prefers its
-    forward strand when it has more G/T (G=3, T=2: code >= 2; a tie, even k only, is
-    broken by the numeric order of the packed k-mer and its reverse complement); a minimal t-mer at x samples the m-mer at x mod w, or
-    (w-1) - (((T-1) - x) mod w) on the reverse strand; with several minimal t-mers,
-    the sampled offset closest to (w-1)/2 (two equally close: the smaller on the
-    forward strand). n_super counts changes of the sampled position along the
-    stream -- sshash's super-k-mers, equal to the distinct sampled positions for
-    t = m mod w (a forward scheme) and larger otherwise.
+    T = k - t + 1 canonical t-mers are hashed by `hash_fn`, and the centre rule of
+    the shared reference (benchmark/common/density.py mod_centre_selections) picks
+    the sampled m-mer, two equally close offsets by the numeric order of the packed
+    k-mer and its reverse complement (sshash's !(kmer_rc < kmer)). n_super counts
+    changes of the sampled position along the stream -- sshash's super-k-mers.
 
     t-mers and k-mers are packed as sshash packs them (kmer.hpp: drop_char shifts
     the first base out of the low bits), first base least significant -- not this
     module's MSB-first packing of the plain orders -- so the canonical t-mer (and
     hence its xor hash) and the strand tie match the compiled order exactly."""
+    from density import mod_centre_selections  # benchmark/common
+
     n = len(dna_stream)
     w = k - m + 1
     T = k - t + 1
@@ -93,32 +92,19 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
         state = (state >> 2) | (b << top)  # first base in the low bits (sshash's packing)
         if i + 1 >= t:
             ranks.append(hash_fn(canonical_mmer(state, t), seed))
-    gt = sum(1 for b in dna_stream[:k] if b >= 2)
+
+    def le_rc(s: int) -> bool:
+        kv = 0
+        for j, b in enumerate(dna_stream[s:s + k]):
+            kv |= b << (2 * j)
+        return kv <= dna_reverse_complement(kv, k)  # !(kmer_rc < kmer)
+
     n_super = 0
     prev = None
-    for s in range(n - k + 1):
-        if s:
-            gt += (dna_stream[s + k - 1] >= 2) - (dna_stream[s - 1] >= 2)
-        r = ranks[s:s + T]
-        mn = min(r)
-        if 2 * gt != k:
-            fwd = 2 * gt > k
-        else:
-            kv = 0
-            for j, b in enumerate(dna_stream[s:s + k]):
-                kv |= b << (2 * j)
-            fwd = kv <= dna_reverse_complement(kv, k)  # !(kmer_rc < kmer)
-        offs = [x % w if fwd else (w - 1) - (((T - 1) - x) % w)
-                for x in range(T) if r[x] == mn]
-        if len(offs) == 1:
-            off = offs[0]
-        else:
-            best = min(abs(2 * p - (w - 1)) for p in offs)
-            close = [p for p in offs if abs(2 * p - (w - 1)) == best]
-            off = min(close) if fwd else max(close)
-        if s + off != prev:
+    for pos in mod_centre_selections(ranks, w, T, le_rc):
+        if pos != prev:
             n_super += 1
-            prev = s + off
+            prev = pos
     return n - k + 1, n_super
 
 

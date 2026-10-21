@@ -227,8 +227,9 @@ def expected_cache_key(
         gm = f"{gm_path}:{digest}"
     ident = {
         # bump when an order's hash or the row layout changes (2: greedymini --order-seed
-        # toggles Gamma; 3: projection/gm_k/gm_table columns; 4: mod_t and L columns)
-        "hash_version": 4,
+        # toggles Gamma; 3: projection/gm_k/gm_table columns; 4: mod_t and L columns;
+        # 5: the mod-minimizer's centre tie rule replaces the G/T-strand rule)
+        "hash_version": 5,
         "gm": gm,
         "seeds": [hex(s) for s in seeds],
         "n_bases": n_bases,
