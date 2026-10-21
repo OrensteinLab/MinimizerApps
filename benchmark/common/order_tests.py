@@ -93,6 +93,35 @@ def load_minimap2(results):
     return rows
 
 
+def load_minimap2_csv(path):
+    """minimap2_runs.csv (a result set whose runs/ directory was archived), in the contexts of
+    load_minimap2: (dataset, k<k>_w<w>) for the default repeat filter and k<k>_w<w>_f<N> for the
+    fixed one (-f N, N = native's own threshold). The export writes each (dataset, condition)
+    block in turn, default first: the fixed block of a (dataset, k) starts at native's second run
+    of a seed (native's runs are identical in both conditions), and every row from there on is in
+    it (a default-filter threshold may coincide with native's, so the value does not decide)."""
+    rows = read_csv(path)
+    native_thr, fixed_start, seen = {}, {}, set()
+    for i, r in enumerate(rows):
+        if r["order"] != "native":
+            continue
+        dk, key = (r["dataset"], r["k"]), (r["dataset"], r["k"], r.get("seed_idx"))
+        native_thr[dk] = r["mid_occ_threshold"]
+        if key in seen:
+            fixed_start.setdefault(dk, i)
+        seen.add(key)
+    out = []
+    for i, r in enumerate(rows):
+        dk = (r["dataset"], r["k"])
+        fixed = i >= fixed_start.get(dk, len(rows))
+        cond = "k%s_w%s" % (r["k"], r["w"]) + ("_f" + native_thr[dk] if fixed else "")
+        out.append({"ctx": (r["dataset"], cond), "label": label_of(r),
+                    "rep": r.get("seed_idx", "0"),
+                    "metrics": {c: num(r.get(c)) for c in ("build_wall_s", "build_cpu_s", "map_wall_s", "map_cpu_s")},
+                    "read_gb": {st: (num(r.get(st + "_read_gb")) or 0.0) for st in ("build", "map")}})
+    return out
+
+
 def load_csv_app(path, ctx_cols, metric_cols, keep=None, read_cols=None):
     """read_cols: {step prefix of the metrics (build, query, ...): read_gb column of that step}."""
     rows = []
@@ -108,6 +137,8 @@ def load_csv_app(path, ctx_cols, metric_cols, keep=None, read_cols=None):
 def load(app, results):
     csvs = results / "csvs"
     if app == "minimap2":
+        if not (results / "runs").is_dir():
+            return load_minimap2_csv(csvs / "minimap2_runs.csv"), "native"
         return load_minimap2(results), "native"
     if app == "sshash":
         return (load_csv_app(csvs / "sshash_runs.csv", ["dataset"],
@@ -147,8 +178,9 @@ def verdict(ratio, lo, hi, p_holm):
     return "not different"
 
 
-def run(app, results, exclude_cold_gb):
-    rows, baseline = load(app, results)
+def run(app, results, exclude_cold_gb, loaded=None):
+    """loaded: (rows, baseline) already read (default: load(app, results))."""
+    rows, baseline = loaded or load(app, results)
     groups = defaultdict(list)       # (ctx, metric, label) -> values
     dropped = 0
     for r in rows:
