@@ -149,6 +149,8 @@ class MinimizerScanner {
   // Counted only when built with KRAKEN2_MINIMIZER_BENCHMARK (zero otherwise).
   uint64_t rank_compares() const { return rank_cmp_; }
   uint64_t tie_compares() const { return tie_cmp_; }
+  // GreedyMini windows whose l-mers all have infinite rank (benchmark builds).
+  uint64_t infinite_windows() const { return inf_win_; }
 
   void ClearPhaseStats() {
     phase_stats_ = {};
@@ -212,6 +214,7 @@ class MinimizerScanner {
   uint64_t sigma_ = 0, sigma_mask_ = 0;
   bool roll_sigma_ = false;
   uint64_t tie_cmp_ = 0, rank_cmp_ = 0;  // rank-first counters (benchmark builds only)
+  uint64_t inf_win_ = 0;                 // InfiniteWindowMinimizer calls (benchmark builds only)
   std::unique_ptr<ModSampler> mod_sampler_;
   ssize_t seq_pos_;  // non-ambiguous bases since last reset (MOD + shared)
   // LoadSequence start (or 0 after 'N'); absolute k-mer/window index for Mod.

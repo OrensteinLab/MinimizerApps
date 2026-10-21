@@ -699,8 +699,12 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
   assert(! queue_.empty());
   if (order_ == Order::GM && dna_) {
     const uint64_t inf = gm_rf_ ? (uint64_t)GMRanker::kInfRank : UINT64_MAX;
-    if (queue_.front().rank == inf)
+    if (queue_.front().rank == inf) {
+#if defined(KRAKEN2_MINIMIZER_BENCHMARK)
+      inf_win_++;
+#endif
       last_minimizer_ = InfiniteWindowMinimizer();
+    }
     else if (changed_minimizer)
       last_minimizer_ = dna_hash_key(queue_.front().candidate);
   } else {
