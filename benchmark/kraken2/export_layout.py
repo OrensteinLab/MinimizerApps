@@ -78,6 +78,7 @@ for _p in (HERE, _COMMON):
 
 import order_names  # noqa: E402
 import step_record  # noqa: E402
+import density_effect  # noqa: E402
 import orders_sheet  # noqa: E402
 import units  # noqa: E402
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
@@ -1663,7 +1664,8 @@ def write_outputs(tables, csv_dir, xlsx_path):
                 print("removed stale table {}".format(f))
             except OSError:
                 pass
-    return write_book(xlsx_path, build_sheet_specs(tables))
+    return write_book(xlsx_path, build_sheet_specs(tables)
+                      + density_effect.sheets("kraken2", os.path.dirname(os.path.abspath(csv_dir))))
 
 
 # ---------------------------------------------------------------------------

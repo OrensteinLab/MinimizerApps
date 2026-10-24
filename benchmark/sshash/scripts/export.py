@@ -74,6 +74,7 @@ from scripts.orders import BASELINES, ORDERS, order_dir_name, variant_key
 import order_names as on
 import orders_sheet as osh
 import step_record
+import density_effect
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 from xlsx_book import DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv, xml_escape
@@ -1719,6 +1720,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
               SUPER_KMER_HISTOGRAM_FIELDS)
 
     sheets = build_sheets(rows, summary, orders, buckets, space, bucket_hist, super_kmer_hist)
+    sheets += density_effect.sheets("sshash", csvs_dir.parent)
     names = write_book(xlsx_dir / "sshash_results.xlsx", sheets)
     print(f"wrote {xlsx_dir / 'sshash_results.xlsx'} ({len(names)} sheets)")
 

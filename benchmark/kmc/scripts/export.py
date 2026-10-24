@@ -46,6 +46,7 @@ import step_record
 from scripts.common import die, load_dotenv
 from scripts.config import data_dir
 from correlation import correlation_rows
+import density_effect
 from xlsx_book import DATA_START_ROW as XLSX_DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv
 from scripts.density import (
@@ -1899,6 +1900,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     sheets.append(make_sheet("vs_paper", vs_paper, vs_paper_field_order()))
     xlsx_path = xlsx_root / "kmc3_results.xlsx"
     legend = overview_rows({sh["name"]: sh["fields"] for sh in sheets})
+    sheets += density_effect.sheets("kmc", results_root)  # explained by its own banner, not in the legend
     sheets.insert(0, make_sheet("overview", legend, overview_field_order()))
     names = write_book(xlsx_path, sheets)
     print(f"wrote {xlsx_path} ({len(names)} sheets)")

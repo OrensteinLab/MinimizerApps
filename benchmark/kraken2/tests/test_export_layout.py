@@ -142,7 +142,8 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(check_xlsx(xlsx), [])
         # profile is present here (fixture has timing data); paper_check only for strain_exclusion
         self.assertEqual(list(tables), list(E.SHEETS))
-        self.assertEqual(list(load_xlsx(xlsx)), list(E.SHEETS))
+        # the export appends the density-effect sheets (benchmark/common/density_effect.py)
+        self.assertEqual(list(load_xlsx(xlsx)), list(E.SHEETS) + ["density_effect", "density_effect_points"])
         for name in tables:
             self.assertTrue(os.path.isfile(os.path.join(tdir, "kraken2_%s.csv" % name)), name)
         import zipfile

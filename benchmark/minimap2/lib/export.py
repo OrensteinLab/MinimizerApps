@@ -78,6 +78,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
+import density_effect  # noqa: E402
 from order_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
 from orders_sheet import EXPECTED_FIELDS, missing_cells, orders_fields, particular_fields, span_length, with_klw  # noqa: E402
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib  # noqa: E402
@@ -971,6 +972,7 @@ def main(argv=None) -> int:
                ratio_fields=_ratio_polarity(summary_fields), ratio_baseline=1.0,
                footer_rows=correlation_rows(summary_fields, summary, CORRELATION_DRIVERS)),
         _sheet("runs", RUN_FIELDS, runs, **_block_opts(RUN_FIELDS)),
+        *density_effect.sheets("minimap2", csvs_dir.parent),
     ])
     print(f"wrote {xlsx_dir / 'minimap2_results.xlsx'}")
     return 0
