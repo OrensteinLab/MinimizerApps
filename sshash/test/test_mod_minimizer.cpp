@@ -4,7 +4,8 @@
 // util::compute_minimizer over whole sequences (with resets).
 //
 // Usage: test_mod_minimizer [TMER_TABLE.gm ...]  (GreedyMini tables of t-mers, e.g.
-//        orders/GreedyMini/w22_k10_canonical.gm; each is tested at t = gm_k and t = gm_k + 2)
+//        orders/GreedyMini/w22_k10_canonical.gm; each is tested at t = gm_k and t = gm_k + 2,
+//        with the (k, m) below for which t == m (mod k - m + 1))
 
 #include <algorithm>
 #include <iostream>
@@ -45,10 +46,9 @@ static std::string random_dna(uint64_t n, std::mt19937_64& gen, bool low) {
     The definition, from the k-mer's string (see util::compute_mod_minimizer): hash every t-mer
     (xor: the numerically canonical packed t-mer XOR the seed; GreedyMini: the per-base
     specification hash_reference of the raw t-mer); every minimal locus x offers the offset
-    x mod w (forward-preferred kmer) or (w-1) - (((T-1) - x) mod w); the offset closest to
-    (w-1)/2 wins, two equally close ones by the strand (smaller if forward-preferred);
-    preferred strand by the G/T count (tie: the numerically smaller packed kmer); value the
-    canonical packed m-mer at the offset.
+    x mod w; the offset closest to (w-1)/2 wins, two equally close ones the smaller if the
+    packed kmer <= its packed reverse complement, else the larger; value the canonical packed
+    m-mer at the offset.
 */
 template <typename kmer_t>
 static minimizer_info reference(std::string const& s, uint64_t k, uint64_t m, uint64_t t,
@@ -71,15 +71,8 @@ static minimizer_info reference(std::string const& s, uint64_t k, uint64_t m, ui
     for (uint64_t x = 0; x != T; ++x) {
         if (h[x] == mn) tied.push_back(x);
     }
-    const uint64_t gt = std::count(s.begin(), s.end(), 'G') + std::count(s.begin(), s.end(), 'T');
-    bool fwd = 2 * gt > k;
-    if (2 * gt == k) {
-        const kmer_t a = util::string_to_uint_kmer<kmer_t>(s.c_str(), k);
-        const kmer_t b = util::string_to_uint_kmer<kmer_t>(revcomp(s).c_str(), k);
-        fwd = !(b < a);
-    }
     std::vector<uint64_t> offsets;
-    for (uint64_t x : tied) offsets.push_back(fwd ? x % w : (w - 1) - (((T - 1) - x) % w));
+    for (uint64_t x : tied) offsets.push_back(x % w);
     auto dist = [&](uint64_t p) { return std::max(2 * p, w - 1) - std::min(2 * p, w - 1); };
     uint64_t best = dist(offsets[0]);
     for (uint64_t p : offsets) best = std::min(best, dist(p));
@@ -88,7 +81,9 @@ static minimizer_info reference(std::string const& s, uint64_t k, uint64_t m, ui
         if (dist(p) == best) closest.push_back(p);
     }
     std::sort(closest.begin(), closest.end());
-    const uint64_t p = fwd ? closest.front() : closest.back();
+    const kmer_t a = util::string_to_uint_kmer<kmer_t>(s.c_str(), k);
+    const kmer_t b = util::string_to_uint_kmer<kmer_t>(revcomp(s).c_str(), k);
+    const uint64_t p = !(b < a) ? closest.front() : closest.back();
     return {canon(s.substr(p, m)), p};
 }
 
@@ -116,7 +111,7 @@ static void test_config(uint64_t k, uint64_t m, hasher_type const& hasher, uint6
             break;
         }
         const minimizer_info rc = util::compute_minimizer(kmer_rc, kmer, k, m, hasher);
-        if (s == revcomp(s)) continue;  // no preferred strand (even k only)
+        if (s == revcomp(s)) continue;  // both strands take the left offset (even k only)
         if (rc.minimizer != got.minimizer or rc.pos_in_kmer + got.pos_in_kmer != k - m) {
             fail(label + ": kmer " + s + " and its reverse complement sample loci " +
                  std::to_string(got.pos_in_kmer) + " and " + std::to_string(rc.pos_in_kmer));
@@ -163,13 +158,11 @@ static void test_config(uint64_t k, uint64_t m, hasher_type const& hasher, uint6
             }
         }
     });
-    const uint64_t w = k - m + 1, reselected = num_reselected - reselected_before;
-    const bool aligned = (k - t) % w == (k - m) % w;  // t = m mod w: T-1 = w-1 mod w
+    const uint64_t reselected = num_reselected - reselected_before;
     std::cout << "  " << label << (num_failed == before ? ": ok" : ": FAILED")
-              << ", re-selected positions: " << reselected
-              << (aligned ? " (t = m mod w)" : "") << std::endl;
-    /* the standard t, on i.i.d. and {A,C}-only sequences: forward */
-    if (aligned and reselected != 0) fail(label + ": a sampled position was re-selected");
+              << ", re-selected positions: " << reselected << std::endl;
+    /* t == m (mod w), on i.i.d. and {A,C}-only sequences: forward */
+    if (reselected != 0) fail(label + ": a sampled position was re-selected");
 }
 
 int main(int argc, char** argv) {
@@ -180,13 +173,15 @@ int main(int argc, char** argv) {
 
     std::cout << "mod-minimizer-xor:" << std::endl;
     struct cfg { uint64_t k, m, t; };
-    for (cfg c : {cfg{31, 21, 10}, cfg{31, 21, 11}, cfg{31, 20, 9}, cfg{30, 20, 10},
-                  cfg{15, 11, 5}, cfg{21, 13, 4}, cfg{12, 8, 3}}) {
+    /* t == m (mod k - m + 1), which the builder requires (m <= 32: the reference packs m-mers
+       into 64 bits) */
+    for (cfg c : {cfg{31, 21, 10}, cfg{31, 20, 8}, cfg{30, 20, 9}, cfg{15, 11, 6},
+                  cfg{15, 11, 1}, cfg{21, 13, 4}, cfg{12, 8, 3}}) {
         hasher_type hasher(seed);
         hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
     }
-    for (cfg c : {cfg{47, 31, 8}, cfg{63, 31, 4}, cfg{40, 30, 10}}) {
+    for (cfg c : {cfg{47, 31, 14}, cfg{55, 31, 6}, cfg{40, 30, 8}}) {
         hasher_type hasher(seed);
         hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<wide_kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
@@ -212,8 +207,8 @@ int main(int argc, char** argv) {
         for (auto proj : {gm_projection::AT0_CG1, gm_projection::AT1_CG0}) {
             for (uint64_t extra : {0, 2}) {
                 const uint64_t t = GreedyMiniTable(load_gm_file_raw(argv[a])).gm_k() + extra;
-                for (cfg c : {cfg{31, 21, t}, cfg{31, 23, t}, cfg{25, 19, t}}) {
-                    if (c.t >= c.m) continue;
+                for (cfg c : {cfg{31, 21, t}, cfg{29, 20, t}, cfg{25, 19, t}, cfg{31, 22, t}}) {
+                    if (c.t >= c.m or c.t % (c.k - c.m + 1) != c.m % (c.k - c.m + 1)) continue;
                     hasher_type hasher(seed);
                     hasher.configure(custom_order_mode::MOD_GREEDYMINI, c.m, argv[a], proj, c.t);
                     test_config<kmer_t>(c.k, c.m, hasher, seed, gen, 20000);

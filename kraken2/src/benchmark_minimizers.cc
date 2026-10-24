@@ -50,6 +50,7 @@ struct BenchResult {
   bool has_uhs_stats = false;
   RankHitStats uhs_stats;
   NextMinPhaseStats phases;
+  uint64_t rank_compares = 0, tie_compares = 0, infinite_windows = 0;
 };
 
 struct PathDurationStats {
@@ -169,6 +170,9 @@ static BenchResult scan_once(MinimizerScanner &sc, const std::string &dna,
   r.has_uhs_stats = sc.has_uhs_stats();
   r.uhs_stats = sc.GetRankStats();
   r.phases = sc.GetPhaseStats();
+  r.rank_compares = sc.rank_compares();
+  r.tie_compares = sc.tie_compares();
+  r.infinite_windows = sc.infinite_windows();
   return r;
 }
 
@@ -1565,6 +1569,20 @@ int main(int argc, char **argv) {
     if (row.ran)
       print_phase_breakdown(row.cfg.name, row.bench.phases, nspc,
                             row.bench.ns_per_op);
+  }
+
+  for (const auto &row : rows) {
+    if (!row.ran || row.cfg.order != Order::GM || !row.bench.rank_compares)
+      continue;
+    std::printf(
+        "\n%s rank-first ties: %llu rank compares, %llu equal finite ranks "
+        "(%.4f%%), %llu infinite windows (%.4f%% of %llu calls)\n",
+        row.cfg.name, (unsigned long long)row.bench.rank_compares,
+        (unsigned long long)row.bench.tie_compares,
+        100.0 * row.bench.tie_compares / row.bench.rank_compares,
+        (unsigned long long)row.bench.infinite_windows,
+        100.0 * row.bench.infinite_windows / row.bench.n_ops,
+        (unsigned long long)row.bench.n_ops);
   }
 
   for (const auto &row : rows) {

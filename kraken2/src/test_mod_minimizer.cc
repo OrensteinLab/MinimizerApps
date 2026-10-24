@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <climits>
+#include <cstdlib>
 #include <random>
 #include <string>
 #include <unordered_set>
@@ -37,10 +39,9 @@ static uint64_t xor_rank(uint64_t canonical, uint64_t toggle_mask) {
 }
 
 // Slow reference MOD stream (no fast-path LUTs/counters): w residue deques,
-// and the window's preferred strand from its k bases (more G/T; tie: window
-// <= its reverse complement). Forward-preferred: offset x_L mod w (x_L =
-// leftmost minimal t-mer); reverse-preferred: (w-1) - (((T-1) - x_R) mod w)
-// (x_R = rightmost minimal t-mer).
+// and the centre rule over the offsets x mod w of the minimal t-mers: the
+// offset closest to the centre (w-1)/2; between two equally close ones the
+// left if the window (its k bases) <= its reverse complement, else the right.
 class NaiveModReference {
  public:
   NaiveModReference(int k, int l, uint64_t toggle_mask,
@@ -138,22 +139,25 @@ class NaiveModReference {
     // Match ModSampler: non-UHS GM ranks (UINT64_MAX) are not candidates.
     if (best_rank == UINT64_MAX)
       return false;
-    // x_L / x_R: leftmost / rightmost minimal t-mer (in each residue deque
-    // the entries equal to the front rank are contiguous at the front)
-    ssize_t x_l = -1, x_r = -1;
+    // every minimal t-mer offers its offset (in each residue deque the
+    // entries equal to the front rank are contiguous at the front)
+    int best = INT_MAX, lo = 0, hi = 0;
     for (int a = 0; a < w_; a++) {
       for (const Entry &e : deques_[(size_t)a]) {
         if (e.rank != best_rank)
           break;
-        if (x_l < 0 || e.pos < x_l)
-          x_l = e.pos;
-        x_r = std::max(x_r, e.pos);
+        const int p = (int)((e.pos - win) % w_);
+        const int d = std::abs(2 * p - (w_ - 1));
+        if (d < best) {
+          best = d;
+          lo = hi = p;
+        } else if (d == best) {
+          lo = std::min(lo, p);
+          hi = std::max(hi, p);
+        }
       }
     }
-    const int T = tmer_span_;
-    const int off = forward_preferred()
-                        ? (int)((x_l - win) % w_)
-                        : (w_ - 1) - (int)(((T - 1) - (x_r - win)) % w_);
+    const int off = (lo == hi || window_le_revcomp()) ? lo : hi;
     *out = lmer_ring_[(size_t)((win + off) % w_)];
     win_start_ = win;
     return true;
@@ -165,12 +169,7 @@ class NaiveModReference {
     ssize_t pos;
   };
 
-  bool forward_preferred() const {
-    int gt = 0;
-    for (uint8_t b : k_bases_)
-      gt += b >> 1;
-    if (2 * gt != k_)
-      return 2 * gt > k_;
+  bool window_le_revcomp() const {
     for (int j = 0; j < k_; j++) {
       const int a = k_bases_[(size_t)j];
       const int b = 3 - k_bases_[(size_t)(k_ - 1 - j)];
@@ -638,7 +637,8 @@ static void test_deterministic_checksum() {
   // Regression anchor: if sampled ℓ-mer stream changes, update this.
   // Warm-up batching does not change window samples (only drops pre-window
   // returns of ~0, which XOR out of the old L-length checksum).
-  const uint64_t expect = 0x240fd3bb257f260eULL;
+  // Centre tie rule (was 0x240fd3bb257f260e under the G/T-strand rule).
+  const uint64_t expect = 0x0ab95cceb8c9bf3cULL;
   if (checksum != expect) {
     std::cerr << "FAIL: checksum regression got=0x" << std::hex << checksum
               << " expect=0x" << expect << std::dec << "\n";
@@ -1256,12 +1256,14 @@ static std::string revcomp_string(const std::string &s) {
   return r;
 }
 
-// The definition, per k-mer window (no shared state with ModSampler): the
-// preferred strand has more G/T (tie: window <= revcomp(window)); forward ->
-// x_L mod w (x_L = leftmost minimal t-mer), reverse -> (w-1) - (((T-1) - x_R)
-// mod w) (x_R = rightmost); the window's canonical l-mer at that offset.
+// The definition, per k-mer window (no shared state with ModSampler): over the
+// minimal t-mers x, the offset x mod w closest to the centre (w-1)/2, between
+// two equally close ones the left if window <= revcomp(window) (strings),
+// else the right; the window's canonical l-mer at that offset. `offsets`
+// (optional) receives the sampled offsets.
 static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
-                                                 int l, uint64_t toggle) {
+                                                 int l, uint64_t toggle,
+                                                 std::vector<int> *offsets = nullptr) {
   const int w = k - l + 1, t = 4 + (l - 4) % w, T = w + l - t;
   const uint64_t tog = toggle & ((1ULL << (2 * t)) - 1ULL);
   auto pack = [&](size_t pos, int len) {
@@ -1272,25 +1274,25 @@ static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
   };
   std::vector<uint64_t> out;
   for (size_t s = 0; s + (size_t)k <= dna.size(); s++) {
-    int gt = 0;
-    for (int i = 0; i < k; i++)
-      gt += dna_lut(dna[s + (size_t)i]) >> 1;
-    bool fwd = 2 * gt > k;
-    if (2 * gt == k) {
-      const std::string win = dna.substr(s, (size_t)k);
-      fwd = win <= revcomp_string(win);
-    }
     std::vector<uint64_t> r((size_t)T);
     for (int x = 0; x < T; x++)
       r[(size_t)x] = dna_canonical_representation(pack(s + (size_t)x, t), (uint8_t)t,
                                                    CURRENT_REVCOM_VERSION) ^ tog;
-    const auto first = std::min_element(r.begin(), r.end());
-    const int x_l = (int)(first - r.begin());
-    int x_r = x_l;
-    for (int x = 0; x < T; x++)
-      if (r[(size_t)x] == *first)
-        x_r = x;
-    const int p = fwd ? x_l % w : (w - 1) - (((T - 1) - x_r) % w);
+    const uint64_t min_r = *std::min_element(r.begin(), r.end());
+    int best = INT_MAX, lo = 0, hi = 0;
+    for (int x = 0; x < T; x++) {
+      if (r[(size_t)x] != min_r)
+        continue;
+      const int d = std::abs(2 * (x % w) - (w - 1));
+      if (d < best)
+        best = d, lo = hi = x % w;
+      else if (d == best)
+        lo = std::min(lo, x % w), hi = std::max(hi, x % w);
+    }
+    const std::string win = dna.substr(s, (size_t)k);
+    const int p = (lo == hi || win <= revcomp_string(win)) ? lo : hi;
+    if (offsets)
+      offsets->push_back(p);
     out.push_back(dna_canonical_representation(pack(s + (size_t)p, l), (uint8_t)l,
                                                CURRENT_REVCOM_VERSION));
   }
@@ -1300,13 +1302,35 @@ static std::vector<uint64_t> naive_canonical_xor(const std::string &dna, int k,
 static void test_matches_string_definition() {
   std::mt19937_64 rng(31);
   const char *bases = "ACGT";
-  for (int k : {35, 36, 37}) {  // w = 5, 6 (even window: G/T ties), 7
+  for (int k : {35, 36, 37}) {  // w = 5, 6 (even), 7
     std::string dna(3000, 'A');
     for (char &c : dna)
       c = bases[rng() & 3ULL];
     const auto fast = scan_mod_minimizers(dna, k, 31, DEFAULT_TOGGLE_MASK);
     const auto naive = naive_canonical_xor(dna, k, 31, DEFAULT_TOGGLE_MASK);
     check(fast == naive, ("MOD matches the string definition k=" + std::to_string(k)).c_str());
+  }
+}
+
+// The centre rule is forward: the sampled position (window start + offset)
+// never decreases. Low-complexity sequence forces many ties.
+static void test_forward() {
+  std::mt19937_64 rng(35);
+  for (int kind = 0; kind < 2; kind++) {
+    std::string dna(4000, 'A');
+    const char *bases = kind ? "AC" : "ACGT";
+    for (char &c : dna)
+      c = bases[rng() & (kind ? 1ULL : 3ULL)];
+    for (int k : {35, 36}) {
+      std::vector<int> off;
+      const auto naive = naive_canonical_xor(dna, k, 31, DEFAULT_TOGGLE_MASK, &off);
+      check(scan_mod_minimizers(dna, k, 31, DEFAULT_TOGGLE_MASK) == naive,
+            ("MOD matches the definition on low-complexity input k=" + std::to_string(k)).c_str());
+      size_t back = 0;
+      for (size_t i = 1; i < off.size(); i++)
+        back += (ssize_t)i + off[i] < (ssize_t)(i - 1) + off[i - 1];
+      check(back == 0, ("MOD centre rule is forward k=" + std::to_string(k)).c_str());
+    }
   }
 }
 
@@ -1332,7 +1356,7 @@ static std::vector<std::pair<bool, uint64_t>> window_selections(
 
 // A read and its reverse complement select the same l-mers, window by window
 // in reverse order -- except at a window that is its own reverse complement
-// (possible only for even k), which has no preferred strand.
+// (possible only for even k), where both strands take the left offset.
 static size_t strand_mismatches(const std::string &dna, int k, int l, Order order,
                                 std::shared_ptr<const GreedyMiniTable> table) {
   const auto f = window_selections(dna, k, l, order, table);
@@ -1411,6 +1435,7 @@ int main() {
   test_mod_revcom_v0_rejected();
   test_mod_kinds_and_logs();
   test_matches_string_definition();
+  test_forward();
   test_strand_symmetric();
 
   if (failures) {

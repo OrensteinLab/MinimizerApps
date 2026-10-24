@@ -348,10 +348,12 @@ lists the variants and which are already done without building anything;
 
 `mod-minimizer` is strand-symmetric mod-sampling (this fork, not a published
 scheme; `kraken2/src/mod_minimizer.h`): mod-sampling (Groot Koerkamp & Pibiri,
-2024) with a per-k-mer preferred strand (more G/T bases), the other strand's
-k-mers using the mirror rule, so a read and its reverse complement give the
-same minimizers. Databases built with the earlier forward-only mod-minimizer
-are rejected (rebuild them).
+2024) with t == l (mod w) and the centre tie rule shared with minimap2 and
+sshash (`common/minimizer-orders/mod_minimizer_rule.h`): a tie at the minimum
+takes the offset closest to the k-mer's centre, two equally close ones by the
+k-mer <= its reverse complement, so a read and its reverse complement give the
+same minimizers. Databases built with the earlier forward-only mod-minimizer,
+or with the G/T-strand tie rule, are rejected (rebuild them).
 
 Names are exact (no aliases: every other spelling, old or new, is rejected). The
 name is `sketching[-]order` (`scheme_label` in `kraken2/src/sketching_schemes.h`);

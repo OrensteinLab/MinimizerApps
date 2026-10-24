@@ -317,18 +317,17 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // position mod w does not commute with mirroring the window), so a read and
 // its reverse complement select different loci (~5% at t = 5 on human DNA).
 //
-// This variant (the rule of common/minimizer-orders/mod_minimizer_rule.h:
-// the canonical definition of simd-minimizers, Groot Koerkamp & Martayan,
-// bioRxiv 2025.01.27.634998, applied to mod-sampling) gives each window a
-// preferred strand: the one with more G/T bases, a tie
-// (even L) broken by W <= revcomp(W) lexicographically. A forward-preferred
-// window samples offset x_L mod w; a reverse-preferred one applies the same
-// rule from the other end: x_R = rightmost minimal t-mer, offset
-// (w-1) - (((T-1) - x_R) mod w). The reverse complement of a window then
-// samples the mirror k-mer, so both strands select the same loci (except in a
-// window that is its own reverse complement). Density: +0-1% over plain
-// mod-sampling (benchmark/minimap2/analysis/canonical_mod.py; validate_mod_minimizer.py checks
-// the code against a brute force of this definition).
+// This variant (the rule of common/minimizer-orders/mod_minimizer_rule.h,
+// shared with the kraken2 and sshash forks) requires t == k (mod w), so the
+// offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in the
+// reverse complement correspond. A unique minimum samples its offset; a tie
+// takes the offset closest to the window centre (w-1)/2, and between two
+// equally close ones the left if W <= revcomp(W) lexicographically, the right
+// otherwise (the centre rule of Cologni & Pibiri, as in SSHash). The reverse
+// complement of a window then samples the mirror k-mer, so both strands select
+// the same loci, and the selection never moves backwards (forward).
+// validate_mod_minimizer.py checks the code against a brute force of this
+// definition.
 //
 // Streaming: the live t-mers' ranks and residue classes in a power-of-two
 // ring indexed by ordinal, with the window minimum and its leftmost and
@@ -337,8 +336,7 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // native mm_sketch() does. (A monotone deque, as kraken2::ModSampler uses,
 // mispredicts about one branch per base on random ranks: its pop count is
 // data dependent; this costs ~2 rank compares per base and few mispredicts.)
-// Residue classes by wrap-around counters. The sampled position can
-// move back as the window slides, so a selected k-mer is only marked pending
+// Residue classes by wrap-around counters. A selected k-mer is marked pending
 // in its residue slot and emitted when it leaves the window (no later window
 // can select it): output stays in position order, each k-mer once, no sort.
 // ---------------------------------------------------------------------------
@@ -381,26 +379,14 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 	std::memset(&tq, 0, sizeof(tq));
 	for (int a = 0; a < w; ++a) lring[a].valid = 0;
 
-	// The window's forward and reverse-complement 2-bit words when L <= 32
-	// (G/T count = popcount of the high bits, exact lexicographic tie-break);
-	// otherwise its bases in a ring (wb_pos = next slot) and a running G/T
-	// count. Per residue slot: whether its k-mer is selected but not yet
-	// emitted, and the slot the mirror rule picks for a rightmost minimal
-	// t-mer in that slot's residue class.
+	// The window's bases as two bit planes, newest base lowest, read only on
+	// an exact two-way tie (v <= RC(v)). t == k (mod w) with 0 < t < k gives
+	// w <= k - t, so L <= 2k - 2 <= 54 bases fit. Per residue slot: whether
+	// its k-mer is selected but not yet emitted.
 	const int L = w + k - 1;
-	const bool win_word = L <= 32;
-	std::vector<uint8_t> wbase(win_word ? 0 : (size_t)L);
+	assert(L <= 64);
 	std::vector<uint8_t> pending((size_t)w, 0);
-	std::vector<uint8_t> mirror_slot((size_t)w);
-	int wb_pos = 0, gt = 0;
-	uint64_t win_fw = 0, win_rc = 0;
-	const uint64_t win_mask = L >= 32 ? ~0ULL : (1ULL << (2 * L)) - 1;
-	const uint64_t win_hi = 0xAAAAAAAAAAAAAAAAULL & win_mask; // bit 1 of each base: G = 2, T = 3
-	// mirror rule: offset p = (w-1) - (((T-1) - x_R) mod w), slot (win + p) mod w;
-	// with x_R mod w = cls_R - win (mod w) the window index cancels:
-	// slot = (cls_R + (w-1) - (T-1)) mod w
-	for (int a = 0; a < w; ++a)
-		mirror_slot[(size_t)a] = (uint8_t)mod_rule::mirror_slot(a, w, tmer_span);
+	uint64_t win_hi = 0, win_lo = 0;
 	auto emit = [&](const LEntry &e) {
 		mm128_t out;
 		out.x = (mm_hash64(e.kmer, k_mask) << 8) | e.span;
@@ -420,7 +406,7 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		int c = seq_nt4_table[(uint8_t)str[i]];
 		if (c >= 4) { // ambiguous base: reset everything, same as native
 			flush_pending();
-			gt = 0; wb_pos = 0; win_fw = win_rc = 0;
+			win_hi = win_lo = 0;
 			for (int a = 0; a < w; ++a) lring[a].valid = 0;
 			run_pos = -1; t_cls = l_cls = 0; kmer_span = 0;
 			tq.count = tq.front = 0;
@@ -446,16 +432,8 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 		tmer_rc = (tmer_rc >> 2) | (((uint64_t)(3 ^ c)) << t_shift1);
 		kmer[0] = ((kmer[0] << 2) | (uint64_t)c) & k_mask;
 		kmer[1] = (kmer[1] >> 2) | (((uint64_t)(3 ^ c)) << k_shift1);
-		if (win_word) {
-			win_fw = ((win_fw << 2) | (uint64_t)c) & win_mask;
-			win_rc = (win_rc >> 2) | ((uint64_t)(3 ^ c) << (2 * (L - 1)));
-		} else {
-			uint8_t &slot_b = wbase[(size_t)wb_pos];
-			if (++wb_pos == L) wb_pos = 0;
-			if (run_pos >= L) gt -= slot_b >> 1; // G = 2, T = 3: bit 1 set
-			slot_b = (uint8_t)c;
-			gt += c >> 1;
-		}
+		win_hi = (win_hi << 1) | (uint64_t)(c >> 1);
+		win_lo = (win_lo << 1) | (uint64_t)(c & 1);
 
 		const ssize_t ot = run_pos - t + 1; // ordinal of the t-mer ending here
 		if (ot >= 0) {
@@ -495,20 +473,24 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 			min_rank = trank[(size_t)(win & rmask)], x_l = x_r = win;
 			for (ssize_t x = win + 1; x <= ot; ++x) take(trank[(size_t)(x & rmask)], x);
 		}
-		// Preferred strand, branch-free when L <= 32 (the choice is close to a
-		// fair coin per window, so a branch would mispredict half the time).
-		bool fwd;
-		if (win_word) { // the words compare as the base sequences do
-			fwd = mod_rule::prefer_forward_eager(2 * __builtin_popcountll(win_fw & win_hi) - L, win_fw <= win_rc);
-		} else { // the window's first base sits in ring slot wb_pos (oldest)
-			fwd = mod_rule::prefer_forward(2 * gt - L, [&]() {
-				return mod_rule::window_le_revcomp(L, [&](int j) { return (int)wbase[(size_t)((wb_pos + j) % L)]; });
-			});
+		// The k-mer of a minimal t-mer x sits in the residue slot of x
+		// ((win + (x - win) mod w) mod w == x mod w): a unique minimum is that
+		// slot. A tie takes the centre rule over the tied t-mers' offsets
+		// p = (tcls[x] - l_cls) mod w (l_cls == win mod w here); the chosen
+		// offset p is the k-mer in slot (l_cls + p) mod w.
+		int sel_slot = tcls[(size_t)(x_l & rmask)];
+		if (x_l != x_r) {
+			mod_rule::CentrePick cp;
+			for (ssize_t x = x_l; x <= x_r; ++x) {
+				if (trank[(size_t)(x & rmask)] != min_rank) continue;
+				int p_x = (int)tcls[(size_t)(x & rmask)] - l_cls;
+				if (p_x < 0) p_x += w;
+				cp.add((uint64_t)p_x, (uint64_t)w);
+			}
+			const int p_sel = (int)cp.pick([&]() { return mod_rule::le_revcomp_planes(win_hi, win_lo, L); });
+			sel_slot = l_cls + p_sel;
+			if (sel_slot >= w) sel_slot -= w;
 		}
-		// Forward: the leftmost minimum's k-mer is in the residue slot of x_l
-		// ((win + (x_l mod w)) mod w == x_l mod w). Reverse: the rightmost
-		// minimal t-mer x_r -> mirror_slot of its class.
-		const int sel_slot = mod_rule::select_slot(tcls[(size_t)(x_l & rmask)], mirror_slot[tcls[(size_t)(x_r & rmask)]], fwd);
 		pending[(size_t)sel_slot] |= (uint8_t)lring[(size_t)sel_slot].valid;
 	}
 	flush_pending();
@@ -566,6 +548,10 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 		set_err(errbuf, errbuf_len, "mod-minimizer order requires 0 < --mod-t < -k");
 		return nullptr;
 	}
+	if (mod && !mod_rule::t_is_canonical(conf->k, conf->w, conf->t)) {
+		set_err(errbuf, errbuf_len, "mod-minimizer order requires --mod-t == -k (mod -w) (the centre tie rule)");
+		return nullptr;
+	}
 	if (!mod && conf->t != 0) {
 		set_err(errbuf, errbuf_len, "--mod-t given but the chosen order is not a mod-minimizer order");
 		return nullptr;
@@ -601,14 +587,14 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, errbuf, errbuf_len) != 0) {
+	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
 		delete ord;
 		return nullptr;
 	}
 	return ord;
 }
 
-extern "C" int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, size_t errbuf_len)
+extern "C" int mm_order_validate(const mm_order_t *ord, int k, int w, char *errbuf, size_t errbuf_len)
 {
 	char msg[160];
 	if (!ord) { set_err(errbuf, errbuf_len, "null order"); return -1; }
@@ -617,8 +603,8 @@ extern "C" int mm_order_validate(const mm_order_t *ord, int k, char *errbuf, siz
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
-	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k)) {
-		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k (t = %d, k = %d)", ord->t, k);
+	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k || !mod_rule::t_is_canonical(k, w, ord->t))) {
+		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k and t == k (mod w) (t = %d, k = %d, w = %d)", ord->t, k, w);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
@@ -696,11 +682,14 @@ extern "C" void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *s
 namespace {
 
 const size_t kChunk = 4096; // table entries per fwrite/fread
+// Mod-minimizer tie rule stored in an .mmi order section (after gm_l): the
+// centre rule; an index without it was built with the retired G/T-strand rule.
+constexpr uint8_t kModTieRuleCentre = 1;
 
 uint64_t blob_len(const mm_order_t *ord) {
 	uint64_t len = sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int32_t) + sizeof(uint8_t);
 	if (ord->gm) len += sizeof(uint64_t) + (uint64_t)ord->gm->size() * sizeof(uint64_t);
-	return len + sizeof(uint8_t) + sizeof(int32_t);
+	return len + sizeof(uint8_t) + sizeof(int32_t) + sizeof(uint8_t);
 }
 
 // Reads exactly the section's `left` bytes, field by field.
@@ -746,7 +735,9 @@ extern "C" int mm_order_dump(const mm_order_t *ord, FILE *fp)
 	}
 	const uint8_t proj = (uint8_t)ord->gm_projection;
 	const int32_t gm_l = (int32_t)ord->gm_l;
-	ok = ok && std::fwrite(&proj, sizeof proj, 1, fp) == 1 && std::fwrite(&gm_l, sizeof gm_l, 1, fp) == 1;
+	const uint8_t mod_rule_id = kModTieRuleCentre;
+	ok = ok && std::fwrite(&proj, sizeof proj, 1, fp) == 1 && std::fwrite(&gm_l, sizeof gm_l, 1, fp) == 1
+		&& std::fwrite(&mod_rule_id, sizeof mod_rule_id, 1, fp) == 1;
 	return ok ? 0 : -1;
 }
 
@@ -799,7 +790,13 @@ extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
 	if (proj > MM_GM_PROJ_AT1_CG0) { set_err(errbuf, errbuf_len, "invalid GreedyMini projection in index"); return nullptr; }
 	int32_t gm_l = 0;
 	if (in.left >= sizeof gm_l) in.get(&gm_l, sizeof gm_l);
+	uint8_t mod_rule_id = 0; // absent: written before the centre tie rule
+	if (in.left >= sizeof mod_rule_id) in.get(&mod_rule_id, sizeof mod_rule_id);
 	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated order metadata"); return nullptr; }
+	if (is_mod_kind((mm_order_kind_t)kind32) && mod_rule_id != kModTieRuleCentre) {
+		set_err(errbuf, errbuf_len, "mod-minimizer index built with the retired G/T-strand tie rule; rebuild it");
+		return nullptr;
+	}
 	if (gm && gm_l <= 0) {
 		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini centre extension; rebuild it");
 		return nullptr;

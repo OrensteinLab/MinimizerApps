@@ -879,8 +879,8 @@ ORDER_INFO = {
     "greedymini": ("minimizer", "greedymini", "--sketching minimizer --order greedymini --greedymini-file <table>.gm",
                    "GreedyMini table (centre extension), ties broken by the seed"),
     "mod-minimizer-xor": ("mod-minimizer", "xor", "--sketching mod-minimizer --order xor",
-                          "strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri, with a per-k-mer "
-                          "preferred strand; this fork, not published) on a random (xor) order"),
+                          "strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri, with the centre "
+                          "tie rule; this fork) on a random (xor) order"),
     "mod-minimizer-greedymini": ("mod-minimizer", "greedymini",
                                  "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",
                                  "strand-symmetric mod-minimizer on a GreedyMini table"),

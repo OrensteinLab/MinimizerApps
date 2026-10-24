@@ -11,8 +11,9 @@ every rank is a strand-symmetric hash of the canonical t-mer / k-mer):
                       rightmost on a reverse-preferred one.
 - mod-minimizer:      the plain WABI 2024 scheme: k-mer at offset x_L mod w,
                       x_L = leftmost minimal t-mer (not strand-symmetric).
-- canonical-mod:      this construction (not published; minimap2's and
-                      kraken2's mod-minimizer): forward-preferred
+- canonical-mod:      the G/T-strand construction the minimap2 and kraken2
+                      mod-minimizers used before the centre tie rule
+                      (mod_minimizer_rule.h, 2026-10): forward-preferred
                       windows as mod-minimizer; reverse-preferred windows the
                       mirror rule, x' = (T-1) - x_R (x_R = rightmost minimal
                       t-mer), k-mer at offset (w-1) - (x' mod w).

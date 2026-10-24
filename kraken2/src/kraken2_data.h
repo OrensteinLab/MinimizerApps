@@ -22,6 +22,10 @@ static const int KRAKEN2_DB_VERSION = 2;
 // "K2SK" little endian. Databases written by earlier fork builds carry the
 // Order in the low byte of this field (0, 1 or 2), so they never match.
 static const uint32_t KRAKEN2_OPTS_MAGIC = 0x4b32534bu;
+// Tie rule of a MOD database's mod-minimizer (mod_minimizer_rule.h): the
+// centre rule. MOD databases built with the G/T-strand rule store 0 and are
+// rejected; MINIMIZER databases store 0 and are unaffected.
+static const uint8_t kModTieRuleCentre = 1;
 
 struct IndexOptions {
   // ---- original Kraken 2 fields (do not reorder) ----
@@ -41,7 +45,8 @@ struct IndexOptions {
   uint16_t gm_k;
   uint32_t magic;             // KRAKEN2_OPTS_MAGIC
   uint8_t  gm_projection;     // GmProjection (0 in databases built before it)
-  uint8_t  reserved_[3];
+  uint8_t  mod_tie_rule;      // MOD: kModTieRuleCentre (0 = the retired G/T rule)
+  uint8_t  reserved_[2];
   uint64_t gm_num_entries;
 };
 static_assert(sizeof(IndexOptions) == 80, "opts.k2d layout is 80 bytes");
@@ -55,7 +60,9 @@ inline bool IndexOptionsValid(const IndexOptions &opts, size_t file_size) {
          (opts.sketching_scheme == (uint8_t)SketchingScheme::MINIMIZER ||
           opts.sketching_scheme == (uint8_t)SketchingScheme::MOD) &&
          opts.order <= (uint8_t)Order::RANDOM_PCG &&
-         opts.gm_projection <= (uint8_t)GmProjection::AT1_CG0;
+         opts.gm_projection <= (uint8_t)GmProjection::AT1_CG0 &&
+         (opts.sketching_scheme != (uint8_t)SketchingScheme::MOD ||
+          opts.mod_tie_rule == kModTieRuleCentre);
 }
 
 inline void DecodeIndexSchemes(const IndexOptions &opts,
@@ -70,6 +77,7 @@ inline void EncodeIndexSchemes(IndexOptions &opts, SketchingScheme sketching,
   opts.sketching_scheme = (uint8_t)sketching;
   opts.order = (uint8_t)order;
   opts.magic = KRAKEN2_OPTS_MAGIC;
+  opts.mod_tie_rule = sketching == SketchingScheme::MOD ? kModTieRuleCentre : 0;
 }
 
 // Message for a database whose opts.k2d is not the current format.

@@ -4,7 +4,9 @@ density table merge (density_csv.py): canonical orders only, params as fields.
     python3 -m unittest discover -s benchmark/kraken2/tests
 """
 
+import contextlib
 import csv
+import io
 import os
 import subprocess
 import sys
@@ -76,6 +78,37 @@ class DensityCsv(unittest.TestCase):
         self.assertEqual((x[0]["k"], x[0]["w"], x[0]["L"]), ("31", "5", "35"))
         fields = list(rows[0].keys())
         self.assertEqual(fields[fields.index("k"):fields.index("k") + 3], ["k", "w", "L"])
+
+
+    def test_missing_recomputes_mod_rows_without_the_tie_rule(self):
+        d = tempfile.mkdtemp()
+        out = os.path.join(d, "density.csv")
+        args = ["1", "0x1", "31", "35", "7", "at0-cg1", "/x/w5_k15_canonical.gm", "/x/w5_k6_canonical.gm"]
+        new = os.path.join(d, "new.csv")
+        with open(new, "w") as f:
+            f.write("scheme,seed_idx,toggle_hex,l,k,w,fac_expected,fac_particular\n"
+                    "xor,1,0x1,31,35,5,2.0,2.0\nmod-minimizer-xor,1,0x1,31,35,5,1.37,1.37\n")
+        D.cmd_merge([out, new] + ["7", "31", "35", "at0-cg1", "/x/w5_k15_canonical.gm", "/x/w5_k6_canonical.gm"])
+
+        def missing():
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                D.cmd_missing([out] + args + ["xor", "mod-minimizer-xor"])
+            return buf.getvalue().split()
+
+        self.assertEqual(missing(), [])
+        with open(out) as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual({r["scheme"]: r["mod_tie_rule"] for r in rows},
+                         {"xor": "", "mod-minimizer-xor": D.MOD_TIE_RULE})
+        # a row of the old rule (no stamp) is missing; a plain order is not
+        for r in rows:
+            r["mod_tie_rule"] = ""
+        with open(out, "w") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()), lineterminator="\n")
+            w.writeheader()
+            w.writerows(rows)
+        self.assertEqual(missing(), ["mod-minimizer-xor"])
 
 
 if __name__ == "__main__":

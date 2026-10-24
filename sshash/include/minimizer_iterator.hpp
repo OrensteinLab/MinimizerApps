@@ -510,10 +510,10 @@ private:
     The strand-symmetric mod-minimizer (util::compute_mod_minimizer), incrementally (GreedyMini:
     rank first, see next_gm): the hashes of the kmer's T = k - t + 1 t-mers live in a ring (64 slots, locus x of the current kmer at
     slot (m_base + x) & 63), with the minimum hash and its leftmost and rightmost loci (a tie
-    between them is resolved from the ring, util::mod_tie_offset). A slide
+    between them is resolved from the ring by the centre rule, util::mod_tie_offset). A slide
     hashes the one new t-mer; the whole ring is re-scanned only when the leftmost minimum leaves
-    the kmer (the "re-scan" method of minimizer_iterator). The sampled offset then follows from
-    the kmer's preferred strand in O(1). If the kmer passed to `next` is the first one after
+    the kmer (the "re-scan" method of minimizer_iterator). A unique minimum samples offset
+    x mod w in O(1). If the kmer passed to `next` is the first one after
     reset() / set_position(), the ring is filled from the kmer; every other call must pass the
     one-base slide of the previous kmer (the assertion against util::compute_minimizer checks
     the result in debug builds).
@@ -579,10 +579,11 @@ struct mod_minimizer_iterator {
             }
         }
 
-        const bool fwd = util::mod_forward_preferred(kmer, kmer_rc, m_k);
-        const uint64_t p = m_left == m_right ? util::mod_offset(m_left, m_w, m_T, fwd)
-                                             : util::mod_tie_offset(m_ring, m_base, m_T, m_w,
-                                                                    m_min_hash, m_left, m_right, fwd);
+        const uint64_t p =
+            m_left == m_right
+                ? m_left % m_w
+                : util::mod_tie_offset(m_ring, m_base, m_w, m_min_hash, m_left, m_right,
+                                       [&]() { return util::mod_le_rc(kmer, kmer_rc); });
         Kmer mwin = kmer;
         mwin.drop_chars(p);
         minimizer_info mini_info(util::canonical_mmer_at<Kmer>(mwin, kmer_rc, m_k, m_m, p),
@@ -647,10 +648,9 @@ private:
         }
 #endif
 
-        const bool fwd = util::mod_forward_preferred(kmer, kmer_rc, m_k);
         uint64_t p;
         if (m_left == m_right) {
-            p = util::mod_offset(m_left, m_w, m_T, fwd);
+            p = m_left % m_w;
         } else {  // a tie at the minimum hash: the hashes of the minimal-rank loci, on demand
             const uint64_t min_hash = current_min_hash(kmer);
             uint64_t hashes[64];
@@ -658,7 +658,8 @@ private:
                 hashes[x] = m_rank[slot(x)] == m_min_rank ? hash_of(kmer, x)
                                                           : constants::invalid_uint64;
             }
-            p = util::mod_tie_offset(hashes, 0, m_T, m_w, min_hash, m_left, m_right, fwd);
+            p = util::mod_tie_offset(hashes, 0, m_w, min_hash, m_left, m_right,
+                                     [&]() { return util::mod_le_rc(kmer, kmer_rc); });
         }
         Kmer mwin = kmer;
         mwin.drop_chars(p);

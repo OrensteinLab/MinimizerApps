@@ -166,13 +166,21 @@ r=4; k=15; w=10
 t=$(( r + (k - r) % w ))
 if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
 
-echo "== 10. mod-minimizer at a large window (w=50): the deque ring is sized from w+k-t, not a fixed cap =="
+echo "== 10. mod-minimizer window limits: t == k (mod w) (the centre rule), widest window, ring sized from w+k-t =="
 for o in $ORDERS_MOD; do
-	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$MOD_T" -w 50 "$REF" "$QRY" > "$TMP/w50_$o.sam" 2>"$TMP/w50_$o.err"; then
-		ok "-w 50 builds+maps: $o"
+	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t 1 -k 28 -w 27 "$REF" "$QRY" > "$TMP/w27_$o.sam" 2>"$TMP/w27_$o.err"; then
+		ok "-k 28 -w 27 --mod-t 1 (L = 54) builds+maps: $o"
 	else
-		bad "-w 50 builds+maps: $o ($(tail -1 "$TMP/w50_$o.err"))"
+		bad "-k 28 -w 27 --mod-t 1 builds+maps: $o ($(tail -1 "$TMP/w27_$o.err"))"
 	fi
+	for bad_tw in "6 10" "5 50"; do
+		set -- $bad_tw
+		if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$1" -w "$2" "$REF" "$QRY" >/dev/null 2>&1; then
+			bad "--mod-t $1 -w $2 (t != k mod w) should be rejected: $o"
+		else
+			ok "--mod-t $1 -w $2 (t != k mod w) rejected: $o"
+		fi
+	done
 done
 
 echo "== 11. mod-minimizer selection: brute-force cross-validation (Python port + compiled sketch_dump) =="
@@ -239,6 +247,23 @@ for kind in 4 0 3; do # retired kind, native, greedymini without a table
 		bad "patched order kind $kind: unexpected error ($(tail -1 "$TMP/kind$kind.err"))"
 	fi
 done
+# A mod-minimizer index written before the centre tie rule: its order section
+# lacks the trailing tie-rule byte (drop it and shorten the section length).
+"$PY" - "$TMP/mod-minimizer-xor.mmi" "$TMP/mod_gt.mmi" <<'EOF2'
+import struct, sys
+b = bytearray(open(sys.argv[1], 'rb').read())
+for off in range(len(b) - 12, 0, -1):
+	if struct.unpack_from('<Q', b, off)[0] == len(b) - off - 8:
+		struct.pack_into('<Q', b, off, len(b) - off - 9); break
+open(sys.argv[2], 'wb').write(b[:-1])
+EOF2
+if $BIN -a "$TMP/mod_gt.mmi" "$QRY" >/dev/null 2>"$TMP/mod_gt.err"; then
+	bad "a mod-minimizer index with the retired G/T tie rule should be refused"
+elif grep -q 'retired G/T-strand tie rule' "$TMP/mod_gt.err"; then
+	ok "mod-minimizer index with the retired G/T tie rule refused"
+else
+	bad "retired tie rule: unexpected error ($(tail -1 "$TMP/mod_gt.err"))"
+fi
 head -c $(( $(stat -c %s "$TMP/xor.mmi") - 4 )) "$TMP/xor.mmi" > "$TMP/trunc.mmi"
 if $BIN -a "$TMP/trunc.mmi" "$QRY" >/dev/null 2>&1; then bad "truncated order section should be refused"; else ok "truncated order section refused"; fi
 $BIN -a --minimizer-order xor-pcg-hash --order-seed $SEED "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/override.err"

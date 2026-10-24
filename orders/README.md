@@ -27,7 +27,7 @@ These five names are the only spellings used anywhere (CLI flags, run directorie
 - `pcg_rxs_m_xs.h` — the PCG RXS-M-XS scramble (`pcg_rxs_m_xs64`), used by all four apps' `xor-pcg-hash` order.
 - `greedymini_rank.h` — the full GreedyMini implementation: the bit-manipulation helpers for extracting a DNA k-mer key, the `GreedyMiniTable` LUT class (binary-alphabet tables only; kmc's DNA-alphabet tables are its own, see below), and the `.gm` binary file I/O (`load_gm_file_raw`/`write_gm_file_raw`/`load_gm_table`). All at global C++ scope, so kraken2 (via unqualified lookup from inside `namespace kraken2 {}`), kmc, and sshash (via unqualified lookup from inside `namespace sshash {}`) can all use it directly without a wrapper.
 - `greedymini_centre.h` — additive header on top of `greedymini_rank.h`: the centre extension of a canonical table (`gm_centre::Order`, compressed packing for kraken2, injective packing for sshash and minimap2), the encoding-agnostic plane extraction (`TwoBitPlanes`) and rolling Sigma helpers, a slow per-base `Reference` and a density helper. Used by kraken2's `GMRanker`, sshash's `custom_order_hasher` and minimap2's `order.cpp`; kmc does not use it.
-- `mod_minimizer_rule.h` — the strand-symmetric mod-minimizer rule (preferred strand by G/T count and its tie-break, the two offset rules, the residue-class mirror slot, sshash's centre tie rule), shared by kraken2's `ModSampler`, minimap2's `sketch_mod_minimizer` and sshash's `compute_mod_minimizer` / `mod_minimizer_iterator`; each app keeps its own scan.
+- `mod_minimizer_rule.h` — the strand-symmetric mod-minimizer rule (offset `x mod w` with t == k mod w, the centre tie rule `CentrePick` / `centre_tie_offset`, the O(1) window-vs-reverse-complement comparison `le_revcomp_planes`), shared by kraken2's `ModSampler`, minimap2's `sketch_mod_minimizer` and sshash's `compute_mod_minimizer` / `mod_minimizer_iterator`; each app keeps its own scan.
 - `dna_revcomp.h` — reverse-complement of a packed 2-bit-per-base k-mer. Kept in its own header (not `greedymini_rank.h`) because kraken2 already has its own `dna_reverse_complement` in `dna_kmer.h`; combining the two into one header caused an ambiguous-overload compile error under kraken2's `using namespace kraken2;`. kmc includes this header directly (sshash does not: it runs on its own nucleotide encoding, see `sshash/README.md`); kraken2 keeps using its own (verified bit-identical).
 - `gm_serializer.cpp` (+ `Makefile`) — builds a `.gm` binary table from a GreedyMini tool's `.txt` rank-list output. C++, not Python, so all four apps share one implementation instead of independent re-serializers.
 
@@ -166,27 +166,58 @@ kmc appends `/lut_<gm_lut>` for greedymini (`greedymini/k9_at1-cg0/lut_binary`,
 then `/<seed_idx>`).
 
 The mod-minimizer of all three apps is a strand-symmetric variant of
-mod-sampling (Groot Koerkamp & Pibiri, WABI 2024). Its canonical definition is
-simd-minimizers' (Groot Koerkamp & Martayan, "SimdMinimizers: Computing random
-minimizers, fast", [bioRxiv 2025.01.27.634998](https://www.biorxiv.org/content/10.1101/2025.01.27.634998v1.full.pdf)):
-each window prefers the strand with more G/T bases; applying it to
-mod-sampling and the tie rules (window <= its reverse complement on equal G/T
-counts, ties at the minimum below) are this repo's. A forward-preferred window samples the k-mer at
-offset `x_L mod w` (`x_L` = leftmost minimal t-mer), a reverse-preferred one at
-`(w-1) - (((T-1) - x_R) mod w)` (`x_R` = rightmost minimal t-mer, `T` t-mers per
-window), so a read and its reverse complement select the same k-mers.
-The rule is `common/minimizer-orders/mod_minimizer_rule.h`; the scans are
-`kraken2/src/mod_minimizer.h`, `minimap2/order.cpp` and
-`sshash/include/util.hpp` (`compute_mod_minimizer`; sshash's window is the k-mer, `w = k-m+1`,
-`T = k-t+1`). With the usual `t = 4 + (m - 4) mod w` (`(T-1) ≡ w-1 mod w`) both rules reduce
-to `x mod w` and the strands differ only on ties, so the density is mod-sampling's. Ties
-(equal minimal canonical t-mers): minimap2 and kraken2 take the leftmost tied t-mer on a
-forward-preferred window and the rightmost otherwise; sshash, whose super-k-mers need a
-forward scheme, takes the tied t-mer whose sampled offset is closest to the window centre
-`(w-1)/2` (a mirror pair by strand), which keeps the scheme forward (checked by its builder).
-For any other `t` the strand rules disagree and the density degrades (sshash, k=31, m=21:
-a t=11 GreedyMini table gave ~2.2 against 1.46 at t=10 with `w22_k10`), so only t = m mod w
-is used.
+mod-sampling (Groot Koerkamp & Pibiri, WABI 2024); the scans are
+`kraken2/src/mod_minimizer.h`, `minimap2/order.cpp` and `sshash/include/util.hpp`
+(`compute_mod_minimizer`; sshash's window is the k-mer, `w = k-m+1`, `T = k-t+1`). With
+t == m (mod w) its density is mod-sampling's; any other `t` is rejected (for such t the
+candidate offsets of a window and its reverse complement are not mirror images; sshash, k=31,
+m=21: a t=11 GreedyMini table gave ~2.2 against 1.46 at t=10 with `w22_k10`).
+
+**Tie rules, plain minimizers.** Each application keeps its native rule for breaking ties
+between equal-rank positions, because each rule serves how that application uses the
+minimizer. In every order we use, the rank is a total order on canonical k-mers (a hash of
+kappa(x) = min(x, rc(x)), or GreedyMini's injective packing; in kraken2 the packing is not
+injective on its own and the strand-invariant key `dna_hash_key ^ toggle` completes it), so
+equal ranks occur only when the same canonical k-mer appears more than once in a window.
+kraken2 keeps the leftmost tied position (its monotone deque); it uses only the minimizer's
+value, as the hash-table key whose LCA it looks up, so the rule does not change its output.
+kmc moves the signature to the newest equal occurrence: a super-k-mer ends when its
+signature's position leaves the k-mer, so keeping the newest occurrence keeps the signature
+longest, giving the longest super-k-mers and the least bin I/O; bins are chosen by the
+canonical value, so counts do not depend on the tie position (at the level of values this is
+robust winnowing, Schleimer, Wilkerson & Aiken, SIGMOD 2003, Definition 3; the KMC 2 and
+KMC 3 papers do not discuss ties). minimap2 emits every tied position (standard winnowing;
+Winnowmap, Jain et al. 2020, replaces it by robust winnowing) and skips k-mers equal to their
+reverse complement, which is strand-symmetric without a tie rule; it is also the upstream
+baseline. sshash stores super-k-mers by minimizer and offset, so the position matters: the
+scheme must be canonical (a k-mer and its reverse complement find the same minimizer
+occurrence) and forward (its builder checks it), which no leftmost/rightmost-by-strand rule
+achieves; it uses the centre rule of Cologni and Pibiri (SSHash v6.0.0, PR 93): the tied
+position closest to the centre of the k-mer, and between two equally close ones the left if
+v <= RC(v), else the right. GreedyMini changes only the rank, so every app applies its native
+rule to it.
+
+**Tie rule, mod-minimizer** (`common/minimizer-orders/mod_minimizer_rule.h`, shared by
+kraken2 `ModSampler`, minimap2 `sketch_mod_minimizer` and sshash `compute_mod_minimizer` /
+`mod_minimizer_iterator`). Here the tie rule changes the output in every app: the window
+minimum is over t-mers, and the k-mer sampled for the minimal t-mer at x is the one at offset
+p = x mod w, so equal-rank t-mers in different residue classes select different k-mers. All
+apps require t == k (mod w) (kraken2 `t = 4 + (l-4) mod w`; minimap2 `--mod-t` and sshash
+`--mod-t` are checked), so the mirror of x in RC(v) lies in class w-1-p and the candidate
+offsets are mirror-symmetric. The centre rule is applied to them: the candidate closest to the
+window centre (w-1)/2, and between the two equally close mirror candidates p and w-1-p, the
+left if v <= RC(v), else the right. RC(v) then samples the mirror k-mer (canonical), and the
+chosen offset never moves backwards as the window slides (forward). This replaced the G/T-strand
+rule of SimdMinimizers (Groot Koerkamp & Martayan, bioRxiv 2025.01.27.634998: the leftmost
+minimum on the strand with more G/T bases), which is canonical but not forward and needs a
+strand decision in every window; the centre rule does extra work only on a tied minimum, and
+compares v with RC(v) only on an exact two-way tie. The native plain rules do not carry over:
+leftmost (kraken2) is not canonical for the mod-minimizer, keeping every tied k-mer (minimap2)
+inflates density at small t, and kmc has no mod-minimizer. v <= RC(v) is lexicographic in
+kraken2 and minimap2 (`le_revcomp_planes`, O(1) on two bit planes) and sshash's packed-word
+comparison `!(kmer_rc < kmer)` in sshash, the one its plain rule uses; both are total orders,
+which is all canonicity needs. Indexes built with the G/T rule are refused (kraken2
+`opts.k2d` `mod_tie_rule`, minimap2 `.mmi` order section, sshash index version 15).
 
 ## Regenerating a `.gm` table
 

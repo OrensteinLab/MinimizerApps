@@ -410,6 +410,15 @@ int main() {
     v = o;
     v.order = 3;
     check(!IndexOptionsValid(v, sizeof(IndexOptions)), "bad order id rejected");
+    IndexOptions mod = {0};
+    EncodeIndexSchemes(mod, SketchingScheme::MOD, Order::RANDOM_XOR);
+    check(IndexOptionsValid(mod, sizeof(IndexOptions)) &&
+              mod.mod_tie_rule == kModTieRuleCentre,
+          "MOD opts carry the centre tie rule");
+    mod.mod_tie_rule = 0;  // built with the G/T-strand rule
+    check(!IndexOptionsValid(mod, sizeof(IndexOptions)),
+          "MOD opts with the retired G/T tie rule rejected");
+    check(o.mod_tie_rule == 0, "MINIMIZER opts unchanged (no tie rule)");
     v = o;
     v.sketching_scheme = 1;  // the retired forward-only mod-minimizer
     check(!IndexOptionsValid(v, sizeof(IndexOptions)),

@@ -176,15 +176,16 @@ indexes are refused.
 *Mod-minimizer orders.* `-O mod-minimizer-xor` and `-O mod-minimizer-greedymini` (with `--mod-t T`) sample by
 strand-symmetric mod-sampling: the k-mer's `T = k - t + 1` t-mers are ranked (canonical t-mer
 XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`, or of a smaller table
-extended to the t-mer by its centre as above, `t - gm_k` even); the k-mer prefers the
-strand with more G/T (a tie, even k only, by the numeric order of the k-mer and its reverse
-complement); a minimal t-mer at `x` samples the m-mer at `x mod w` on a forward-preferred k-mer
-and at `(w-1) - (((T-1) - x) mod w)` otherwise, so a k-mer and its reverse complement sample
-mirrored m-mers of the same canonical value (single-probe lookup). Several minimal t-mers: the
-sampled offset closest to the centre `(w-1)/2` wins (a mirror pair by strand). With the usual
-`t = 4 + (m - 4) mod w` (10 at k=31, m=21) the scheme is forward and has mod-sampling's density
-(1.56 xor, 1.46 with `w22_k10` on i.i.d. DNA); the builder checks forwardness. Any other `t`
-makes the two strands' rules disagree (not forward, much higher density). `--regular` does not
+extended to the t-mer by its centre as above, `t - gm_k` even); a minimal t-mer at `x` offers
+the m-mer at `x mod w`; a unique minimum samples it, and several minimal t-mers are resolved by
+the centre rule of the plain orders: the offset closest to the centre `(w-1)/2`, and between
+two equally close ones (mirror images) the smaller if `!(kmer_rc < kmer)`, else the larger.
+The builder requires `t == m (mod w)` (e.g. `t = 4 + (m - 4) mod w`, 10 at k=31, m=21), so a
+k-mer and its reverse complement sample mirrored m-mers of the same canonical value
+(single-probe lookup), the scheme is forward (the builder checks it) and has mod-sampling's
+density (1.56 xor, 1.46 with `w22_k10` on i.i.d. DNA). The rule is shared with the kraken2 and
+minimap2 forks (`common/minimizer-orders/mod_minimizer_rule.h`; it replaced a G/T-strand rule,
+index version 15). `--regular` does not
 apply. `util::compute_mod_minimizer` is the definition (used by `lookup`),
 `mod_minimizer_iterator` its incremental version (build, streaming); `test/test_mod_minimizer.cpp`
 checks both against a string-level reference, strand symmetry and forwardness.

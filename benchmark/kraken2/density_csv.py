@@ -4,13 +4,14 @@
   density_csv.py missing CSV SEED_IDX TOGGLE_HEX L K SPACES PROJECTION GM_FILE MOD_GM_FILE SCHEME...
       print the schemes (canonical orders) that have no row for the same
       (order, gm_k, projection, gm_table, mod_t, seed_idx) with the same
-      toggle / l / k / spaces in CSV (one per line)
+      toggle / l / k / spaces in CSV (one per line); a mod-minimizer row
+      counts only with the current tie rule (mod_tie_rule = MOD_TIE_RULE)
   density_csv.py merge CSV NEW_CSV SPACES L K PROJECTION GM_FILE MOD_GM_FILE
       replace rows of the same (scheme, gm fields, seed_idx) in CSV by the rows
       of NEW_CSV (written by kraken2/src/benchmark_minimizers -o X.csv); keeps
       all other rows; adds the `spaces` column and the identity columns
-      gm_k, projection, gm_table, mod_t (benchmark/common/order_names.py);
-      sorted by seed_idx, scheme
+      gm_k, projection, gm_table, mod_t (benchmark/common/order_names.py)
+      and, on mod-minimizer rows, mod_tie_rule; sorted by seed_idx, scheme
   Columns use the unified names k = minimizer length (the tool's -l), w,
   L = k + w - 1 (the tool's -k); files with the old l / k header are mapped on
   read and rewritten with the new names.
@@ -27,6 +28,13 @@ from bench_const import scheme_id, scheme_sort_key  # noqa: E402
 import order_names  # noqa: E402
 
 ID_COLS = ("gm_k", "projection", "gm_table", "mod_t")
+# Tie rule of the mod-minimizer the rows were computed with; rows without it predate the centre rule
+# (G/T-strand rule) and are recomputed. Same stamp as benchmark/sshash/scripts/expected_density.py.
+MOD_TIE_RULE = "centre"
+
+
+def is_mod(scheme):
+    return (scheme or "").startswith("mod-minimizer")
 
 
 def ident(order, projection, gm_file, mod_gm_file, l, k):
@@ -83,6 +91,7 @@ def cmd_missing(argv):
                     and same_num(r.get("toggle_hex"), toggle)
                     and same_num(r.get("k"), l) and same_num(r.get("L"), k)
                     and same_num(r.get("spaces", spaces), spaces)
+                    and (not is_mod(s) or r.get("mod_tie_rule") == MOD_TIE_RULE)
                     and r.get("fac_particular") not in (None, "")):
                 ok = True
                 break
@@ -106,6 +115,8 @@ def cmd_merge(argv):
     for f in old_fields:
         if f not in fields:
             fields.append(f)
+    if "mod_tie_rule" not in fields:
+        fields.append("mod_tie_rule")
     if all(c in fields for c in ("k", "w", "L")):      # k, w, L together
         fields = [f for f in fields if f not in ("w", "L")]
         i = fields.index("k") + 1
@@ -114,6 +125,7 @@ def cmd_merge(argv):
         r.setdefault("spaces", spaces)
         idd = ident(r["scheme"], projection, gm_file, mod_gm_file, l, k)
         r.update((c, idd[c]) for c in ID_COLS)
+        r["mod_tie_rule"] = MOD_TIE_RULE if is_mod(r["scheme"]) else ""
     keys = set(row_key(r) for r in new)
     kept = [r for r in old if row_key(r) not in keys]
     allrows = kept + new
