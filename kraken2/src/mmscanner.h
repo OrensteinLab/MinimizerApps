@@ -127,6 +127,7 @@ class MinimizerScanner {
   Order order() const { return order_; }
 
   void ClearRankStats() {
+    rank_cmp_ = tie_cmp_ = inf_win_ = 0;
     if (mod_sampler_)
       mod_sampler_->ClearRankStats();
     else if (ranker_)
@@ -146,7 +147,7 @@ class MinimizerScanner {
   }
 
   void SetRankFirst(bool rank_first, bool roll_sigma = false);
-  // Counted only when built with KRAKEN2_MINIMIZER_BENCHMARK (zero otherwise).
+  // Counted only when built with KRAKEN2_MINIMIZER_BENCHMARK (zero otherwise); reset by ClearRankStats.
   uint64_t rank_compares() const { return rank_cmp_; }
   uint64_t tie_compares() const { return tie_cmp_; }
   // GreedyMini windows whose l-mers all have infinite rank (benchmark builds).
