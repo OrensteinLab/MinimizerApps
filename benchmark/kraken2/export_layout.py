@@ -13,7 +13,7 @@ Every (seed, dataset, order) is classified once per `--minimum-hit-groups`
 value (0 = the Kraken 2 paper setting, 2 = the k2 default): `minimum_hit_groups`
 is the app parameter of all classify-side sheets, placed right after the order
 columns (dataset, order, gm_k, projection, gm_table, mod_t, minimum_hit_groups,
-n_seeds / seed_idx, metrics); rows are sorted dataset -> minimum_hit_groups -> order.
+n_repeats / seed_idx, metrics); rows are sorted dataset -> minimum_hit_groups -> order.
 
 An order is identified by five separate columns (benchmark/common/order_names.py):
 `order` (xor | xor-pcg-hash | greedymini | mod-minimizer-xor |
@@ -77,6 +77,8 @@ for _p in (HERE, _COMMON):
         sys.path.insert(0, _p)
 
 import order_names  # noqa: E402
+import step_record  # noqa: E402
+import density_effect  # noqa: E402
 import orders_sheet  # noqa: E402
 import units  # noqa: E402
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
@@ -298,6 +300,7 @@ CAT_MINIMIZERS = "minimizers"
 CAT_SPACE = "space"
 CAT_PROFILE = "profile"
 CAT_VSREF = "vs reference"
+CAT_TELEMETRY = "telemetry"
 
 # Accuracy column groups. The accuracy kinds differ per dataset and are NOT
 # comparable across datasets; a column name is shared only where the definition
@@ -310,23 +313,53 @@ BAND_COUNTS = "accuracy: read counts (TP / VP / FP / FN)"
 BAND_EXCLUDED = "accuracy: excluded reads (true taxon not in the library)"
 BAND_EXCLUDED_CALLS = "accuracy: calls on excluded reads (cami only)"
 
+PIN_DOC = "Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus"
+
+
+def _telemetry(v):
+    """A telemetry cell: blank for a missing value, kept as is otherwise (0 / 0.0 are values)."""
+    return None if v is None or v == "" else v
+
 # Column groups in the SSHash order: id / params, density, minimizers, space, build.
 BUILD_METRICS = [
     ("expected_density_factor", CAT_DENSITY, "minimizer density factor = density x (w+1) on random i.i.d. DNA (Monte Carlo; 2 = random-minimizer theory), from minimizer_density.csv joined to the run by order and seed_idx", "lower", None),
-    ("particular_density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d). This is the density column the correlation rows of `build` / `summary` use", "lower", None),
+    ("density_factor", CAT_DENSITY, "density factor on this library's FASTAs (benchmark_minimizers.sh -d). This is the density column the correlation rows of `build` / `summary` use", "lower", None),
     ("distinct_minimizers", CAT_MINIMIZERS, "number of distinct minimizers (keys) in the built database = the `size` field of the 32-byte hash.k2d header (read without loading the table). A lower density gives fewer distinct minimizers", "lower", None),
     ("index_size_gb", CAT_SPACE, "size of the built hash table (db/hash.k2d) in decimal GB (1 GB = 10^9 bytes); blank when the db is not on disk", "lower", None),
     ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
+    ("build_cpu_s", CAT_BUILD, "k2 build CPU seconds (user + system, summed over all threads; GNU time -v). Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both", "lower", "build_cpu_s"),
     ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS in decimal GB (GNU time KiB x 1024 / 10^9)", "lower", "build_gb"),
+    ("build_major_pagefaults", CAT_BUILD, "major (I/O) page faults of the k2 build (GNU time -v); with build_read_gb the disk I/O the build needed -- ~0 = served from the page cache, so timings with different values are not directly comparable. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in build_pinned_cpus. Neutral", None, "build_major_pf"),
+    ("build_read_gb", CAT_BUILD, "file-system reads of the k2 build in decimal GB (GNU time 'File system inputs', 512-byte blocks). Neutral", None, "build_read_gb"),
 ]
+# text telemetry columns at the end of runs / build_runs (CPU list of the pinning; blank when the file is absent)
+TELEMETRY_METRICS = [
+    ("build_pinned_cpus", CAT_TELEMETRY, "CPU list the k2 build was pinned to, read from cpus_build.txt next to build_performance.txt. " + PIN_DOC.replace("{step}", "build") + ". Blank when the file is absent (runs before pinning was recorded)", "build_pinned_cpus"),
+    ("classify_pinned_cpus", CAT_TELEMETRY, "CPU list the classify run was pinned to, read from classification_performance_<dataset>_mhg<n>_cpus.txt. " + PIN_DOC.replace("{step}", "classify") + ". Blank when the file is absent", "classify_pinned_cpus"),
+]
+# node / page-size / foreign-load record of each step (common/bench_step.py): classify on runs,
+# build on build_runs only (build columns never repeat per classify run)
+def _record_metrics(step, where):
+    return [("%s_%s" % (step, f), CAT_TELEMETRY, d + " (" + step + " step; read from " + where + "; blank when absent)",
+             "%s_%s" % (step, f)) for f, d in step_record.DOC.items()]
+
+
+TELEMETRY_METRICS += _record_metrics("classify", "classification_performance_<dataset>_mhg<n>_step.json")
+BUILD_RECORD_METRICS = _record_metrics("build", "step_build.json next to build_performance.txt")
+BUILD_TELEMETRY = ["build_pinned_cpus"] + step_record.names("build")
+# I/O telemetry: runs / build_runs only (not aggregated into summary / build)
+IO_NAMES = ("build_major_pagefaults", "build_read_gb", "classify_major_pagefaults", "classify_read_gb")
 # build properties repeated (per order and seed) on summary / runs
-ORDER_PROPS = ["expected_density_factor", "particular_density_factor", "distinct_minimizers"]
+ORDER_PROPS = ["expected_density_factor", "density_factor", "distinct_minimizers"]
 CLASSIFY_METRICS = [
     ("classify_wall_s", CAT_CLASSIFY, "classify wall time (s) of the single classify run of this seed (/usr/bin/time -v): database load + processing. classify: mean over seeds", "lower", "class_s"),
-    ("db_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_processing_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
-    ("classify_processing_s", CAT_CLASSIFY, "time classifying the reads (s) = the `processed in` seconds of the classify summary line, without the database load", "lower", "class_proc_s"),
+    ("classify_cpu_s", CAT_CLASSIFY, "classify CPU seconds (user + system, all threads; GNU time -v), database load included. Wall time = CPU time / cores actually running, so a classify_wall_s / classify_load_s difference without one in classify_cpu_s is load or I/O, not the order", "lower", "class_cpu_s"),
+    ("classify_load_s", CAT_CLASSIFY, "database load time (s) = classify_wall_s - classify_run_s (reading the hash table / taxonomy before the first read). Depends on the page cache of the host: judge it over the seeds", "lower", "db_load_s"),
+    ("classify_run_s", CAT_CLASSIFY, "time classifying the reads (s) = the `processed in` seconds of the classify summary line, without the database load", "lower", "class_proc_s"),
     ("classify_max_rss_gb", CAT_CLASSIFY, "classify peak RSS of the run in decimal GB (GNU time KiB x 1024 / 10^9)", "lower", "class_gb"),
-    ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads (read pairs) per minute of classify_processing_s (database load excluded; wall time if the processing time is missing)", "higher", "mrd_min"),
+    ("classify_major_pagefaults", CAT_CLASSIFY, "major (I/O) page faults of the classify run (GNU time -v); with classify_read_gb the disk I/O it needed -- mostly the database load, so a non-zero value explains a slow classify_load_s. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in classify_pinned_cpus. Neutral", None, "class_major_pf"),
+    ("classify_read_gb", CAT_CLASSIFY, "file-system reads of the classify run in decimal GB (GNU time 'File system inputs', 512-byte blocks). Neutral", None, "class_read_gb"),
+    ("classify_mreads_per_min", CAT_CLASSIFY, "classification speed in million reads (read pairs) per minute of classify_run_s (database load excluded; wall time if the processing time is missing)", "higher", "mrd_min"),
     ("classified_pct", CAT_CLASSIFY, "percent of reads classified (any taxon). Neutral: more classified is not better or worse by itself (it can be false positives)", None, "cls_pct"),
 ]
 RUN_ONLY = [
@@ -395,8 +428,8 @@ for _k, _dir in (("concordant", "higher"), ("discordant", "lower"),
 # column order of every sheet: dataset, order (ID), app parameter (minimum_hit_groups), seed, metrics
 RUN_ID_FIELDS = ["run_id", "library", "dataset"] + list(ID) + ["minimum_hit_groups", "seed_idx", "seed"]
 BUILD_ID_FIELDS = ["run_id", "library"] + list(ID) + ["seed_idx", "seed"]
-AGG_ID = {"summary": ["library", "dataset"] + list(ID) + ["minimum_hit_groups", "n_seeds"],
-          "build": ["library"] + list(ID) + ["n_seeds"]}
+AGG_ID = {"summary": ["library", "dataset"] + list(ID) + ["minimum_hit_groups", "n_repeats"],
+          "build": ["library"] + list(ID) + ["n_repeats"]}
 AGG_KEYS = {"summary": ("library", "dataset") + tuple(ID) + ("minimum_hit_groups",),
             "build": ("library",) + tuple(ID)}
 
@@ -405,13 +438,16 @@ METRIC_CAT = {}
 for _m in BUILD_METRICS + CLASSIFY_METRICS + PROFILE_METRICS + VSREF_METRICS:
     METRIC_DIR[_m[0]] = _m[3]
     METRIC_CAT[_m[0]] = _m[1]
+for _m in TELEMETRY_METRICS + BUILD_RECORD_METRICS:
+    METRIC_CAT[_m[0]] = _m[1]
 for _m in RUN_ONLY:
     METRIC_CAT[_m[0]] = _m[1]
 for _c in ACC_COLS:
     METRIC_DIR[_c["name"]] = _c["dir"]
     METRIC_CAT[_c["name"]] = _c["band"]
 BUILD_NAMES = [m[0] for m in BUILD_METRICS]
-SUMMARY_NAMES = ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [c["name"] for c in ACC_COLS]
+BUILD_AGG_NAMES = [n for n in BUILD_NAMES if n not in IO_NAMES]
+SUMMARY_NAMES = ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS if m[0] not in IO_NAMES] + [c["name"] for c in ACC_COLS]
 PROFILE_NAMES = [m[0] for m in PROFILE_METRICS]
 VSREF_NAMES = [m[0] for m in VSREF_METRICS]
 SUMMARY_CATS = (CAT_DENSITY, CAT_MINIMIZERS, CAT_CLASSIFY) + ACC_BANDS
@@ -419,11 +455,11 @@ SUMMARY_CATS = (CAT_DENSITY, CAT_MINIMIZERS, CAT_CLASSIFY) + ACC_BANDS
 
 def runs_field_order():
     return (RUN_ID_FIELDS + ORDER_PROPS + [m[0] for m in CLASSIFY_METRICS] + [m[0] for m in RUN_ONLY]
-            + [c["name"] for c in ACC_COLS])
+            + [c["name"] for c in ACC_COLS] + [m[0] for m in TELEMETRY_METRICS])
 
 
 def build_runs_field_order():
-    return BUILD_ID_FIELDS + BUILD_NAMES
+    return BUILD_ID_FIELDS + BUILD_NAMES + BUILD_TELEMETRY
 
 
 def agg_field_order(ids, metrics, cat_order):
@@ -444,7 +480,7 @@ def summary_field_order():
 
 
 def build_field_order():
-    return agg_field_order(AGG_ID["build"], BUILD_NAMES, (CAT_DENSITY, CAT_MINIMIZERS, CAT_SPACE, CAT_BUILD))
+    return agg_field_order(AGG_ID["build"], BUILD_AGG_NAMES, (CAT_DENSITY, CAT_MINIMIZERS, CAT_SPACE, CAT_BUILD))
 
 
 def profile_field_order():
@@ -592,12 +628,14 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             for m in BUILD_METRICS:
                 if m[4]:
                     b[m[0]] = clean_value(row.get(m[4]))
+            for c in BUILD_TELEMETRY:
+                b[c] = _telemetry(row.get(c))
             b["distinct_minimizers"] = _distinct_minimizers(run_root, odir, seed_idx)
             b["index_size_gb"] = _index_size_gb(run_root, odir, seed_idx)
             d = _dens_for(dens_rows, idd, seed_idx)
             if d:
                 b["expected_density_factor"] = clean_value(d.get("fac_expected"))
-                b["particular_density_factor"] = clean_value(d.get("fac_particular"))
+                b["density_factor"] = clean_value(d.get("fac_particular"))
             build_cache[bkey] = b
             builds.append(b)
         b = build_cache[bkey]
@@ -608,6 +646,8 @@ def build_tables(library, per_seed_rows, acc_rows, dens_rows, run_root=None, oma
             out[m[0]] = clean_value(row.get(m[4]))
         for m in RUN_ONLY:
             out[m[0]] = clean_value(row.get(m[3]))
+        for m in TELEMETRY_METRICS:
+            out[m[0]] = _telemetry(row.get(m[3]))
         picked = idx.get((id_tuple(idd), ds, mhg, seed_idx), {})
         for c in ACC_COLS:
             sel = c["sel"].get(ds)
@@ -663,7 +703,7 @@ def aggregate(rows, metrics, keys=AGG_KEYS["summary"]):
     out = []
     for key, parts in groups.items():
         row = OrderedDict(zip(keys, key))
-        row["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
+        row["n_repeats"] = len(set(p.get("seed_idx") for p in parts))
         for m in metrics:
             mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
             row[m + "_mean"] = round_sig(mu)
@@ -816,7 +856,7 @@ def detail_aggregate(rows):
         for k, v in zip(DETAIL_SLICE, key[2:2 + len(DETAIL_SLICE)]):
             row[k] = v
         row.update(zip(ID, key[-len(ID):]))
-        row["n_seeds"] = len(set(p.get("seed_idx") for p in parts))
+        row["n_repeats"] = len(set(p.get("seed_idx") for p in parts))
         for m in metrics:
             mu, sd = mean_std([p.get(m) for p in parts if _num(p.get(m))])
             row[m + "_mean"] = round_sig(mu)
@@ -841,7 +881,7 @@ def detail_aggregate(rows):
 
 def detail_fields(rows):
     """Columns of an aggregated accuracy sheet: library, dataset, the slice keys
-    this dataset uses, order, n_seeds, then the metrics (columns blank in every
+    this dataset uses, order, n_repeats, then the metrics (columns blank in every
     row are dropped)."""
     seen = []
     for r in rows:
@@ -849,7 +889,7 @@ def detail_fields(rows):
             if k not in seen and v not in (None, ""):
                 seen.append(k)
     lead = (["library", "dataset"] + [k for k in DETAIL_SLICE if k in seen and k != "minimum_hit_groups"]
-            + list(ID) + ["minimum_hit_groups", "n_seeds"])
+            + list(ID) + ["minimum_hit_groups", "n_repeats"])
     for k in lead:
         if k not in seen:
             seen.append(k)
@@ -1245,13 +1285,13 @@ COMMON_DOC = [
     ("all", CAT_ID, "order", "canonical minimizer order: xor, xor-pcg-hash, greedymini, mod-minimizer-xor, mod-minimizer-greedymini (benchmark/common/order_names.py). Never carries parameters: GreedyMini k / projection / table and the mod-minimizer t are the separate columns gm_k, projection, gm_table, mod_t"),
     ("runs/build_runs", CAT_ID, "run_id", "<library>/<run dir of the order>/<seed_idx>; run dir = order_names.order_dir_name, e.g. greedymini/k15_at0-cg1"),
     ("runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
-    ("build/summary/profile/vs_reference", CAT_ID, "n_seeds", "number of seeds aggregated into the row (the replicates: each seed contributes one classify run per dataset and minimum_hit_groups)"),
+    ("build/summary/profile/vs_reference", CAT_ID, "n_repeats", "number of runs (repeats) aggregated into the row's mean / std (the replicates are the seeds: each seed contributes one classify run per dataset and minimum_hit_groups)"),
     ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb decimal gigabytes (1 GB = 10^9 bytes, never GiB), _pct percent, _ns_per_call, _per_mbp, _fraction 0-1); `summary`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
     ("build/summary/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant) or higher is better (speed, sensitivity, PPV, F1, concordant). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
     ("build/summary/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
-    ("summary/runs", "classify", "classify_wall_s / db_load_s / classify_processing_s", "one classify run per cell: wall = database load + processing. db_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; db_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
-    ("build/build_runs/summary/runs", "column order", "column groups", "as in the SSHash summary sheet: id / params (dataset-related columns first, then the order columns order, gm_k, projection, gm_table, mod_t, then the app parameter minimum_hit_groups (summary / runs / profile / vs_reference / accuracy_*), then n_seeds or seed_idx / seed), then density (expected, particular density factor), minimizers (distinct_minimizers), space (index_size_gb, build / build_runs only), build (build_wall_s, build_max_rss_gb; build / build_runs only), then on summary / runs the classify measures and the accuracy groups. The density and minimizer columns come first because they are what the correlation rows below the data use"),
-    ("build/summary", "correlation", "correlation with density / correlation with distinct minimizers (rows under the data)", "two rows right under the data, as in the SSHash summary sheet: in every `*_ratio` column a live formula IFERROR(CORREL(<reference ratio column>, <this ratio column>), \"\") with absolute ranges over all data rows (cached value stored next to it). Reference columns: particular_density_factor_ratio (the density factor measured on the benchmark library; the SSHash sheet uses its density_factor_ratio) and distinct_minimizers_ratio. Ratios are against xor within the same block, so correlating over all rows is meaningful. `build` has one row per order, so its correlations rest on n = 5 points (the n is in the row label); in `summary` the density and distinct-minimizer values repeat for every dataset / minimum_hit_groups block of the same order, so the effective number of independent points is the number of orders (5), not the number of rows. The values (and the number of pairs used) are also in kraken2_correlations.csv (columns sheet, row_label, column, value, n); the sheet CSVs themselves hold data only"),
+    ("summary/runs", "classify", "classify_wall_s / classify_load_s / classify_run_s", "one classify run per cell: wall = database load + processing. classify_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; classify_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
+    ("build/build_runs/summary/runs", "column order", "column groups", "as in the SSHash summary sheet: id / params (dataset-related columns first, then the order columns order, gm_k, projection, gm_table, mod_t, then the app parameter minimum_hit_groups (summary / runs / profile / vs_reference / accuracy_*), then n_repeats or seed_idx / seed), then density (expected_density_factor, density_factor), minimizers (distinct_minimizers), space (index_size_gb, build / build_runs only), build (build_wall_s, build_max_rss_gb; build / build_runs only), then on summary / runs the classify measures and the accuracy groups, and at the end of runs / build_runs the telemetry band (pinned CPU lists; the I/O page-fault and read-volume columns stay in their build / classify groups and, like the pinned lists, exist on runs / build_runs only, not aggregated). The density and minimizer columns come first because they are what the correlation rows below the data use"),
+    ("build/summary", "correlation", "correlation with density / correlation with distinct minimizers (rows under the data)", "two rows right under the data, as in the SSHash summary sheet: in every `*_ratio` column a live formula IFERROR(CORREL(<reference ratio column>, <this ratio column>), \"\") with absolute ranges over all data rows (cached value stored next to it). Reference columns: density_factor_ratio (the density factor measured on the benchmark library; the SSHash sheet uses its density_factor_ratio) and distinct_minimizers_ratio. Ratios are against xor within the same block, so correlating over all rows is meaningful. `build` has one row per order, so its correlations rest on n = 5 points (the n is in the row label); in `summary` the density and distinct-minimizer values repeat for every dataset / minimum_hit_groups block of the same order, so the effective number of independent points is the number of orders (5), not the number of rows. The values (and the number of pairs used) are also in kraken2_correlations.csv (columns sheet, row_label, column, value, n); the sheet CSVs themselves hold data only"),
     ("orders", "order", "cli", "k2 build flags that select the order (<orders> = the repo's orders/ dir)"),
     ("all", CAT_ID, "gm_k / projection / gm_table / mod_t", "separate identity columns of the order (blank when not applicable): gm_k = k of the GreedyMini table (greedymini orders); projection = DNA->binary projection at0-cg1 (A,T -> 0, C,G -> 1; default) | at1-cg0 (flipped), `--gm-projection` (greedymini orders); gm_table = table file stem, e.g. w5_k15_canonical (greedymini) or w5_k6_canonical (mod-minimizer-greedymini); mod_t = mod-minimizer t-mer length (mod-minimizer orders). They are part of every block / merge / group key, so two projections or tables of one order are separate rows"),
     ("summary/runs/profile/vs_reference/accuracy_*", CAT_ID, "minimum_hit_groups", "the `--minimum-hit-groups` value of the classify run: 0 = Kraken 2 paper setting (no hit-group threshold; this is the setting that must reproduce the published accuracy, see `paper_check`), 2 = the k2 default. Every (seed, dataset, order) is classified once per value. Rows are sorted dataset -> minimum_hit_groups -> order, so for one dataset and value the orders are consecutive and every `_ratio` is against xor at the same dataset and minimum_hit_groups. `build` / `build_runs` have no such column: building does not depend on it"),
@@ -1269,7 +1309,7 @@ COMMON_DOC = [
     ("datasets", "dataset", "truth / scoring", "truth: simulated | real. scoring: read-level truth (strain-exclusion) | concordance with SRA taxon (fda-argos) | library-aware read-level truth (cami)"),
     ("datasets", "dataset", "truth_detail / provenance / libraries", "what the truth file holds, where the reads come from, libraries the set was classified against"),
     ("summary/runs", "accuracy", "accuracy column groups", "one group per kind of accuracy, because the kinds differ per dataset and are NOT comparable across datasets (accuracy is never averaged across datasets). simulated reads with read-level truth (strain-exclusion; cami restricted to reads whose taxon is in the library): genus_/species_ sensitivity, ppv, f1. cami only: genus_/species_excluded_fraction. fda-argos (real reads, no per-read truth): genus_concordant / discordant / ancestor / unclassified _fraction. A row fills only its own dataset's group; the other cells are blank, columns that no row of the sheet uses are dropped"),
-    ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_seeds", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics_mhg<m>.tsv). Rows are sorted dataset -> minimum_hit_groups -> slice -> order: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / xor mean of the same slice and minimum_hit_groups (blank when xor's mean is 0 or missing), colour green = better, red = worse"),
+    ("accuracy_*", CAT_ID, "<metric>_mean / <metric>_std / <metric>_ratio / n_repeats", "the accuracy sheets are aggregated over seeds (per-seed rows are not exposed here; the raw per-seed numbers stay in each run's results/*_metrics_mhg<m>.tsv). Rows are sorted dataset -> minimum_hit_groups -> slice -> order: the orders of one slice are consecutive, slice cells are merged and a border separates slices. Counts (n, tp, fp, ...) have a mean only. <metric>_ratio = order mean / xor mean of the same slice and minimum_hit_groups (blank when xor's mean is 0 or missing), colour green = better, red = worse"),
     ("accuracy_*", "ratio", "ratio direction and neutral columns", "higher is better (ratio coloured, reversed scale): sensitivity, ppv, f1, concordant_fraction. Lower is better: discordant_fraction. Neutral (mean / std only, no ratio, no colour): ancestor_fraction, unclassified_fraction, excluded_fraction (a property of library x query set), and the read counts"),
     ("accuracy_*", "dataset / slice", "group / rank / scope / sra_run / species", "the slice of the row (library and dataset first, then the slice; `minimum_hit_groups` is an app parameter placed after the order columns); rank (genus | species); group, shared by strain-exclusion (all | prokaryote | virus) and cami (all | prokaryote = archaea + bacteria reads scored as one group by score_cami.py | virus | bacteria | archaea | other | novelty:<category>), order all, prokaryote, virus, bacteria, archaea, other, novelty:*; fda-argos scope (experiment = one SRR | unweighted_mean = headline | pooled) and sra_run / species"),
     ("accuracy_*", "accuracy detail", "n / n_truth / n_calls / n_scored / tp / vp / fp / fn / no", "read counts of the slice (mean over seeds). Definitions shared by accuracy_strain_exclusion and accuracy_cami (Wood et al. 2019): TP = the call is the true taxon at the rank or a descendant, VP = the call is an ancestor of it, FP = the call is off-lineage, FN = unclassified; sensitivity = TP/(TP+VP+FN+FP) = tp / n_scored, PPV = TP/(TP+FP), F1 = 2 sens ppv / (sens + ppv) (0 when undefined); n_truth = reads of the slice, n_calls = reads with a call, no = reads whose true taxon has no node at the rank, n_scored = tp + vp + fp + fn. Denominator: sensitivity is computed over n_scored reads. strain-exclusion: n_scored = n_truth (every true genus and species is in the library, excluded = 0, measured with score_cami.py coverage mode). CAMI: reads whose true genus / species has no sequence in the library are excluded (reported, not scored: 9.6% genus / 22.6% species of the reads that have a node at the rank), so CAMI sensitivities are over a different, library-covered subset and are not directly comparable to the paper's definition over all reads"),
@@ -1277,38 +1317,62 @@ COMMON_DOC = [
     ("accuracy_*", "accuracy detail", "excluded / excluded_fraction / ex_unclassified / ex_consistent / ex_off", "excluded = reads whose true genus / species has no sequence in the library (reported, not scored), excluded_fraction = excluded / n_truth; present in both sheets: for strain-exclusion they are 0 (excluded = n_truth - no - n_scored, because every true genus and species is in the library, measured with score_cami.py coverage mode: n_scored = n_truth). ex_unclassified / ex_consistent / ex_off exist for cami only: what the classifier did with the excluded reads (no call / a call on the true lineage / an off-lineage call)"),
     ("accuracy_*", "accuracy detail", "concordant_fraction / discordant_fraction / ancestor_fraction / unclassified_fraction", "fda-argos genus concordance of the fragments with the SRA-assigned taxon"),
     ("paper_check", "paper check", "table / row / domain / rank / metric", "which published number: Wood et al. 2019 supplementary table (S1 or S5), its row (classifier), the domain (S1: prokaryote | virus), the rank (genus) and the metric (sensitivity | ppv | f1 for S1; concordant | discordant | ancestor | unclassified for S5)"),
-    ("paper_check", "paper check", "ours / ours_std / n_seeds / n_experiments", "our value: xor, minimum_hit_groups 0, strain_exclusion library, mean and std over the seeds (strain-exclusion domain slice of accuracy_strain_exclusion; FDA-ARGOS unweighted mean over the n_experiments experiments, Table S5 definition). n_experiments is the number of SRA experiments actually classified (the paper has 25)"),
+    ("paper_check", "paper check", "ours / ours_std / n_repeats / n_experiments", "our value: xor, minimum_hit_groups 0, strain_exclusion library, mean and std over the seeds (strain-exclusion domain slice of accuracy_strain_exclusion; FDA-ARGOS unweighted mean over the n_experiments experiments, Table S5 definition). n_experiments is the number of SRA experiments actually classified (the paper has 25)"),
     ("paper_check", "paper check", "published / difference / tolerance / within_tolerance", "published Kraken 2 value (tables/paper_kraken2_published.csv; `not in repo` rows have no value and no verdict), ours - published, the absolute tolerance (0.01) and `yes` / `no`. Values are reported as they are: a `no` is a real difference, not rounded away"),
     ("paper_check", "paper check", "source / note", "where the published value comes from (table, row) and caveats (e.g. fewer experiments than the paper)"),
 ]
 
 
-def overview_rows():
+def overview_rows(tables=None):
+    """Legend rows. With `tables` (name -> (fields, rows), the sheets actually written) a row
+    is emitted only when its sheet exists and, for per-metric rows, the column exists there."""
     rows = []
 
-    def add(sheet, cat, column, meaning):
+    def sheet_ok(sheet):
+        if tables is None or sheet in ("all", "naming", "sheets", "overview"):
+            return True
+        return any(t in tables or (t == "accuracy_*" and any(n.startswith("accuracy_") for n in tables))
+                   for t in sheet.split("/"))
+
+    def has_col(sheets, name):
+        """name (or name_mean) is a header of one of the sheets"""
+        if tables is None:
+            return True
+        return any(f in (name, name + "_mean") for sh in sheets.split("/") if sh in tables
+                   for f in tables[sh][0])
+
+    def add(sheet, cat, column, meaning, check=None):
+        if not sheet_ok(sheet) or (check and not has_col(sheet, check)):
+            return
         rows.append(OrderedDict([("sheet", sheet), ("category", cat), ("column", column), ("meaning", meaning)]))
 
     add("overview", "sheets", "(sheet)", SHEET_DOC["overview"])
     for name, doc in SHEET_DOC.items():
-        if name != "overview":
+        if name != "overview" and (tables is None or name in tables):
             add("sheets", "sheets", name, doc)
     for sheet, cat, col, meaning in COMMON_DOC:
         add(sheet, cat, col, meaning)
     for name, cat, meaning, _dir, _src in BUILD_METRICS:
-        add("build/build_runs/summary/runs" if name in ORDER_PROPS else "build/build_runs",
-            cat, name, meaning + (" (an order property: the same value repeats on every dataset / minimum_hit_groups row of the order in `summary` / `runs`)"
-                                  if name in ORDER_PROPS else ""))
+        if name in IO_NAMES:
+            sh = "build_runs"
+        else:
+            sh = "build/build_runs/summary/runs" if name in ORDER_PROPS else "build/build_runs"
+        add(sh, cat, name, meaning + (" (an order property: the same value repeats on every dataset / minimum_hit_groups row of the order in `summary` / `runs`)"
+                                      if name in ORDER_PROPS else ""), name)
     for name, cat, meaning, _dir, _src in CLASSIFY_METRICS:
-        add("summary/runs", cat, name, meaning)
+        add("runs" if name in IO_NAMES else "summary/runs", cat, name, meaning, name)
     for name, cat, meaning, _src in RUN_ONLY:
-        add("runs", cat, name, meaning)
+        add("runs", cat, name, meaning, name)
     for c in ACC_COLS:
-        add("summary/runs", c["band"], c["name"], c["meaning"])
+        add("summary/runs", c["band"], c["name"], c["meaning"], c["name"])
     for name, cat, meaning, _dir, _src in PROFILE_METRICS:
-        add("profile", cat, name, meaning)
+        add("profile", cat, name, meaning, name)
     for name, cat, meaning, _dir, _src in VSREF_METRICS:
-        add("vs_reference", cat, name, meaning)
+        add("vs_reference", cat, name, meaning, name)
+    for name, cat, meaning, _src in TELEMETRY_METRICS:
+        add("build_runs/runs" if name.startswith("build") else "runs", cat, name, meaning, name)
+    for name, cat, meaning, _src in BUILD_RECORD_METRICS:
+        add("build_runs", cat, name, meaning, name)
     return rows
 
 
@@ -1319,7 +1383,7 @@ OVERVIEW_FIELDS = ["sheet", "category", "column", "meaning"]
 # paper_check: xor at minimum_hit_groups 0 vs the published Kraken 2 numbers
 # ---------------------------------------------------------------------------
 
-PAPER_FIELDS = ["table", "row", "domain", "rank", "metric", "ours", "ours_std", "n_seeds",
+PAPER_FIELDS = ["table", "row", "domain", "rank", "metric", "ours", "ours_std", "n_repeats",
                 "n_experiments", "published", "difference", "tolerance", "within_tolerance",
                 "source", "note"]
 S1_DOMAINS = {"prokaryote": ("prokaryote",), "virus": ("virus", "viral")}
@@ -1352,18 +1416,18 @@ def paper_check_rows(base, published=None, tolerance=PAPER_TOLERANCE):
     out = []
     for p in published:
         tab, domain, metric = p.get("table"), p.get("domain") or None, p.get("metric")
-        ours = std = n_seeds = n_exp = None
+        ours = std = n_repeats = n_exp = None
         note = []
         if tab == "S1":
             for r in se:
                 if r.get("group") in S1_DOMAINS.get(domain, (domain,)):
-                    ours, std, n_seeds = r.get(metric + "_mean"), r.get(metric + "_std"), r.get("n_seeds")
+                    ours, std, n_repeats = r.get(metric + "_mean"), r.get(metric + "_std"), r.get("n_repeats")
         elif tab == "S5":
             for r in ar:
                 if r.get("scope") == "unweighted_mean":
                     ours = r.get(metric + "_fraction_mean")
                     std = r.get(metric + "_fraction_std")
-                    n_seeds = r.get("n_seeds")
+                    n_repeats = r.get("n_repeats")
             n_exp = len(set(r.get("sra_run") for r in ar
                             if r.get("scope") == "experiment" and r.get("sra_run")))
             pub_n = p.get("n_experiments")
@@ -1373,7 +1437,7 @@ def paper_check_rows(base, published=None, tolerance=PAPER_TOLERANCE):
         pub = pub if _num(pub) else None
         row = OrderedDict([
             ("table", tab), ("row", p.get("row")), ("domain", domain), ("rank", p.get("rank")),
-            ("metric", metric), ("ours", ours), ("ours_std", std), ("n_seeds", n_seeds),
+            ("metric", metric), ("ours", ours), ("ours_std", std), ("n_repeats", n_repeats),
             ("n_experiments", n_exp), ("published", pub), ("difference", None),
             ("tolerance", tolerance), ("within_tolerance", None), ("source", p.get("source")),
             ("note", None)])
@@ -1400,19 +1464,19 @@ def derive_tables(base, base_dir=None, libraries=None):
     runs = base.get("runs") or []
     build_runs = base.get("build_runs") or []
     t = OrderedDict()
-    t["overview"] = (OVERVIEW_FIELDS, overview_rows())
+    t["overview"] = (OVERVIEW_FIELDS, [])
     lib_rows = libraries if libraries is not None else build_libraries(base_dir, runs) if base_dir else []
     t["libraries"] = (LIBRARY_FIELDS, lib_rows)
     t["datasets"] = (DATASET_FIELDS, base.get("datasets") or [])
     orders = base.get("orders") or []
     check_orders(orders)
     t["orders"] = (orders_fields(orders), orders)
-    build = aggregate(build_runs, BUILD_NAMES, AGG_KEYS["build"])
+    build = aggregate(build_runs, BUILD_AGG_NAMES, AGG_KEYS["build"])
     t["build"] = (prune_empty(build_field_order(), build, set(AGG_ID["build"])), build)
-    t["build_runs"] = (prune_empty(build_runs_field_order(), build_runs, set(BUILD_ID_FIELDS)), build_runs)
+    t["build_runs"] = (prune_empty(build_runs_field_order(), build_runs, set(BUILD_ID_FIELDS) | set(BUILD_TELEMETRY)), build_runs)
     summ = aggregate(runs, SUMMARY_NAMES, AGG_KEYS["summary"])
     t["summary"] = (prune_empty(summary_field_order(), summ, set(AGG_ID["summary"])), summ)
-    t["runs"] = (prune_empty(runs_field_order(), runs, set(RUN_ID_FIELDS)), runs)
+    t["runs"] = (prune_empty(runs_field_order(), runs, set(RUN_ID_FIELDS) | set(m[0] for m in TELEMETRY_METRICS)), runs)
     for name, order_fn in (("profile", profile_field_order), ("vs_reference", vs_reference_field_order)):
         rows = base.get(name) or []
         if rows:
@@ -1424,6 +1488,7 @@ def derive_tables(base, base_dir=None, libraries=None):
     pc = paper_check_rows(base, base.get("paper_published"))
     if pc:
         t["paper_check"] = (PAPER_FIELDS, pc)
+    t["overview"] = (OVERVIEW_FIELDS, overview_rows(t))
     return t
 
 
@@ -1446,7 +1511,7 @@ def _categories(sheet, fields):
     if sheet == "datasets":
         return ["dataset"] * len(fields)
     # accuracy_<dataset>
-    return [CAT_ID if f in ("minimum_hit_groups", "n_seeds") or f in ID else
+    return [CAT_ID if f in ("minimum_hit_groups", "n_repeats") or f in ID else
             "dataset / slice" if f in ("library", "dataset") or f in DETAIL_SLICE else _detail_band(f)
             for f in fields]
 
@@ -1518,7 +1583,7 @@ def sheet_spec(name, fields, rows):
 
 # ---- correlation rows under the data of `build` and `summary` (as SSHash's summary sheet)
 CORREL_SHEETS = ("build", "summary")
-CORREL_DENSITY = "particular_density_factor_ratio"
+CORREL_DENSITY = "density_factor_ratio"
 CORREL_MINIMIZERS = "distinct_minimizers_ratio"
 CORREL_ROWS = (("correlation with density", CORREL_DENSITY),
                ("correlation with distinct minimizers", CORREL_MINIMIZERS))
@@ -1539,7 +1604,7 @@ def _pearson(xs, ys):
 
 def correlation_rows(name, fields, rows):
     """(footer rows for the sheet, rows of kraken2_correlations.csv). One footer row
-    per reference column (particular density ratio, distinct minimizers ratio);
+    per reference column (density_factor ratio, distinct minimizers ratio);
     each `*_ratio` column of the sheet gets IFERROR(CORREL(ref, column), "") with
     absolute ranges over the data rows and the python value (pairs where both
     cells are numbers) as cached value."""
@@ -1599,7 +1664,8 @@ def write_outputs(tables, csv_dir, xlsx_path):
                 print("removed stale table {}".format(f))
             except OSError:
                 pass
-    return write_book(xlsx_path, build_sheet_specs(tables))
+    return write_book(xlsx_path, build_sheet_specs(tables)
+                      + density_effect.sheets("kraken2", os.path.dirname(os.path.abspath(csv_dir))))
 
 
 # ---------------------------------------------------------------------------

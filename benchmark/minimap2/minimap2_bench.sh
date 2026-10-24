@@ -26,8 +26,9 @@ Commands:
                                 greedymini uses PROJECTION (at0-cg1 default or
                                 at1-cg0) and GM_TABLE (w10_k15_canonical)
   sweep [orders...]            Run every default order (or the given list);
-                                seed-dependent orders (all but native) are
-                                swept across config.yaml's full seed list;
+                                every order (native too: its repeats
+                                give the baseline replicates) is swept across
+                                config.yaml's full seed list;
                                 greedymini runs once per projection in
                                 PROJECTIONS (at0-cg1,at1-cg0), each its own run
   export [--datasets a,b]      Aggregate runs/**/meta.json -> results/csvs/*.csv + results/minimap2_results.xlsx
@@ -58,24 +59,19 @@ cmd_sweep() {
   if [ ${#orders[@]} -eq 0 ]; then
     IFS=',' read -r -a orders <<< "$DEFAULT_ORDERS"
   fi
-  local fail=0
-  for o in "${orders[@]}"; do
-    # greedymini: one sweep per projection (separate runs/rows)
-    local projs=("")
-    if order_needs_gm "$o"; then
-      IFS=',' read -r -a projs <<< "$PROJECTIONS"
-    fi
-    local p
-    for p in "${projs[@]}"; do
-      [ -n "$p" ] && PROJECTION="$p"
-      if order_is_seed_dependent "$o" && [ "${#ALL_SEEDS[@]}" -gt 0 ]; then
-        local i
-        for i in "${!ALL_SEEDS[@]}"; do
-          run_one "$o" "${ALL_SEEDS[$i]}" "$i" || fail=1
-        done
-      else
-        run_one "$o" "${ALL_SEEDS[0]:-0x2545F4914F6CDD1D}" 0 || fail=1
+  # Seed-major: every order (and greedymini projection) runs for seed 0, then for seed 1, ...,
+  # so time-varying conditions (load, the other benchmark slot's disk use) hit all orders alike.
+  local fail=0 i o p
+  for i in "${!ALL_SEEDS[@]}"; do
+    for o in "${orders[@]}"; do
+      local projs=("")
+      if order_needs_gm "$o"; then
+        IFS=',' read -r -a projs <<< "$PROJECTIONS"
       fi
+      for p in "${projs[@]}"; do
+        [ -n "$p" ] && PROJECTION="$p"
+        run_one "$o" "${ALL_SEEDS[$i]}" "$i" || fail=1
+      done
     done
   done
   return $fail

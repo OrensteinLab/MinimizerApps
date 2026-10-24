@@ -1,6 +1,13 @@
 # sshash binary resolution, benchmark runs (build/check/bench/query +
 # equivalence gate), and export dispatch.
 
+# wait_low_load: block until the (shared) machine is quiet before each timed step
+# (BENCH_LOAD_MAX; BENCH_WAIT_LOW_LOAD=0 disables; benchmark/common/wait_low_load.sh).
+source "${BASH_SOURCE[0]%/*}/../../common/wait_low_load.sh"
+# bench_pin_cpus: pin every timed sshash step to least-busy CPUs of one node, memory bound to it (benchmark/common/pin_cpus.sh;
+# pinning is not optional): build $THREADS threads, bench and query one CPU; step_*.json record the memory state
+source "${BASH_SOURCE[0]%/*}/../../common/pin_cpus.sh"
+
 # Elapsed seconds between two $EPOCHREALTIME samples ("sec.usec" strings) --
 # pure bash, no subprocess (same helper as benchmark/kmc/lib/run.sh).
 wall_time_delta() {
@@ -99,8 +106,7 @@ run_one() {
 
   local build_log="$run_dir/build.log" build_time="$run_dir/build_time.txt"
   local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose --bucket-stats "${ORDER_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
-  local wrapped=("${build_cmd[@]}")
-  [[ -x "$TIME_BIN" ]] && wrapped=("$TIME_BIN" -v -o "$build_time" "${build_cmd[@]}")
+  local wrapped
 
   local cmd_file
   cmd_file="$(mktemp)"
@@ -109,6 +115,11 @@ run_one() {
   } >"$cmd_file"
 
   local t0 wall build_rc
+  wait_low_load 32 0 $((THREADS + 2))
+  bench_pin_cpus "$THREADS" "$run_dir/step_build.json"
+  printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus.txt"
+  wrapped=(${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${build_cmd[@]}")
+  [[ -x "$TIME_BIN" ]] && wrapped=("$TIME_BIN" -v -o "$build_time" "${wrapped[@]}")
   t0="$EPOCHREALTIME"
   set +e
   "${wrapped[@]}" >"$build_log" 2>&1
@@ -132,8 +143,13 @@ run_one() {
     grep -q "EVERYTHING OK!" "$check_log" && check_ok=1
 
     local bench_log="$run_dir/bench.log"
+    # bench and query are single-threaded random lookups: one CPU (+1 spare core), and the node must
+    # have room for the index in huge pages (their speed depends on the page size, see step records)
+    wait_low_load 8 6 2
+    BENCH_PIN_SPARE=1 bench_pin_cpus 1 "$run_dir/step_bench.json"
+    printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus_bench.txt"
     set +e
-    "$SSHASH_BIN" bench -i "$index_path" >"$bench_log" 2>&1
+    ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$SSHASH_BIN" bench -i "$index_path" >"$bench_log" 2>&1
     bench_rc=$?
     set -e
     printf '%s\n' "$SSHASH_BIN bench -i $index_path" >>"$cmd_file"
@@ -143,8 +159,12 @@ run_one() {
     if [[ -n "$qpath" && -f "$qpath" ]]; then
       local query_log="$run_dir/query.log" query_time="$run_dir/query_time.txt"
       local query_cmd=("$SSHASH_BIN" query -i "$index_path" -q "$qpath" --verbose)
-      local wrapped_q=("${query_cmd[@]}")
-      [[ -x "$TIME_BIN" ]] && wrapped_q=("$TIME_BIN" -v -o "$query_time" "${query_cmd[@]}")
+      local wrapped_q
+      wait_low_load 8 6 2
+      BENCH_PIN_SPARE=1 bench_pin_cpus 1 "$run_dir/step_query.json"
+      printf '%s\n' "$BENCH_PIN_LIST" >"$run_dir/cpus_query.txt"
+      wrapped_q=(${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${query_cmd[@]}")
+      [[ -x "$TIME_BIN" ]] && wrapped_q=("$TIME_BIN" -v -o "$query_time" "${wrapped_q[@]}")
       set +e
       "${wrapped_q[@]}" >"$query_log" 2>&1
       query_rc=$?

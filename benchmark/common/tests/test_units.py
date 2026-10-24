@@ -9,6 +9,8 @@ class T(unittest.TestCase):
         self.assertEqual(units.gb_from_kib(1_000_000), 1.024)
         self.assertIsNone(units.gb_from_bytes(None))
         self.assertIsNone(units.gb_from_kib(None))
+        self.assertEqual(units.gb_from_blocks(4_484_936), 2.2963)   # 512-byte blocks
+        self.assertIsNone(units.gb_from_blocks(None))
 
 
 if __name__ == "__main__":

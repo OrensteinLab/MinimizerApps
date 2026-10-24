@@ -254,8 +254,8 @@ instead of loading it onto lex's single sample, and repeating lex gives it a rea
 of one unrepeatable data point. `-O default -n N` also accepts `N > 1` now, for the same reason,
 when running lex on its own.
 
-This changes `n_seeds` and adds `{metric}_std` for `order == default` rows in every
-export (previously always `n_seeds=1`, `std=0`) — `kmc3_vs_paper.csv` and the `runs`/`summary`
+This changes `n_repeats` and adds `{metric}_std` for `order == default` rows in every
+export (previously always `n_repeats=1`, `std=0`) — `kmc3_vs_paper.csv` and the `runs`/`summary`
 sheets need no code changes for this, the existing per-config aggregation already treats lex like
 any other scheme once it has real repeats.
 
@@ -300,7 +300,8 @@ runs/
 | `kmc3_summary.csv` | one per run (per seed) | Raw headline metrics | — |
 | `kmc3_vs_paper.csv` | one per lex run | vs `data/paper_kmc3.csv` (`count_wall_s_ratio` = ours ÷ paper) | `vs_paper` |
 | `kmc3_density_expected_orders.csv` | one per scheme | theoretical expected density, any order (see `python -m scripts expected-density` below) | `orders` |
-| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper` | — |
+| `density_effect_kmc.csv` | one per metric x (all, setting = `dataset/n_bins/threads/mem_limit_gb`) | Pearson r of the metric and the density factor, both as ratios to the default scheme's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
+| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper`, `density_effect`, `density_effect_points` | — |
 
 Re-export only: `benchmark/kmc3_bench.sh export` (or `python3 -m scripts export --results-dir … --paper-platform xeon_hdd|xeon_ssd`).
 
@@ -336,7 +337,7 @@ Both CSVs carry every dataset unfiltered, including read-length-check derived on
 
 ### XLSX `summary` sheet (aggregated)
 
-**Column order** (every sheet/CSV): dataset columns (`dataset`, `n_total_kmers`, `avg_read_len`, `n_reads`, `input_format`, `label`), then order columns (`k`, `w`, `L`, `order`, `gm_k`, `projection`, `gm_table`, `gm_lut`, `signature_order_label`), then the app parameters (`n_bins`, `threads`, `strict_memory`, `mem_limit`), then the seed columns (`n_seeds` / `seed_idx` / `seed`), then the metrics (`vs_paper` has no order columns).
+**Column order** (every sheet/CSV): dataset columns (`dataset`, `n_total_kmers`, `avg_read_len`, `n_reads`, `input_format`, `label`), then order columns (`k`, `w`, `L`, `order`, `gm_k`, `projection`, `gm_table`, `gm_lut`, `signature_order_label`), then the app parameters (`n_bins`, `threads`, `strict_memory`, `mem_limit_gb`), then the seed columns (`n_repeats` / `seed_idx` / `seed`), then the metrics (`vs_paper` has no order columns).
 
 The category-band row and column headers are rows 1-2, the data table starts at row 3 (rows 1-2 frozen). A medium border separates each setting (dataset + input format + bins + threads + memory). Right under the table, a `correlation with density` row holds, for every `{metric}_ratio` column, a live Excel `=CORREL(density_factor_ratio range, that column's range)` over all summary rows (ratios = order / lex of the same setting, so rows of different settings are comparable; the value is also cached for viewers that do not recalculate).
 
@@ -344,8 +345,8 @@ One row per **dataset / k / input / config / scheme**, sorted by **dataset → b
 
 | column pattern | meaning |
 |---|---|
-| `n_seeds` | number of seed runs in the group |
-| `{metric}_mean`, `{metric}_std` | mean and sample std across seeds (`count_wall_s`, `count_max_rss_gb`, `disk_gb`, stages, `n_super_kmers`, …) |
+| `n_repeats` | number of seed runs in the group |
+| `{metric}_mean`, `{metric}_std` | mean and sample std across seeds (`count_wall_s`, `count_max_rss_gb`, `tmp_disk_gb`, stages, `n_super_kmers`, …) |
 | `{metric}_ratio` | Excel formula `=mean / lex_mean` (lex row = **1**); vs the `default` (lex) baseline for the same **dataset / k / input / config sweep** |
 
 ### `python -m scripts expected-density` (theoretical density, any order)
@@ -376,11 +377,13 @@ The scan's super-k-mer count equals kmc's on the same reads (checked for default
 
 | file | additional columns |
 |---|---|
-| `kmc3_vs_paper.csv` | `paper_platform`, `n_seeds`, `count_wall_s`, `count_wall_s_std`, `paper_count_wall_s`, `count_wall_s_ratio`, `count_stage1_s`, `count_stage2_s`, `count_max_rss_gb`, `paper_count_max_rss_gb`, `disk_gb`, `paper_disk_gb`, `n_unique_counted` |
+| `kmc3_vs_paper.csv` | `paper_platform`, `n_repeats`, `count_wall_s`, `count_wall_s_std`, `paper_count_wall_s`, `count_wall_s_ratio`, `count_stage1_s`, `count_stage2_s`, `count_max_rss_gb`, `paper_count_max_rss_gb`, `tmp_disk_gb`, `paper_disk_gb`, `n_unique_counted` |
 
-One row per **lex config** (bins/threads/memory), averaged across its `n_seeds` repeats — not one row per repeat.
+One row per **lex config** (bins/threads/memory), averaged across its `n_repeats` repeats — not one row per repeat.
 
-**Units:** all memory and space metrics are **decimal GB** (1 GB = 10^9 bytes) via `benchmark/common/units.py`; columns end in `_gb`. `count_max_rss_gb` = peak RSS (GNU time reports KiB: KiB x 1024 / 10^9; meta/kmc raw values are unchanged, the conversion happens at export), `disk_gb` / `disk_strict_mem_gb` = KMC temp size (bytes / 10^9), `paper_count_max_rss_gb` / `paper_disk_gb` = the supplement's GB (`data/paper_kmc3.csv` keeps its own `paper_ram_gb` column, mapped on load). Old names: `ram`, `ram_gb`, `max_rss_kb`, `disk`, `disk_strict_mem`, `paper_ram`, `paper_disk` and the `{ram,disk}_{mean,std,ratio,z}` columns (now `count_max_rss_gb_*`, `disk_gb_*`). `mem_limit` stays the user's `kmc -m` setting (GB).
+**Units:** all memory and space metrics are **decimal GB** (1 GB = 10^9 bytes) via `benchmark/common/units.py`; columns end in `_gb`. `count_max_rss_gb` = peak RSS (GNU time reports KiB: KiB x 1024 / 10^9; meta/kmc raw values are unchanged, the conversion happens at export), `tmp_disk_gb` / `tmp_disk_strict_mem_gb` = KMC temp size (bytes / 10^9), `paper_count_max_rss_gb` / `paper_disk_gb` = the supplement's GB (`data/paper_kmc3.csv` keeps its own `paper_ram_gb` column, mapped on load). Old names: `ram`, `ram_gb`, `max_rss_kb`, `disk`, `disk_strict_mem`, `paper_ram`, `paper_disk` and the `{ram,disk}_{mean,std,ratio,z}` columns (now `count_max_rss_gb_*`, `tmp_disk_gb_*`). `mem_limit_gb` stays the user's `kmc -m` setting (GB).
+
+**Headers:** the xlsx uses exactly the CSV column names (no abbreviations); every column has a row in the `overview` sheet. `runs` telemetry: `user`, `sys`, `cpu_pct`, `major_pagefaults`, `minor_pagefaults`, `fs_inputs` (512-byte blocks), `read_gb` (decimal GB), `fs_outputs`, `count_pinned_cpus` (CPU list from the run's `cpus.txt`, kept even when empty), `ctx_voluntary`, `ctx_involuntary`, `harness_wall_s` (was `python_wall_s`), `kmc_version`, `host`, `exit_code`. `disk_gb` is now `tmp_disk_gb`, `n_seeds` is `n_repeats`, `mem_limit` is `mem_limit_gb`.
 
 **Validation:** `export` **fails** if a custom-order run’s unique / counted / total k-mer counts differ from the matching lex run for the same dataset, k, input, and config. Super-k-mer counts may differ. Custom runs without a lex baseline for that key also fail.
 
@@ -459,11 +462,22 @@ Catalog and reference CSVs in `benchmark/data/` (committed; not under per-datase
 | `datasets.csv` | `dataset`, `label`, `mem_gb`, `filename`, `url` | FASTQ list for download; `mem_gb` → kmc `-m` unless `--mem` overrides; empty `url` → ENA path from `filename` |
 | `paper_kmc3.csv` | `dataset`, `k`, `platform`, `input_format`, `paper_ram_gb`, `paper_disk_gb`, `paper_time_s` | Published KMC 3 numbers; `platform` is `xeon_hdd` (default) or `xeon_ssd`; joined in `kmc3_vs_paper.csv` |
 
+## Measurement protocol
+
+Every kmc call is timed under the protocol in [`../README.md`](../README.md): it waits for its node to be quiet,
+runs pinned (`$THREADS` cores + 2 spare, one NUMA node, one thread per core; the list is in
+`cpus.txt` of the run directory and exported as `count_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_count.json`, exported as `count_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol)), and records wall and CPU seconds
+(`count_wall_s`, `count_cpu_s`), the KMC stages, peak RSS, major page faults and file-system reads
+(`major_pagefaults`, `fs_inputs` in 512-byte blocks, `read_gb`). Stage 1 reads the input, so `read_gb` > 0
+means a cold input and a slower stage 1; stage 2 and `count_cpu_s` are the cache-independent numbers.
+`default` is repeated like the other orders and interleaved with them (`experiments/full_run.sh` runs
+`-O all -n 5`). `experiments/full_run.sh` is the main-configuration run (150 runs: 5 datasets x 6 schemes x 5 repeats; bins 1024, threads 24).
+
 ## Notes
 
 - Current `kmc` default signature length is `-p9`; KMC 3.0.0 used the then-default (7). Pass `--signature-len 7` for closer algorithmic match.
 - Custom signature order: `kmc -co<table.gm> -ol<label> [-os<seed>]` (raw binary `.gm`; seed breaks rank ties at runtime), `kmc -co<table_dna.gm> -ol<label>` (pre-built `_dna.gm`; seed is in the file header), `-or xor|xor-pcg-hash -ol<label> [-os<seed>]` (random xor, or xor then PCG hash); `kmc.json` reports `signature_order_mode` = `xor` / `xor-pcg-hash` / `greedymini` and, for tables, `signature_order_gm_lut` = `dna` (4^p DNA table) | `binary` (2^p rank LUT; `-oat1` flips the projection). Default without these flags is unchanged KMC lex signatures. Sidecar `{output}.kmc_co` / `.kmc_col` persist mode, seed, and table.
-- Ratio color scales (`gm_lut`, `summary`, `readlen_check`, `runs`) clamp their min/max to always straddle `1.0` (`_ratio_color_scale_bounds`, driven by shadow `__{field}_value` floats captured alongside each ratio formula) instead of relying on the data's raw min/max as the color-scale stops. Fixes a case in `gm_lut` where `disk_gb_ratio`'s data max was exactly `1.0` (GreedyMini never loses to lex in that sweep), which made the white/`1.0` midpoint coincide with the max stop and suppressed white/red entirely.
-- `runs` rows are sorted in the same per-config blocks as `summary` (dataset -> bins -> threads -> mem_limit -> strict_memory -> scheme, then seed_idx within a scheme), and its "id / params" columns follow `summary`'s field order for every field the two sheets share.
+- Ratio color scales (`gm_lut`, `summary`, `readlen_check`, `runs`) clamp their min/max to always straddle `1.0` (`_ratio_color_scale_bounds`, driven by shadow `__{field}_value` floats captured alongside each ratio formula) instead of relying on the data's raw min/max as the color-scale stops. Fixes a case in `gm_lut` where `tmp_disk_gb_ratio`'s data max was exactly `1.0` (GreedyMini never loses to lex in that sweep), which made the white/`1.0` midpoint coincide with the max stop and suppressed white/red entirely.
+- `runs` rows are sorted in the same per-config blocks as `summary` (dataset -> bins -> threads -> mem_limit_gb -> strict_memory -> scheme, then seed_idx within a scheme), and its "id / params" columns follow `summary`'s field order for every field the two sheets share.
 - **`-O lex`**: KMC's default `-O default` lexicographic order is not *pure* canonical lex — `CMmer::is_allowed()` (`kmc_api/mmer.h`) excludes poly-A/poly-T-type motifs from ever being a minimizer (a denylist from the original KMC2 paper, to bound the largest bin's size; see §2.2 there). `-O lex` runs true canonical lex with no denylist, for isolating that specific effect — implemented as `-or xor -os0` under the hood (verified order-equivalent to `MIN(kmer, revcomp(kmer))` with no exclusions; no KMC core change needed), but reported end-to-end as its own `lex` order (not merged into the `xor` order it's plumbed through, and distinct from `default`, which is what KMC actually ships). Standalone comparison scheme, always seed 0 (deterministic; `-n` just repeats it for wall-time noise stats, like `-O default`) — not part of `-O all`.
 - ENA now publishes G. gallus / M. balbisiana as paired `_1`/`_2` FASTQ (the 2015 DDBJ unpaired `.fastq.bz2` names 404). `data/datasets.csv` lists the current ENA files.

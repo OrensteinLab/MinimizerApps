@@ -40,8 +40,8 @@ samtools faidx, truth.tsv, repeats.bed) rather than hand-maintained, so it
 can't go stale.
 
 summary: one row per (dataset, k, w, order, gm_k, projection, gm_table, mod_t) -- mean/std of every numeric
-metric across seeds (n_seeds=1 for native, which doesn't vary with seed; see
-lib/orders.sh's order_is_seed_dependent).
+metric across seeds (native doesn't depend on its seed: its runs are repeats of the baseline, which
+give it a mean/std like every other order).
 
 orders: one row per (order variant, k, w, L) -- greedymini once per projection, each order once per (k, w, L) the
 datasets were run with (L = k + w - 1; layout: benchmark/common/orders_sheet.py) -- with the expected (theoretical,
@@ -76,15 +76,18 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
+import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
+import density_effect  # noqa: E402
 from order_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
 from orders_sheet import EXPECTED_FIELDS, missing_cells, orders_fields, particular_fields, span_length, with_klw  # noqa: E402
-from units import gb_from_bytes, gb_from_kib  # noqa: E402
+from units import gb_from_blocks, gb_from_bytes, gb_from_kib  # noqa: E402
 from xlsx_book import DATA_START_ROW, write_book  # noqa: E402
 from xlsx_util import col_letter, write_csv  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sketch_kmers import sketch_kmers  # noqa: E402
+from write_meta import _step_extras, parse_time_v  # noqa: E402
 
 # minimap2 presets that turn on HPC (-H) k-mers (minimap2/options.c).
 HPC_PRESETS = frozenset({"map-pb", "map10k", "ava-pb"})
@@ -103,16 +106,19 @@ def dataset_preset(dataset_dir: Path, runs: list[dict]) -> str:
     return f.read_text().strip() if f.is_file() else "map-pb"
 
 # Grouped so each row-1 category band is one contiguous span:
-# id (dataset, order, app params, seeds) -> density -> total -> build -> map -> accuracy.
+# id (dataset, order, app params, seeds) -> density -> space -> total -> build -> map -> accuracy -> telemetry (runs only).
 RUN_FIELDS = [
     "dataset", "n_reads", "n_reads_in_repeat", "k", "w", "L", "order", "gm_k", "projection", "gm_table", "mod_t", "mid_occ_threshold", "threads", "seed", "seed_idx",
     "density_factor", "density_factor_raw_bp", "distinct_minimizers", "avg_occurrences",
+    "index_size_gb",
     "total_wall_s",
-    "build_wall_s", "build_max_rss_gb", "index_size_gb",
-    "map_wall_s", "map_max_rss_gb",
+    "build_wall_s", "build_cpu_s", "build_max_rss_gb", "build_major_pagefaults", "build_read_gb",
+    "map_load_s", "map_run_s", "map_wall_s", "map_cpu_s", "map_max_rss_gb", "map_major_pagefaults", "map_read_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
+    "build_pinned_cpus", "map_pinned_cpus",
+    *step_record.names("build"), *step_record.names("map"),
 ]
 
 # mid_occ_threshold (shown after the order columns): the effective repeat-filter threshold minimap2 mapped
@@ -128,9 +134,10 @@ MOD_ORDERS = frozenset({"mod-minimizer-xor"})
 
 SUMMARY_METRICS = (
     "density_factor", "distinct_minimizers",
+    "index_size_gb",
     "total_wall_s",
-    "build_wall_s", "build_max_rss_gb", "index_size_gb",
-    "map_wall_s", "map_max_rss_gb",
+    "build_wall_s", "build_cpu_s", "build_max_rss_gb",
+    "map_load_s", "map_run_s", "map_wall_s", "map_cpu_s", "map_max_rss_gb",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
@@ -149,9 +156,10 @@ CORRELATION_DRIVERS = (
 LOWER_IS_BETTER = frozenset({
     "density_factor", "distinct_minimizers",
     "frac_incorrectly_mapped",
+    "index_size_gb",
     "total_wall_s",
-    "build_wall_s", "build_max_rss_gb", "index_size_gb",
-    "map_wall_s", "map_max_rss_gb",
+    "build_wall_s", "build_cpu_s", "build_max_rss_gb",
+    "map_load_s", "map_run_s", "map_wall_s", "map_cpu_s", "map_max_rss_gb",
 })
 # A ratio > 1 means "better than native" for these -- more correctly mapped,
 # higher identity. Together with LOWER_IS_BETTER this must cover every
@@ -234,6 +242,13 @@ def _kb_to_gb(kb) -> float | None:
     return gb_from_kib(kb)
 
 
+def _cpu_s(step: dict) -> float | None:
+    """User + system CPU seconds of one step (all threads), from /usr/bin/time -v."""
+    if step.get("user_s") is None or step.get("sys_s") is None:
+        return None
+    return round(step["user_s"] + step["sys_s"], 2)
+
+
 def _total_time(build_sec, map_sec) -> float | None:
     """Index build + mapping wall time: the end-to-end cost of one run."""
     if build_sec is None or map_sec is None:
@@ -274,9 +289,24 @@ def flatten(meta: dict) -> dict:
         "density_factor_raw_bp": meta.get("density_factor"),
         "total_wall_s": _total_time(build.get("wall_time_sec"), mapp.get("wall_time_sec")),
         "build_wall_s": build.get("wall_time_sec"),
+        "build_cpu_s": _cpu_s(build),
+        "map_cpu_s": _cpu_s(mapp),
         "build_max_rss_gb": _kb_to_gb(build.get("peak_rss_kb")),
         "map_wall_s": mapp.get("wall_time_sec"),
         "map_max_rss_gb": _kb_to_gb(mapp.get("peak_rss_kb")),
+        # mapping split: seconds loading the index (minimap2's own "loaded/built the index"
+        # stamp) and the rest; absent in runs from before it was recorded
+        "map_load_s": mapp.get("index_load_s"),
+        "map_run_s": (round(mapp["wall_time_sec"] - mapp["index_load_s"], 2)
+                       if mapp.get("wall_time_sec") is not None and mapp.get("index_load_s") is not None else None),
+        # disk I/O the steps needed (/usr/bin/time -v): major page faults and file-system reads
+        # (512-byte blocks -> decimal GB); ~0 means the inputs came from the page cache
+        "build_major_pagefaults": build.get("major_pagefaults"),
+        "build_read_gb": gb_from_blocks(build.get("fs_inputs")),
+        "map_major_pagefaults": mapp.get("major_pagefaults"),
+        "map_read_gb": gb_from_blocks(mapp.get("fs_inputs")),
+        "build_pinned_cpus": build.get("pinned_cpus"),
+        "map_pinned_cpus": mapp.get("pinned_cpus"),
         "n_reads": acc.get("n_reads"),
         "n_reads_in_repeat": acc.get("n_reads_in_repeat"),
         "frac_mapped": acc.get("frac_mapped"),
@@ -289,10 +319,22 @@ def flatten(meta: dict) -> dict:
     }
 
 
+def _backfill_io(meta: dict, run_dir: Path) -> None:
+    """Runs from before write_meta.py recorded page faults / file-system reads / the CPU pinning /
+    the index-load seconds: take them from the run's own time logs (build_time.txt, map_time.txt,
+    cpus_*.txt, map.log), which are kept beside meta.json."""
+    for step, tlog, cpus in (("build", "build_time.txt", "cpus_build.txt"), ("map", "map_time.txt", "cpus_map.txt")):
+        found = {**parse_time_v(run_dir / tlog), **_step_extras(run_dir / tlog, cpus, map_log=step == "map")}
+        cur = meta.setdefault(step, {})
+        for key, val in found.items():
+            cur.setdefault(key, val)
+
+
 def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]:
     rows = []
     for meta_path in sorted((results_dir / "runs").glob("**/meta.json")):
         meta = json.loads(meta_path.read_text())
+        _backfill_io(meta, meta_path.parent)
         row = flatten(meta)
         if row.get("dataset") in EXCLUDED_DATASETS or (datasets and row.get("dataset") not in datasets):
             continue
@@ -300,8 +342,15 @@ def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]
             row["mid_occ_threshold"] = _map_log_mid_occ(meta_path.parent / "map.log")
         if row["threads"] is None:
             row["threads"] = _log_threads(meta_path.parent / "build.log")
-        mmi = meta_path.parent / "index.mmi"
-        row["index_size_gb"] = gb_from_bytes(mmi.stat().st_size) if mmi.is_file() else None
+        mmi, size_txt = meta_path.parent / "index.mmi", meta_path.parent / "index_bytes.txt"
+        if mmi.is_file():
+            row["index_size_gb"] = gb_from_bytes(mmi.stat().st_size)
+        elif size_txt.is_file():   # seeds other than 0: index deleted after mapping (lib/run.sh)
+            row["index_size_gb"] = gb_from_bytes(int(size_txt.read_text().split()[0]))
+        else:
+            row["index_size_gb"] = None
+        for step in ("build", "map"):   # node / page-size / foreign-load record (common/bench_step.py)
+            row.update(step_record.columns(meta_path.parent / ("step_%s.json" % step), step))
         rows.append(row)
     return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r), int(r.get("seed_idx") or 0)))
 
@@ -399,7 +448,7 @@ def summary_rows(runs: list[dict]) -> list[dict]:
             **dict(zip(ID_FIELDS, ident)),
             # effective repeat-filter threshold (mean over seeds); no std/ratio
             "mid_occ_threshold": round(statistics.mean(mids), 1) if mids else None,
-            "n_seeds": len({p.get("seed_idx") for p in parts}),
+            "n_repeats": len({p.get("seed_idx") for p in parts}),
             "n_reads": parts[0].get("n_reads"),
         }
         for metric in SUMMARY_METRICS:
@@ -427,7 +476,7 @@ def attach_native_ratios(summary: list[dict]) -> None:
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "n_reads", "k", "w", "L", *ID_FIELDS, "mid_occ_threshold", "n_seeds"]
+    fields = ["dataset", "n_reads", "k", "w", "L", *ID_FIELDS, "mid_occ_threshold", "n_repeats"]
     for metric in SUMMARY_METRICS:
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
@@ -666,18 +715,23 @@ def orders_field_order(summary: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _ID_FIELDS = frozenset({
-    "dataset", *ID_FIELDS, "seed", "seed_idx", "threads", "k", "w", "L", "mid_occ_threshold", "n_seeds", "n_reads", "n_reads_in_repeat",
+    "dataset", *ID_FIELDS, "seed", "seed_idx", "threads", "k", "w", "L", "mid_occ_threshold", "n_repeats", "n_reads", "n_reads_in_repeat",
 })
 _METRIC_CATEGORY = {
     "distinct_minimizers": "density", "avg_occurrences": "density", "density_factor": "density",
     "density_factor_raw_bp": "density",
+    "index_size_gb": "space",
     "total_wall_s": "total",
-    "build_wall_s": "build", "build_max_rss_gb": "build", "index_size_gb": "build",
-    "map_wall_s": "map", "map_max_rss_gb": "map",
+    "build_wall_s": "build", "build_cpu_s": "build", "build_max_rss_gb": "build",
+    "build_major_pagefaults": "build", "build_read_gb": "build",
+    "map_load_s": "map", "map_run_s": "map", "map_wall_s": "map", "map_cpu_s": "map", "map_max_rss_gb": "map",
+    "map_major_pagefaults": "map", "map_read_gb": "map",
     "frac_mapped": "accuracy", "frac_correct": "accuracy",
     "frac_correct_in_repeat": "accuracy", "frac_incorrectly_mapped": "accuracy",
     "frac_correct_strict50": "accuracy", "frac_correct_strict50_in_repeat": "accuracy",
     "mean_identity": "accuracy",
+    "build_pinned_cpus": "telemetry", "map_pinned_cpus": "telemetry",
+    **{c: "telemetry" for st in ("build", "map") for c in step_record.names(st)},
 }
 
 
@@ -726,8 +780,8 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("all", "mod_t", "mod-minimizer only: t-mer length of its inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); merged across each order's seeds"),
         row("summary/runs", "mid_occ_threshold", "effective repeat-filter threshold minimap2 mapped with (its own '[M::mm_mapopt_update] mid_occ = N' log line; summary: mean over seeds): any minimizer occurring more than this many times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below. In a default block (minimap2 picks it per index) it differs per order; in a fixed-cap block (-f <N> for every order, N = native's own default threshold) it is the same for all orders. Each such block is its own group of rows: own native baseline, divider; the ratios are computed within it"),
         row("runs", "threads", "minimap2 -t for build and map (meta.json; older runs: the build log's CMD line)"),
-        row("runs", "seed / seed_idx", "order seed (XOR key; for greedymini the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so run once (seed_idx 0)"),
-        row("summary", "n_seeds", "number of seed runs aggregated into this row's mean/std (1 for native, 5 otherwise)"),
+        row("runs", "seed / seed_idx", "order seed (XOR key; for greedymini the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so its seed_idx is just the repeat number"),
+        row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats are identical-index runs that only measure timing noise"),
         # --- density
         row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the orders sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),
         row("runs", "density_factor_raw_bp", "same occurrences over the raw genome length instead ((w+1) / minimap2 -d's 'average spacing'): understates density by the genome's HPC compression ratio (sketch_len_bp / genome_len_bp under map-pb, ~0.70 on human) and N gaps -- informational only"),
@@ -736,6 +790,11 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         # --- total / build / map
         row("summary/runs", "total_wall_s", "build_wall_s + map_wall_s: end-to-end cost of one run"),
         row("summary/runs", "build_wall_s / build_max_rss_gb", f"index build (minimap2 -d -x <preset> -k <k> -w 10 -t {threads}; runs sheet: threads): wall time and peak memory (decimal GB, 1 GB = 10^9 bytes; /usr/bin/time's KiB converted via bytes), from /usr/bin/time -v"),
+        row("summary/runs", "build_cpu_s / map_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / map step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
+        row("summary/runs", "map_load_s / map_run_s", "map_wall_s split: seconds minimap2 spent loading the prebuilt index (its own 'loaded/built the index' elapsed stamp; meta.json key index_load_s) and the remainder (reads, seeding, chaining, alignment, output); map_run_s is the index-independent mapping time"),
+        row("runs", "build_major_pagefaults / build_read_gb / map_major_pagefaults / map_read_gb", "disk I/O each step needed (/usr/bin/time -v): major (I/O) page faults and file-system reads in decimal GB (512-byte blocks); ~0 = served from the page cache, so timings with different values are not directly comparable."),
+        row("runs", "build_pinned_cpus / map_pinned_cpus", "CPU list the build / map step was pinned to (meta.json build.pinned_cpus / map.pinned_cpus; older runs: cpus_build.txt / cpus_map.txt in the run directory), e.g. 2,6,10. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus"),
+        *[row("runs", "{build,map}_" + f, d + " (run dir step_build.json / step_map.json; blank for runs without a record)") for f, d in step_record.DOC.items()],
         row("summary/runs", "map_wall_s / map_max_rss_gb", f"mapping (minimap2 -x <preset> -c -t {threads} [-f cap], as the paper's -cx map-pb / -cx map-ont): wall time and peak memory incl. the loaded index, from /usr/bin/time -v"),
         # --- accuracy
         row("summary/runs", "frac_mapped", "reads with any primary alignment / n_reads (1 - frac_mapped = the paper's 'unmapped reads'); the only accuracy metric for chm13_rel3_ont (real reads, no truth), as in the paper"),
@@ -745,7 +804,7 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("summary/runs", "frac_correct_strict50[_in_repeat]", "stricter variant: overlap >= 50% of the true span (overall / in-repeat)"),
         row("summary/runs", "mean_identity", "mean of 1 - de (gap-compressed per-base divergence from PAF's de:f: tag, dv:f: fallback) over primary alignments"),
         # --- summary aggregates
-        row("summary", "{metric}_mean / {metric}_std", "mean / sample standard deviation over the row's n_seeds runs (std = 0 when n_seeds = 1)"),
+        row("summary", "{metric}_mean / {metric}_std", "mean / sample standard deviation over the row's n_repeats runs (std = 0 when n_repeats = 1)"),
         row("summary", "{metric}_ratio", "this order's mean / native's mean in the same block (same dataset and repeat-filter condition; native = 1, white). Colored green = better than native, red = worse; direction is per metric -- lower is better for density/distinct minimizers/time/memory/frac_incorrectly_mapped, higher is better for frac_mapped/frac_correct*/mean_identity"),
         row("summary", "correlation with density / distinct minimizers", "two rows right under the table (sshash's layout): for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over all summary rows (ratios are order / native within one block, so rows are comparable); blank for a constant column. No colour scale"),
         row("summary/runs", "index_size_gb", "size of the built index (.mmi, decimal GB = 10^9 bytes): 16 B per distinct key (hash table) + 8 B per occurrence of a repeated key (position array) + the 4-bit packed genome"),
@@ -913,6 +972,7 @@ def main(argv=None) -> int:
                ratio_fields=_ratio_polarity(summary_fields), ratio_baseline=1.0,
                footer_rows=correlation_rows(summary_fields, summary, CORRELATION_DRIVERS)),
         _sheet("runs", RUN_FIELDS, runs, **_block_opts(RUN_FIELDS)),
+        *density_effect.sheets("minimap2", csvs_dir.parent),
     ])
     print(f"wrote {xlsx_dir / 'minimap2_results.xlsx'}")
     return 0
