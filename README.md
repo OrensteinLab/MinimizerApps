@@ -1,90 +1,46 @@
 # MinimizerApps
 
-A monorepo folding three forked bioinformatics tools together so their shared
-minimizer/signature-order logic and benchmark harnesses live in one place,
-while each tool's own upstream-tracked source stays isolated from that
-shared/harness code.
+Canonical sketching schemes with low-density orders (`xor`, `xor-pcg-hash`,
+the canonical GreedyMini, and the canonical mod-minimizer on an `xor` or a
+GreedyMini order) integrated into four high-throughput sequencing methods, and
+the harnesses that benchmark them end to end:
+
+- **Kraken2**: taxonomic classification.
+- **KMC3**: k-mer counting.
+- **SSHash**: k-mer indexing.
+- **Minimap2**: read mapping.
+
+Each method is a fork whose upstream-tracked source stays apart from the shared
+order code and the benchmark harnesses.
 
 ## Layout
 
-| Path | What it is |
-|---|---|
-| `kraken2/` | Fork of [DerrickWood/kraken2](https://github.com/DerrickWood/kraken2) — taxonomic sequence classification. Contains only upstream-adjacent changes (the order-ranking integration); see [`kraken2/README.md`](kraken2/README.md). |
-| `kmc/` | Fork of [refresh-bio/KMC](https://github.com/refresh-bio/KMC) — k-mer counting. Same rule: only order-implementation changes relative to upstream; see [`kmc/README.md`](kmc/README.md). |
-| `sshash/` | Fork of [jermp/sshash](https://github.com/jermp/sshash) — compact k-mer dictionary index. Same rule: only order-implementation changes relative to upstream; see [`sshash/README.md`](sshash/README.md). |
-| `minimap2/` | Fork of [lh3/minimap2](https://github.com/lh3/minimap2) — long-read mapper/aligner. Pure C; the order integration lives behind a small C++ bridge (`minimap2/order.{h,cpp}`) rather than upstream-adjacent changes; see [`minimap2/README.fork.md`](minimap2/README.fork.md). |
-| `common/minimizer-orders/` | The minimizer/signature-order implementation shared by all four apps (GreedyMini LUT, PCG scramble, reverse-complement, `.gm` table tools) — see [`orders/README.md`](orders/README.md). |
-| `orders/` | The canonical `.gm`/`.txt` order tables all four apps load, and the order options/CLI-flag reference — [`orders/README.md`](orders/README.md). |
-| `benchmark/{kraken2,kmc,sshash,minimap2,common}/` | Each app's benchmark/scoring harness (100% lab-authored, not part of any upstream) plus the shared YAML multi-config experiment-sweep engine they're all built on. |
-| `UPSTREAMS.md` | How each app's folder tracks and re-pulls from its real upstream — see [`UPSTREAMS.md`](UPSTREAMS.md). |
+| Path | What it is | Docs |
+|---|---|---|
+| `kraken2/`, `kmc/`, `sshash/`, `minimap2/` | The four forks, each with only the changes needed to plug in the orders | [`kraken2`](kraken2/README.md), [`kmc`](kmc/README.md), [`sshash`](sshash/README.md), [`minimap2`](minimap2/README.fork.md) |
+| `orders/` | The order tables (`.txt` rank lists; the `.gm` tables are built from them), the order names and options, and the CLI flags of each method | [`orders/README.md`](orders/README.md) |
+| `common/minimizer-orders/` | The order code shared by all four methods: the GreedyMini tables, the PCG scramble and the mod-minimizer rule with its tie handling | [`common/minimizer-orders/README.md`](common/minimizer-orders/README.md) |
+| `benchmark/` | The shared measurement protocol, the full run of all four methods (`full_run_all.sh`), the exporters and the analyses | [`benchmark/README.md`](benchmark/README.md) |
+| `benchmark/<method>/` | Each method's harness: data, setup (`.env`), sweeps, outputs | [`kraken2`](benchmark/kraken2/README.md), [`kmc`](benchmark/kmc/README.md), [`sshash`](benchmark/sshash/README.md), [`minimap2`](benchmark/minimap2/README.md) |
+| `UPSTREAMS.md` | How each fork tracks and re-pulls its upstream | [`UPSTREAMS.md`](UPSTREAMS.md) |
 
-## Build and test
+## Getting started
 
 ```bash
-# kraken2
-make -C kraken2 all
-make -C kraken2 test
-
-# kmc
+make -C kraken2 all && make -C kraken2 test
 make -C kmc all
-make -C benchmark/kmc venv   # once: creates kmc/.venv, installs pytest into it
-make -C benchmark/kmc test
-
-# sshash
-make -C sshash all
-
-# minimap2 (C + one C++ bridge object for the order integration)
-make -C minimap2 all
-make -C minimap2 test
+make -C sshash all && make -C sshash test
+make -C minimap2 all && make -C minimap2 test
+make -C common/minimizer-orders all test
 ```
 
-## Running a benchmark sweep
+Then see each method's README for its own options, and each harness README for
+its data and how to run it.
 
-Each app's benchmark harness reads a YAML file of `defaults:` + `configs:`
-(see `benchmark/common/experiments_lib.py`) and runs each config as one
-sweep entry.
+## Where to read about
 
-```bash
-# kraken2 (needs KRAKEN2_BENCH_ROOT or benchmark/kraken2/.env; see benchmark/kraken2/README.md)
-benchmark/kraken2/run_config_sweep.sh list
-benchmark/kraken2/run_config_sweep.sh sweep_schemes
-
-# kmc (needs KMC3_BENCH_ROOT; see benchmark/kmc/README.md)
-benchmark/kmc/kmc3_bench.sh experiment list
-benchmark/kmc/kmc3_bench.sh experiment sweep_config
-
-# sshash (needs SSHASH_BENCH_ROOT or benchmark/sshash/.env; see benchmark/sshash/README.md)
-benchmark/sshash/sshash_bench.sh experiment list
-benchmark/sshash/sshash_bench.sh experiment sweep_orders
-
-# minimap2 (needs MINIMAP2_BENCH_ROOT or benchmark/minimap2/.env; see benchmark/minimap2/README.md)
-benchmark/minimap2/minimap2_bench.sh experiment list
-benchmark/minimap2/minimap2_bench.sh experiment sweep_orders
-```
-
-## Minimizer orders and result layout
-
-All four apps use the same canonical order names: `xor`, `xor-pcg-hash`,
-`greedymini`, `mod-minimizer-xor`, `mod-minimizer-greedymini` (plus each app's
-baseline: `native`, `default`, `lex`). Per-app flags:
-
-| App | Flags |
-|---|---|
-| kraken2 | `--order xor\|xor-pcg-hash\|greedymini`, `--sketching minimizer\|mod-minimizer`, `--greedymini-file F.gm`, `--gm-projection at0-cg1\|at1-cg0` (benchmark: `-S <order>...`, `-P <projection>`) |
-| sshash | `-O native\|xor\|xor-pcg-hash\|greedymini\|mod-minimizer-xor\|mod-minimizer-greedymini`, `--greedy-mini-file F.gm`, `--gm-projection`, `--mod-t T` |
-| kmc | `-or xor\|xor-pcg-hash`, `-co F.gm` (greedymini), `-oat1` (flipped projection), `-ode` (DNA-expanded table); benchmark run dir adds `lut_<gm_lut>`, tables a `gm_lut` column |
-| minimap2 | `--minimizer-order xor\|xor-pcg-hash\|greedymini\|mod-minimizer-xor`, `--greedymini-file F.gm`, `--gm-projection at0-cg1\|at1-cg0`, `--mod-t T`, `--order-seed S` |
-
-An order is identified by the separate columns `order`, `gm_k`, `projection`,
-`gm_table`, `mod_t` (never packed into one string), and each run lives in
-`order_names.order_dir_name(...)`: `<order>[/k<gm_k>_<projection>_t<mod_t>]`,
-e.g. `xor`, `greedymini/k15_at1-cg0`, `mod-minimizer-xor/t6`,
-`mod-minimizer-greedymini/k6_at0-cg1_t6`. See
-[`orders/README.md`](orders/README.md) for the full CLI mapping.
-
-## More docs
-
-- [`kraken2/README.md`](kraken2/README.md), [`kmc/README.md`](kmc/README.md), [`sshash/README.md`](sshash/README.md), [`minimap2/README.fork.md`](minimap2/README.fork.md) — each app's own documentation.
-- [`orders/README.md`](orders/README.md) — the minimizer/signature order options, their shared implementation, and the CLI-flag mapping between the four apps.
-- [`benchmark/kraken2/README.md`](benchmark/kraken2/README.md), [`benchmark/kmc/README.md`](benchmark/kmc/README.md), [`benchmark/sshash/README.md`](benchmark/sshash/README.md), [`benchmark/minimap2/README.md`](benchmark/minimap2/README.md) — each benchmark harness's setup and usage.
-- [`UPSTREAMS.md`](UPSTREAMS.md) — tracking and re-pulling from each app's real upstream.
+- **The orders, their names and each method's flags:** [`orders/README.md`](orders/README.md).
+- **How the orders and the mod-minimizer are implemented, and how each method breaks ties:** [`common/minimizer-orders/README.md`](common/minimizer-orders/README.md).
+- **The measurement protocol, the full benchmark run and the workbook columns:** [`benchmark/README.md`](benchmark/README.md).
+- **The analyses:** also in [`benchmark/README.md`](benchmark/README.md): significance tests of order differences, how closely each metric follows the density, and the run-to-run stability of two result sets.
+- **Running one method's benchmark, its datasets and its outputs:** `benchmark/<method>/README.md`.
