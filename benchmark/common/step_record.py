@@ -14,7 +14,7 @@ FIELDS = ("node", "membind", "huge_fraction", "remote_frac", "foreign_busy_cores
 DOC = {
     "node": "NUMA node the step ran on (CPUs and, with membind, memory)",
     "membind": "whether the step's memory was bound to that node (set_mempolicy MPOL_BIND)",
-    "huge_fraction": "peak AnonHugePages / peak Rss of the step's processes: ~1 = its memory came in 2 MB "
+    "huge_fraction": "AnonHugePages / Rss of the step's processes at their peak Rss: ~1 = its memory came in 2 MB "
                      "transparent huge pages, ~0 = 4 KB pages (memory-latency-bound steps are markedly slower)",
     "remote_frac": "share of the step's anonymous pages on another NUMA node, sampled once after 10 s (0 with "
                    "membind; blank for shorter steps)",

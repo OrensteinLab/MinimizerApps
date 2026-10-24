@@ -93,14 +93,12 @@ def load_minimap2(results):
     return rows
 
 
-def load_minimap2_csv(path):
-    """minimap2_runs.csv (a result set whose runs/ directory was archived), in the contexts of
-    load_minimap2: (dataset, k<k>_w<w>) for the default repeat filter and k<k>_w<w>_f<N> for the
-    fixed one (-f N, N = native's own threshold). The export writes each (dataset, condition)
-    block in turn, default first: the fixed block of a (dataset, k) starts at native's second run
-    of a seed (native's runs are identical in both conditions), and every row from there on is in
-    it (a default-filter threshold may coincide with native's, so the value does not decide)."""
-    rows = read_csv(path)
+def minimap2_fixed_block(rows):
+    """For the rows of minimap2_runs.csv in file order: (whether each row is in the fixed-threshold block,
+    native's threshold per (dataset, k)). The export writes each (dataset, condition) block in turn, default
+    first: the fixed block of a (dataset, k) starts at native's second run of a seed (native's runs are
+    identical in both conditions), and every row from there on is in it (a default-filter threshold may
+    coincide with native's, so the value does not decide)."""
     native_thr, fixed_start, seen = {}, {}, set()
     for i, r in enumerate(rows):
         if r["order"] != "native":
@@ -110,10 +108,18 @@ def load_minimap2_csv(path):
         if key in seen:
             fixed_start.setdefault(dk, i)
         seen.add(key)
+    return [i >= fixed_start.get((r["dataset"], r["k"]), len(rows)) for i, r in enumerate(rows)], native_thr
+
+
+def load_minimap2_csv(path):
+    """minimap2_runs.csv (a result set whose runs/ directory was archived), in the contexts of
+    load_minimap2: (dataset, k<k>_w<w>) for the default repeat filter and k<k>_w<w>_f<N> for the
+    fixed one (-f N, N = native's own threshold), the blocks as minimap2_fixed_block finds them."""
+    rows = read_csv(path)
+    in_fixed, native_thr = minimap2_fixed_block(rows)
     out = []
-    for i, r in enumerate(rows):
+    for r, fixed in zip(rows, in_fixed):
         dk = (r["dataset"], r["k"])
-        fixed = i >= fixed_start.get(dk, len(rows))
         cond = "k%s_w%s" % (r["k"], r["w"]) + ("_f" + native_thr[dk] if fixed else "")
         out.append({"ctx": (r["dataset"], cond), "label": label_of(r),
                     "rep": r.get("seed_idx", "0"),

@@ -8,13 +8,15 @@ the child gets the CPU affinity LIST and, unless --no-membind, the memory policy
 (set_mempolicy(2) through libc, no privileges or numactl needed; affinity and policy are inherited
 by the step's own children and survive exec). Its exit status is the program's.
 
-While the program runs, the step's process tree is sampled 1 s after the start and then every S
-seconds (default 10; each sample walks the page tables of big processes, so it stays rare) from
-/proc/<pid>/smaps_rollup -- the peak of the summed Rss and AnonHugePages -- and once, after 10 s,
+While the program runs, the step's process tree is sampled 0.5, 1, 2, 4 and 8 s after the start (so that a
+short step, e.g. a classification of a few seconds, is sampled after loading too) and then every S
+seconds (default 10; each sample walks the page tables of big processes, so it stays rare; the next one is
+scheduled from the end of the previous one) from
+/proc/<pid>/smaps_rollup -- the peak of the summed Rss, with the AnonHugePages of that sample -- and once, after 10 s,
 from /proc/<pid>/numa_maps for the share of its anonymous pages on another node. The record
 (--record, JSON) holds: node, cpus, membind, epoch_start/epoch_end (to line up the two slots), the node's
 free and available memory and free 2 MB blocks before the step, peak_rss_gb, peak_anon_huge_gb,
-huge_fraction (= peak AnonHugePages / peak Rss: ~1 when the step's memory came in huge pages, ~0
+huge_fraction (= AnonHugePages / Rss at the peak-Rss sample: ~1 when the step's memory came in huge pages, ~0
 for 4 KB pages, which makes memory-latency-bound steps markedly slower), remote_frac, the mean CPU
 clock of the pinned CPUs, and for steps of 1 s or more: foreign_busy_cores (other processes' busy
 cores on the node's CPUs outside LIST), intruder_busy_cores (busy time on the pinned CPUs beyond
@@ -39,6 +41,8 @@ import pin_cpus
 MPOL_BIND = 2
 SYS_SET_MEMPOLICY = {"x86_64": 238, "aarch64": 237}
 
+
+FIRST_POLL = 0.5   # first memory sample (s); the interval then doubles up to --poll (about 4 extra samples per step)
 
 def bind_memory(node):
     """set_mempolicy(MPOL_BIND, {node}) for the calling process (raises OSError on failure)."""
@@ -126,6 +130,15 @@ def diskstats(dev):
     return None
 
 
+def time_weighted(samples, t_end):
+    """Mean of (time, value) samples, each weighted by the time until the next one (the last: until t_end)."""
+    if not samples:
+        return None
+    ts = [t for t, _ in samples[1:]] + [max(t_end, samples[-1][0])]
+    w = [max(b - a, 1e-3) for (a, _), b in zip(samples, ts)]
+    return round(sum(wi * v for wi, (_, v) in zip(w, samples)) / sum(w))
+
+
 def cpu_mhz(cpus):
     """Mean current clock (MHz) of `cpus` from /proc/cpuinfo, or None."""
     vals, cur = [], None
@@ -207,10 +220,10 @@ def main(argv=None):
         return 127
     # SIGINT reaches the whole process group already; forward SIGTERM (sent to this process only)
     signal.signal(signal.SIGTERM, lambda s, f: proc.send_signal(s))
-    peak_rss = peak_huge = 0
+    peak_rss = peak_huge = huge_at_peak = 0
     remote = None
     mhz = []
-    next_mem = t0 + 1.0                       # first memory sample after 1 s, then every --poll s
+    next_mem = t0 + FIRST_POLL                # memory samples at 0.5, 1, 2, 4, 8 s, then every --poll s
     numa_at = t0 + max(10.0, a.poll)          # one numa_maps sample, once the program runs
     while True:
         now = time.monotonic()
@@ -221,17 +234,20 @@ def main(argv=None):
                 r, h = smaps(p)
                 rss += r
                 huge += h
-            peak_rss, peak_huge = max(peak_rss, rss), max(peak_huge, huge)
+            if rss > peak_rss:
+                peak_rss, huge_at_peak = rss, huge
+            peak_huge = max(peak_huge, huge)
             m = cpu_mhz(cpus)
             if m:
-                mhz.append(m)
+                mhz.append((now, m))
             if node is not None and remote is None and now >= numa_at:
                 lr = [numa_pages(p, node) for p in pids]
                 l, r = sum(x[0] for x in lr), sum(x[1] for x in lr)
                 remote = round(r / float(l + r), 4) if l + r else None
-            next_mem = now + a.poll
+            done = time.monotonic()
+            next_mem = done + min(a.poll, max(FIRST_POLL, now - t0))
         try:
-            proc.wait(timeout=0.5)
+            proc.wait(timeout=max(0.05, min(0.5, next_mem - time.monotonic())))
             break
         except subprocess.TimeoutExpired:
             pass
@@ -242,9 +258,9 @@ def main(argv=None):
     own_cpu = own.ru_utime + own.ru_stime
     rec.update({"rc": proc.returncode, "wall_s": round(wall, 3), "epoch_end": round(time.time(), 3),
                 "peak_rss_gb": round(peak_rss / 1048576.0, 3), "peak_anon_huge_gb": round(peak_huge / 1048576.0, 3),
-                "huge_fraction": round(peak_huge / float(peak_rss), 4) if peak_rss else None,
+                "huge_fraction": round(huge_at_peak / float(peak_rss), 4) if peak_rss else None,
                 "remote_frac": remote,
-                "cpu_mhz": round(sum(mhz) / len(mhz)) if mhz else None,
+                "cpu_mhz": time_weighted(mhz, t0 + wall),
                 "io_device": dev})
     if wall >= 1.0:   # load figures are meaningless over a fraction of a second
         rec["foreign_busy_cores"] = round(busy_seconds(t_before, t_after, others) / wall, 2) if others else None

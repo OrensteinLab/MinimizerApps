@@ -12,6 +12,7 @@
 # Per-run databases (~9.4 GB each, 35 of them) are all kept: export reads hash.k2d (header ->
 # distinct_minimizers, size -> index_size_gb) and opts.k2d, so they cannot be deleted.
 set -uo pipefail
+fail=0   # a failed step is reported and the run goes on; the exit status says so (full_run_all.sh)
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE"
 if [ -z "${KRAKEN2_BENCH_ROOT:-}" ] && [ -f .env ]; then
@@ -25,5 +26,6 @@ echo "results: $KRAKEN2_RESULTS_DIR  $(date -Is)"
 CMD=(./run_benchmark.sh -E -n 5 -t 16 -j 1 -P at0-cg1,at1-cg0
      -S xor xor-pcg-hash greedymini mod-minimizer-xor mod-minimizer-greedymini)
 echo "KRAKEN2_RESULTS_DIR=$KRAKEN2_RESULTS_DIR ${CMD[*]}"
-"${CMD[@]}" || echo "run failed (re-run resumes)" >&2
-echo "=== done $(date -Is)"
+"${CMD[@]}" || { echo "run failed (re-run resumes)" >&2; fail=1; }
+echo "=== done $(date -Is)$([ "$fail" = 0 ] || echo "  (some step failed, see above)")"
+exit "$fail"

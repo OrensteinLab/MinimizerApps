@@ -8,6 +8,7 @@
 # Re-running skips runs that already have a meta.json. The sshash binary must be built with the
 # default nucleotide encoding (GreedyMini needs it): SSHASH_BIN, default <repo>/sshash/build/sshash.
 set -uo pipefail
+fail=0   # a failed step is reported and the run goes on; the exit status says so (full_run_all.sh)
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 cd "$HERE"
@@ -22,6 +23,7 @@ BIN="${SSHASH_BIN:-$REPO/sshash/build/sshash}"
 mkdir -p "$RES"
 echo "results: $RES  binary: $BIN  $(date -Is)"
 ./sshash_bench.sh run -d "${DATASETS:-cod,kestrel,human,ncbi-virus,se,hprc}" -O all -n 5 -t 16 \
-  --sshash "$BIN" --results-dir "$RES" || echo "run failed (re-run resumes)" >&2
-./sshash_bench.sh export --results-dir "$RES" || echo "export failed" >&2
-echo "=== done $(date -Is)"
+  --sshash "$BIN" --results-dir "$RES" || { echo "run failed (re-run resumes)" >&2; fail=1; }
+./sshash_bench.sh export --results-dir "$RES" || { echo "export failed" >&2; fail=1; }
+echo "=== done $(date -Is)$([ "$fail" = 0 ] || echo "  (some step failed, see above)")"
+exit "$fail"

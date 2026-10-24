@@ -60,7 +60,8 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     xlsx = tmp_path / "minimap2_results.xlsx"
     assert check_xlsx(str(xlsx)) == []
     book = load_xlsx(str(xlsx))
-    assert list(book) == ["overview", "orders", "datasets", "summary", "runs", "density_effect", "density_effect_points"]
+    # no fixed-threshold block (-f), so no run is paired with native's and there are no density_effect sheets
+    assert list(book) == ["overview", "orders", "datasets", "summary", "runs"]
     import csv
     runs = list(csv.DictReader((tmp_path / "csvs" / "minimap2_runs.csv").open()))
     assert len(runs) == 10

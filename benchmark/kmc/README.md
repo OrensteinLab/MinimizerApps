@@ -300,7 +300,8 @@ runs/
 | `kmc3_summary.csv` | one per run (per seed) | Raw headline metrics | — |
 | `kmc3_vs_paper.csv` | one per lex run | vs `data/paper_kmc3.csv` (`count_wall_s_ratio` = ours ÷ paper) | `vs_paper` |
 | `kmc3_density_expected_orders.csv` | one per scheme | theoretical expected density, any order (see `python -m scripts expected-density` below) | `orders` |
-| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper` | — |
+| `density_effect_kmc.csv` | one per metric x (all, setting = `dataset/n_bins/threads/mem_limit_gb`) | Pearson r of the metric and the density factor, both as ratios to the default scheme's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
+| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper`, `density_effect`, `density_effect_points` | — |
 
 Re-export only: `benchmark/kmc3_bench.sh export` (or `python3 -m scripts export --results-dir … --paper-platform xeon_hdd|xeon_ssd`).
 

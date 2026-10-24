@@ -282,7 +282,8 @@ runs/
 | `sshash_orders.csv` | one per order variant (k, w, L) | description, CLI, expected + particular density_factor | `orders` |
 | `sshash_summary.csv` | one per dataset x order variant | mean/std across seeds, ratio vs native | `summary` |
 | `sshash_space_breakdown.csv` | one per dataset x order variant | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
-| `sshash_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram` (benchmark/common/xlsx_book.py) | — |
+| `density_effect_sshash.csv` | one per metric x (all, dataset) | Pearson r of the metric and the density factor, both as ratios to native's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
+| `sshash_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram`, `density_effect`, `density_effect_points` (benchmark/common/xlsx_book.py) | — |
 
 Re-export only: `benchmark/sshash/sshash_bench.sh export` (no network needed once local run
 data exists).

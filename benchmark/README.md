@@ -38,7 +38,10 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
      maps `HUGE_GB` with `MADV_HUGEPAGE`, touches it and unmaps it.
 
    Each wait is bounded, so a busy host slows the run down but never stalls it: CPUs `BENCH_LOAD_WAIT` (default
-   3600 s), memory `BENCH_MEM_WAIT` and huge pages `BENCH_HUGE_WAIT` (default 1800 s each). After a timeout the
+   3600 s), memory `BENCH_MEM_WAIT` and huge pages `BENCH_HUGE_WAIT` (default 1800 s each), each counted from
+   when the conditions before it were first met, so a long CPU wait does not use up the memory and huge-page
+   waits. The up to 3 compactions are spread over the huge-page wait (at its start, after a third and after
+   two thirds of it). After a timeout the
    step runs anyway; the `[load] node N: ...` line in the run log says so, and the step record keeps the load
    and memory state, so such steps can be told apart. Without `BENCH_NODE`, a machine-wide gate (fewer than
    `BENCH_LOAD_MAX` busy cores) is used instead. `BENCH_WAIT_LOW_LOAD=0` disables the gate.
@@ -57,8 +60,9 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
    affinity are inherited by the step's children and kept across `exec`, so the program and its page-cache
    reads allocate on its own node only. The gate's memory check is what makes the binding safe.
    `BENCH_MEMBIND=0` falls back to the kernel's local-first policy.
-   - The wrapper's Python start-up and its memory samples (one every 10 s) add a small, constant amount to the
-     step's wall and CPU time.
+   - The wrapper's Python start-up and its memory samples (at 0.5, 1, 2, 4 and 8 s, then one every 10 s) add a
+     small amount to the step's wall and CPU time; a sample reads the page tables, so it costs about 6 ms per GB
+     of 4 KB pages.
    - The kernel's automatic NUMA balancing skips a process bound with `MPOL_BIND`, so bound steps run without
      balancing scans.
 5. **Repeats for every order, baseline included.** Each order runs for each seed in `config.yaml`; minimap2
@@ -76,7 +80,8 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
    - the **step record** (`step_*.json` in the run directory, from `bench_step.py`; columns
      `{step}_node`, `_membind`, `_huge_fraction`, `_remote_frac`, `_foreign_busy_cores`, `_intruder_busy_cores`,
      `_disk_busy_frac`, `_cpu_mhz`, `_free_2mb_gb_before`, `_mem_avail_gb_before`, `_epoch_start`, `_epoch_end`):
-     - `huge_fraction`: peak AnonHugePages / peak Rss of the step's processes, ~1 = huge pages;
+     - `huge_fraction`: AnonHugePages / Rss of the step's processes at their peak Rss (sampled at 0.5, 1, 2,
+       4 and 8 s, then every 10 s, so a step of a few seconds is sampled after loading), ~1 = huge pages;
      - `remote_frac`: share of its anonymous pages on another node, 0 with the binding;
      - `foreign_busy_cores`: other processes' load on the node's unpinned CPUs during the step;
      - `intruder_busy_cores`: busy time on the pinned CPUs beyond the step's own CPU time, i.e. other users'
@@ -129,7 +134,8 @@ RESUME=1 RESULTS_NAME=<name> benchmark/full_run_all.sh       # continue an inter
 ```
 
 - **Refusals and exit status:** it refuses to start in a results directory that already holds runs, refuses an
-  app listed in two slots, and exits 1 if any app failed.
+  app listed in two slots, and exits 1 if any app failed. Within an app's `experiments/full_run.sh` a failed step
+  is reported and the rest still runs (a re-run resumes); the script then exits 1, which counts as that app failing.
 - **Logs:** `<app root>/<RESULTS_NAME>.log`, appended to on `RESUME=1`. Each app's `experiments/full_run.sh` ends
   with its export. The kmc export reuses its expected and per-dataset density caches from `OLD_RESULTS` (default
   `<kmc root>/results`); point it at an archived summary's `csvs/` parent when that directory is gone.
@@ -149,13 +155,33 @@ RESUME=1 RESULTS_NAME=<name> benchmark/full_run_all.sh       # continue an inter
 - The xlsx headers are the CSV headers; the overview sheet has one legend row per column (checked by each
   app's tests).
 
+## How each metric follows the density (`common/density_effect.py`)
+
+Each app's export adds the sheets `density_effect` and `density_effect_points` to its workbook and writes
+`<results dir>/csvs/density_effect_<app>.csv` (by hand: `python common/density_effect.py APP=RESULTS_DIR ...
+[--out WORKBOOK.xlsx]`).
+- **Pairing.** Every run of a non-default scheme is paired with the default scheme's run of the same setting
+  (dataset and its parameters) and seed, i.e. of the same round of the protocol; when the default has several
+  runs there, their mean is used.
+- **Points.** Each pair gives the density factor and the metric as ratios to the default's; the ratios make
+  the datasets comparable, whereas raw values would correlate mostly through the size of the dataset.
+- **Correlation.** Per (app, metric), the Pearson r of the two ratios over the runs of all settings (`all`)
+  and of each setting, with the number of runs and of schemes: r near 1 means that the metric follows the
+  density, near 0 that it does not depend on it.
+- **minimap2.** Only the fixed-threshold block (`-f` = native's threshold) is paired, found by position as in
+  `order_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
+  not make the run comparable. A result set without a fixed block has no `density_effect` sheets.
+
 ## Shared code (`common/`)
 
 | File | Purpose |
 |---|---|
-| `wait_low_load.sh` | wait for a quiet machine before a timed step |
+| `wait_low_load.sh`, `node_gate.py` | wait for a quiet machine / NUMA node before a timed step (CPUs, memory, free 2 MB blocks, compaction) |
+| `bench_step.py`, `step_record.py` | run a timed step pinned and memory-bound, and record its node, huge pages, load and disk; the record's columns |
 | `pin_cpus.sh`, `pin_cpus.py` | CPU pinning: one NUMA node, one thread per core, spare cores |
 | `order_tests.py`, `stats_util.py` | significance tests of order differences; scipy-free t / Welch / Holm |
+| `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
+| `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |
 | `order_names.py`, `orders_sheet.py`, `density.py`, `expected_density_driver.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | order identities and the shared analysis helpers |

@@ -6,7 +6,7 @@
 
 Every run of a non-default scheme is paired with the run of the default scheme of the same setting
 (dataset, ...) and seed (the same round of the interleaved protocol; the mean of the default's runs when
-it has several, as minimap2's two threshold blocks), and gives one point
+it has several; minimap2: only its fixed-threshold block, see ROWS), and gives one point
     x = density factor / density factor of the default - 1,   y = metric / metric of the default - 1,
 the relative changes of the density and of the metric. Per (app, metric) it reports n, the number of
 schemes, and the Pearson r of y and x (r near 1: the metric follows the density; near 0: it does not),
@@ -29,14 +29,16 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from order_tests import minimap2_fixed_block  # noqa: E402
 from xlsx_book import write_book  # noqa: E402
 from xlsx_util import write_csv  # noqa: E402
 
 VARIANT = ("order", "gm_k", "projection", "gm_table", "gm_lut", "mod_t")
 
 # app -> list of (runs csv, setting columns, default order, metrics). A setting is a dataset with its parameters;
-# minimap2's includes the occurrence threshold, so only the runs with the threshold fixed to the default
-# scheme's value have a partner (a derived threshold differs between schemes).
+# minimap2's includes the occurrence threshold, and only its fixed-threshold block (threshold fixed to the
+# default scheme's value) is paired: a derived threshold differs between schemes, and one that happens to
+# equal the default's must not join the fixed block (ROWS picks the block by position, not by value).
 SPEC = {
     "kraken2": [
         ("kraken2_build_runs.csv", ("library",), "xor", ["build_wall_s", "build_max_rss_gb", "index_size_gb"]),
@@ -57,6 +59,10 @@ SPEC = {
           "bench_positive_ns", "bench_negative_ns"]),
     ],
 }
+
+
+# runs csv -> the rows of it that are paired (all rows when absent)
+ROWS = {"minimap2_runs.csv": lambda rows: [r for r, f in zip(rows, minimap2_fixed_block(rows)[0]) if f]}
 
 
 def num(v):
@@ -94,7 +100,8 @@ def points(results, app):
             continue
         with open(path, newline="") as f:
             rows = list(csv.DictReader(f))
-        base = defaultdict(list)   # the default's runs of a setting and seed (minimap2 has two: one per threshold block)
+        rows = ROWS.get(fname, list)(rows)
+        base = defaultdict(list)   # the default's runs of a setting and seed
         for r in rows:
             if r.get("order") == dflt:
                 base[(tuple(r.get(c, "") for c in ctx), r.get("seed_idx"))].append(r)

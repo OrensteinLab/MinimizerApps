@@ -12,6 +12,7 @@
 # (data filesystem) and are removed after every run. Density caches (deterministic, not timings) are
 # copied from the old results' csvs because export only reads them; set OLD_RESULTS to change the source.
 set -uo pipefail
+fail=0   # a failed step is reported and the run goes on; the exit status says so (full_run_all.sh)
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE"
 if [ -z "${KMC3_BENCH_ROOT:-}" ] && [ -f .env ]; then
@@ -34,12 +35,13 @@ common=(-k 28 --input gzip -t 24 --bins 1024 --results-dir "$RES")
 for ds in $DATASETS; do
   echo "=== $ds $(date -Is)"
   NO_EXPORT=1 ./kmc3_bench.sh run -d "$ds" "${common[@]}" -O all -n 5 \
-    || echo "run failed: $ds main (re-run resumes)" >&2
+    || { echo "run failed: $ds main (re-run resumes)" >&2; fail=1; }
   for proj in at0-cg1 at1-cg0; do
     NO_EXPORT=1 ./kmc3_bench.sh run -d "$ds" "${common[@]}" -O greedymini -n 5 \
       --gm-lut binary --projection "$proj" --run-tag gm_proj_n1024_t24 \
-      || echo "run failed: $ds $proj (re-run resumes)" >&2
+      || { echo "run failed: $ds $proj (re-run resumes)" >&2; fail=1; }
   done
 done
-./kmc3_bench.sh export --results-dir "$RES" || echo "export failed" >&2
-echo "=== done $(date -Is)"
+./kmc3_bench.sh export --results-dir "$RES" || { echo "export failed" >&2; fail=1; }
+echo "=== done $(date -Is)$([ "$fail" = 0 ] || echo "  (some step failed, see above)")"
+exit "$fail"
