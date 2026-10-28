@@ -79,6 +79,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
 import density_effect  # noqa: E402
+import significance  # noqa: E402
 from order_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
 from orders_sheet import EXPECTED_FIELDS, missing_cells, orders_fields, particular_fields, span_length, with_klw  # noqa: E402
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib  # noqa: E402
@@ -113,7 +114,9 @@ RUN_FIELDS = [
     "index_size_gb",
     "total_wall_s",
     "build_wall_s", "build_cpu_s", "build_max_rss_gb", "build_major_pagefaults", "build_read_gb",
+    "build_collect_s", "build_collect_pct",
     "map_load_s", "map_run_s", "map_wall_s", "map_cpu_s", "map_max_rss_gb", "map_major_pagefaults", "map_read_gb",
+    "map_prof_sketch_pct", "map_prof_seed_pct", "map_prof_chain_pct", "map_prof_align_pct",
     "frac_mapped", "frac_correct", "frac_incorrectly_mapped", "frac_correct_in_repeat",
     "frac_correct_strict50", "frac_correct_strict50_in_repeat",
     "mean_identity",
@@ -351,6 +354,8 @@ def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]
             row["index_size_gb"] = None
         for step in ("build", "map"):   # node / page-size / foreign-load record (common/bench_step.py)
             row.update(step_record.columns(meta_path.parent / ("step_%s.json" % step), step))
+        row.update(_build_collect(meta_path.parent / "build.log", row.get("build_wall_s")))
+        row.update(_map_profile(meta_path.parent / "map_profile.log"))
         rows.append(row)
     return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r), int(r.get("seed_idx") or 0)))
 
@@ -365,6 +370,34 @@ def attach_sketch_density(runs: list[dict], n_kmers: dict[str, int]) -> None:
         distinct, avg_occ, w = _num(r.get("distinct_minimizers")), _num(r.get("avg_occurrences")), _num(r.get("w"), int)
         if n_sk and distinct and avg_occ and w:
             r["density_factor"] = round(distinct * avg_occ * (w + 1) / n_sk, 6)
+
+
+def _build_collect(build_log: Path, build_wall_s) -> dict:
+    """Seconds of the index build until minimap2 has collected the selected k-mers of the reference
+    (its own '[M::mm_idx_gen::<elapsed>*<cpu>] collected minimizers' stamp: reading and sketching the
+    genome, mostly one thread), and their share of the build's wall time."""
+    out = {"build_collect_s": None, "build_collect_pct": None}
+    if build_log.is_file():
+        m = re.search(r"mm_idx_gen::([0-9.]+)\*[0-9.]+\] collected minimizers", build_log.read_text(errors="replace"))
+        if m:
+            out["build_collect_s"] = float(m.group(1))
+            if build_wall_s:
+                out["build_collect_pct"] = round(100.0 * float(m.group(1)) / float(build_wall_s), 2)
+    return out
+
+
+def _map_profile(log: Path) -> dict:
+    """Mapping phase shares from experiments/profile_run.sh (minimap2 built with -DMM_PHASE_PROF, -t 1,
+    map_profile.log): % of mm_map_frag_core's time spent computing the selected k-mers of the reads
+    (sketch), collecting their hits in the index (seed), chaining, and aligning."""
+    out = {k: None for k in ("map_prof_sketch_pct", "map_prof_seed_pct", "map_prof_chain_pct", "map_prof_align_pct")}
+    if log.is_file():
+        m = re.search(r"\[M::PHASE\].*?sketch_pct=([0-9.]+) seed_pct=([0-9.]+) chain_pct=([0-9.]+) align_pct=([0-9.]+)",
+                      log.read_text(errors="replace"))
+        if m:
+            for key, val in zip(out, m.groups()):
+                out[key] = float(val)
+    return out
 
 
 def _map_log_mid_occ(map_log: Path) -> int | None:
@@ -791,6 +824,8 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("summary/runs", "total_wall_s", "build_wall_s + map_wall_s: end-to-end cost of one run"),
         row("summary/runs", "build_wall_s / build_max_rss_gb", f"index build (minimap2 -d -x <preset> -k <k> -w 10 -t {threads}; runs sheet: threads): wall time and peak memory (decimal GB, 1 GB = 10^9 bytes; /usr/bin/time's KiB converted via bytes), from /usr/bin/time -v"),
         row("summary/runs", "build_cpu_s / map_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / map step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
+        row("runs", "build_collect_s / build_collect_pct", "index build: seconds until minimap2 has collected the selected k-mers of the reference (its own 'collected minimizers' elapsed stamp in build.log: reading and sketching the genome, mostly one thread), and their % of build_wall_s; the rest is sorting the selected k-mers, building the hash tables and writing the index"),
+        row("runs", "map_prof_sketch_pct / map_prof_seed_pct / map_prof_chain_pct / map_prof_align_pct", "profiling run only (experiments/profile_run.sh: minimap2 built with -DMM_PHASE_PROF, one thread, a sample of the reads, the fixed threshold; map_profile.log; blank otherwise): % of the mapping time spent computing the selected k-mers of the reads, collecting their hits in the index (seeds -> anchors), chaining, and aligning (including chain post-processing after the strand filter)"),
         row("summary/runs", "map_load_s / map_run_s", "map_wall_s split: seconds minimap2 spent loading the prebuilt index (its own 'loaded/built the index' elapsed stamp; meta.json key index_load_s) and the remainder (reads, seeding, chaining, alignment, output); map_run_s is the index-independent mapping time"),
         row("runs", "build_major_pagefaults / build_read_gb / map_major_pagefaults / map_read_gb", "disk I/O each step needed (/usr/bin/time -v): major (I/O) page faults and file-system reads in decimal GB (512-byte blocks); ~0 = served from the page cache, so timings with different values are not directly comparable."),
         row("runs", "build_pinned_cpus / map_pinned_cpus", "CPU list the build / map step was pinned to (meta.json build.pinned_cpus / map.pinned_cpus; older runs: cpus_build.txt / cpus_map.txt in the run directory), e.g. 2,6,10. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus"),
@@ -973,6 +1008,7 @@ def main(argv=None) -> int:
                footer_rows=correlation_rows(summary_fields, summary, CORRELATION_DRIVERS)),
         _sheet("runs", RUN_FIELDS, runs, **_block_opts(RUN_FIELDS)),
         *density_effect.sheets("minimap2", csvs_dir.parent),
+        *significance.sheets("minimap2", csvs_dir.parent),
     ])
     print(f"wrote {xlsx_dir / 'minimap2_results.xlsx'}")
     return 0

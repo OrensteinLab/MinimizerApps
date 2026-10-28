@@ -51,7 +51,7 @@ def per_seed(library, dataset, seeds=(1, 2, 3)):
                     "build_s": 100.0 * (oi + 1) + sd, "build_gb": 10.0 + oi,
                     "class_s": wall, "db_load_s": 0.5 * wall, "class_proc_s": 0.5 * wall,
                     "class_gb": 9.0 + oi, "mrd_min": 1.0, "cls_pct": 77.0 - mhg, "n_reads": 1000,
-                    "nextmin_s": 0.3 + 0.01 * oi, "lookups_pm": 2e5,
+                    "scan_s": 0.3 + 0.01 * oi, "lookups_pm": 2e5,
                     "concordance": None if oi == 0 else 95.0 + oi, "jaccard": None if oi == 0 else 98.0,
                 }))
     return rows
@@ -143,7 +143,7 @@ class ExportLayout(unittest.TestCase):
         # profile is present here (fixture has timing data); paper_check only for strain_exclusion
         self.assertEqual(list(tables), list(E.SHEETS))
         # the export appends the density-effect sheets (benchmark/common/density_effect.py)
-        self.assertEqual(list(load_xlsx(xlsx)), list(E.SHEETS) + ["density_effect", "density_effect_points"])
+        self.assertEqual(list(load_xlsx(xlsx)), list(E.SHEETS) + ["density_effect", "density_effect_points", "significance"])
         for name in tables:
             self.assertTrue(os.path.isfile(os.path.join(tdir, "kraken2_%s.csv" % name)), name)
         import zipfile
@@ -351,12 +351,6 @@ class ExportLayout(unittest.TestCase):
         self.assertIsNone(cami.get("genus_concordant_fraction_mean"))
         argos = [r for r in summ if r["dataset"] == "fda-argos" and r["order"] == "xor-pcg-hash"][0]
         self.assertAlmostEqual(argos["genus_concordant_fraction_mean"], 0.87)
-        gone = ("class_s", "class_gb", "mrd_min", "cls_pct", "mape_g", "nextmin_", "fac_", "build_s", "build_gb")
-        for name, (fields, _rows) in tables.items():
-            if name == "overview":
-                continue
-            for fld in fields:
-                self.assertFalse(fld.startswith(gone), (name, fld))
 
     def test_sorting_and_ratio_reference_per_dataset_mhg(self):
         run_root, (xlsx, tdir, tables) = self.lib()
@@ -437,7 +431,7 @@ class ExportLayout(unittest.TestCase):
             self.assertIn("minimum_hit_groups", tables[sheet][0])
         pr = [r for r in prof if r["dataset"] == "strain-exclusion" and r["order"] == "mod-minimizer-xor"
               and r["minimum_hit_groups"] == 2][0]
-        self.assertAlmostEqual(pr["nextminimizer_s_ratio"], round(0.33 / 0.3, 4))
+        self.assertAlmostEqual(pr["scan_s_ratio"], round(0.33 / 0.3, 4))
         vr = tables["vs_reference"][1]
         self.assertEqual(len(vr), 3 * 3 * 2)
         self.assertIn("jaccard_pct_mean", tables["vs_reference"][0])

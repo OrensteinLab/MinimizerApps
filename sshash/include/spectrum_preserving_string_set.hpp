@@ -36,6 +36,13 @@ struct spectrum_preserving_string_set  //
         and larger buckets are too rare to be worth a bigger cache.
         Buckets whose minimizer is not found are never cached (size = 0).
     */
+#ifdef SSHASH_PROFILE
+    /* Profiling build (-DSSHASH_PROFILE=On): lookups that decode a bucket, the positions they
+       decode, and the calls and positions verified against the text (also from the bucket cache). */
+    static inline thread_local uint64_t prof_full_lookups = 0, prof_decoded_positions = 0,
+                                        prof_verify_calls = 0, prof_verified_positions = 0;
+#endif
+
     struct bucket_cache {
         static constexpr uint64_t max_cached_size = 8;
         uint64_t size = 0;  // 0 = nothing cached
@@ -50,6 +57,10 @@ struct spectrum_preserving_string_set  //
     {
         const uint64_t size = it.size();
         assert(size > 0);
+#ifdef SSHASH_PROFILE
+        prof_full_lookups += 1;
+        prof_decoded_positions += size;
+#endif
 
         static thread_local  //
             std::array<typename Offsets::decoded_offset, 1ULL << constants::min_l>
@@ -108,6 +119,10 @@ struct spectrum_preserving_string_set  //
                                         const Kmer kmer, const Kmer kmer_rc,                //
                                         const minimizer_info mini_info) const               //
     {
+#ifdef SSHASH_PROFILE
+        prof_verify_calls += 1;
+        prof_verified_positions += size;
+#endif
         lookup_result res;
         for (uint64_t i = 0; i != size; ++i) {
             if (_lookup(res, positions[i], kmer, kmer_rc, mini_info)) return res;

@@ -4,3 +4,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Profiling builds (benchmark/*/experiments/profile_run.sh)
+build-prof/

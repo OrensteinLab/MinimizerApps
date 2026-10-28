@@ -22,6 +22,11 @@ else()
   MESSAGE(STATUS "SSHash uses a maximum kmer length of 31")
 endif()
 
+if (SSHASH_PROFILE)
+  MESSAGE(STATUS "SSHash counts lookups and the positions they decode and verify (profiling build)")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSSHASH_PROFILE")
+endif()
+
 if (SSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING)
   MESSAGE(STATUS "SSHash maps {'A','a'}->0, {'C','c'}->1, {'G','g'}->2, and {'T','t'}->3")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING")

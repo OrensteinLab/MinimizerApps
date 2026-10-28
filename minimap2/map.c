@@ -228,6 +228,24 @@ static mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *k
 	return regs;
 }
 
+#ifdef MM_PHASE_PROF
+/* Profiling build (make CFLAGS+=-DMM_PHASE_PROF; benchmark/minimap2/experiments/profile_run.sh):
+ * wall time of the phases of mm_map_frag_core, summed over reads and printed at exit. Meaningful
+ * with -t 1 (the sums are not thread-safe). */
+#include <time.h>
+static double mm_prof_t[4];
+static inline double mm_prof_now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec * 1e-9; }
+__attribute__((destructor)) static void mm_prof_report(void)
+{
+	double s = mm_prof_t[0] + mm_prof_t[1] + mm_prof_t[2] + mm_prof_t[3];
+	if (s > 0) fprintf(stderr, "[M::PHASE] sketch_s=%.3f seed_s=%.3f chain_s=%.3f align_s=%.3f sketch_pct=%.2f seed_pct=%.2f chain_pct=%.2f align_pct=%.2f\n",
+		mm_prof_t[0], mm_prof_t[1], mm_prof_t[2], mm_prof_t[3], 100*mm_prof_t[0]/s, 100*mm_prof_t[1]/s, 100*mm_prof_t[2]/s, 100*mm_prof_t[3]/s);
+}
+#define MM_PROF_MARK(v) double v = mm_prof_now()
+#else
+#define MM_PROF_MARK(v)
+#endif
+
 void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const char **seqs, int *n_regs, mm_reg1_t **regs, mm_tbuf_t *b, const mm_mapopt_t *opt, const char *qname)
 {
 	int i, j, rep_len, qlen_sum, n_regs0, n_mini_pos;
@@ -251,10 +269,13 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 	hash ^= __ac_Wang_hash(qlen_sum) + __ac_Wang_hash(opt->seed);
 	hash  = __ac_Wang_hash(hash);
 
+	MM_PROF_MARK(pt0);
 	collect_minimizers(b->km, opt, mi, n_segs, qlens, seqs, &mv);
+	MM_PROF_MARK(pt1);
 	if (opt->q_occ_frac > 0.0f) mm_seed_mz_flt(b->km, &mv, opt->mid_occ, opt->q_occ_frac);
 	if (opt->flag & MM_F_HEAP_SORT) a = collect_seed_hits_heap(b->km, opt, opt->mid_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
 	else a = collect_seed_hits(b->km, opt, opt->mid_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
+	MM_PROF_MARK(pt2);
 
 	if (mm_dbg_flag & MM_DBG_PRINT_SEED) {
 		fprintf(stderr, "RS\t%d\n", rep_len);
@@ -338,6 +359,7 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 		mm_est_err(mi, qlen_sum, n_regs0, regs0, a, n_mini_pos, mini_pos);
 		n_regs0 = mm_filter_strand_retained(n_regs0, regs0);
 	}
+	MM_PROF_MARK(pt3);
 
 	if (n_segs == 1) { // uni-segment
 		regs0 = align_regs(opt, mi, b->km, qlens[0], seqs[0], &n_regs0, regs0, a);
@@ -358,6 +380,12 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 			mm_pair(b->km, max_chain_gap_ref, opt->pe_bonus, opt->a * 2 + opt->b, opt->a, qlens, n_regs, regs); // pairing
 	}
 
+#ifdef MM_PHASE_PROF
+	{
+		MM_PROF_MARK(pt4);
+		mm_prof_t[0] += pt1 - pt0, mm_prof_t[1] += pt2 - pt1, mm_prof_t[2] += pt3 - pt2, mm_prof_t[3] += pt4 - pt3;
+	}
+#endif
 	kfree(b->km, mv.a);
 	kfree(b->km, a);
 	kfree(b->km, u);

@@ -386,8 +386,8 @@ perf_name() {
     echo "classification_performance_${1}_mhg${2}.txt"
 }
 
-nextmin_name() {
-    echo "nextminimizer_timing_${1}_mhg${2}.txt"
+profile_name() {
+    echo "classify_profile_${1}_mhg${2}.txt"
 }
 
 class_out_name() {
@@ -505,25 +505,25 @@ parse_classified_pct() {
     fi
 }
 
-# One classify run. Args: time_file nextmin_file class_out report_out r1 r2 mhg.
+# One classify run. Args: time_file profile_file class_out report_out r1 r2 mhg.
 # time_file receives the classify stderr (summary lines) followed by GNU time -v.
-# nextmin_file is written by ENABLE_MINIMIZER_PROF builds only (via
+# profile_file is written by ENABLE_MINIMIZER_PROF builds only (via
 # KRAKEN2_MINIMIZER_PROF); it is removed again when the binary did not emit it.
 classify_once() {
     local time_file="$1"
-    local nextmin_file="$2"
+    local profile_file="$2"
     local class_out="$3"
     local report_out="$4"
     local r1="$5"
     local r2="$6"
     local mhg="$7"
-    rm -f "${nextmin_file}"
+    rm -f "${profile_file}"
     # classify runs --threads 1 (one worker plus the reader), so it is pinned to 2 CPUs; it is a
     # stream of random hash-table lookups, fast only when the table sits in huge pages
     wait_low_load 16 12 4
     bench_pin_cpus 2 "${time_file%.txt}_step.json"
     printf '%s\n' "${BENCH_PIN_LIST}" > "${time_file%.txt}_cpus.txt"
-    env KRAKEN2_MINIMIZER_PROF="${nextmin_file}" \
+    env KRAKEN2_MINIMIZER_PROF="${profile_file}" \
         "${TIME_BIN}" -v ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "${K2:-k2}" classify \
         --db "${DB_DIR}" \
         --threads 1 \
@@ -533,7 +533,7 @@ classify_once() {
         --report "${report_out}" \
         "${r1}" "${r2}" \
         2> "${time_file}"
-    [[ -s "${nextmin_file}" ]] || rm -f "${nextmin_file}"
+    [[ -s "${profile_file}" ]] || rm -f "${profile_file}"
 }
 
 # Print a wall/RSS table for one (seed, dataset, mhg) across schemes (stdout only).
@@ -557,7 +557,7 @@ log_classify_table() {
 
 clear_scheme_classify_outputs() {
     rm -f "${OUTPUT_DIR}"/classification_performance_*_mhg*.txt
-    rm -f "${OUTPUT_DIR}"/nextminimizer_timing_*_mhg*.txt
+    rm -f "${OUTPUT_DIR}"/classify_profile_*_mhg*.txt
 }
 
 build_seed_scheme() {
@@ -622,7 +622,7 @@ shuffle_array() {
 # first-/last-position (page-cache, drift) bias.
 classify_seed() {
     local seed_idx="$1"
-    local ds mhg scheme time_file nextmin_file class_out report_out
+    local ds mhg scheme time_file profile_file class_out report_out
     local wall rss class_pct r1 r2
     local -a row=()
     local -a schemes
@@ -642,9 +642,9 @@ classify_seed() {
                 class_out="${OUTPUT_DIR}/$(class_out_name "${ds}" "${mhg}")"
                 report_out="${OUTPUT_DIR}/$(report_out_name "${ds}" "${mhg}")"
                 time_file="${OUTPUT_DIR}/$(perf_name "${ds}" "${mhg}")"
-                nextmin_file="${OUTPUT_DIR}/$(nextmin_name "${ds}" "${mhg}")"
+                profile_file="${OUTPUT_DIR}/$(profile_name "${ds}" "${mhg}")"
                 echo "    ${SCHEME} (${ds}, mhg ${mhg}) ..."
-                if ! classify_once "${time_file}" "${nextmin_file}" \
+                if ! classify_once "${time_file}" "${profile_file}" \
                         "${class_out}" "${report_out}" "${r1}" "${r2}" "${mhg}"; then
                     echo "Error: k2 classify failed for ${SCHEME_CONTEXT} ${ds} (mhg ${mhg})" >&2
                     return 1
