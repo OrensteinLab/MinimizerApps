@@ -101,7 +101,7 @@ int build(int argc, char** argv) {
         build_config.gm_proj = parse_gm_projection(parser.get<std::string>("gm_projection"));
         if (build_config.gm_proj != gm_projection::AT0_CG1 and
             !is_gm_mode(build_config.scheme)) {
-            std::cerr << "Error: --gm-projection at1-cg0 requires a GreedyMini order" << std::endl;
+            std::cerr << "Error: --gm-projection at1-cg0 requires a GreedyMini scheme" << std::endl;
             return 1;
         }
     }
@@ -113,13 +113,13 @@ int build(int argc, char** argv) {
     if (parser.parsed("mod_t")) build_config.mod_t = parser.get<uint64_t>("mod_t");
     if (is_mod_mode(build_config.scheme) != (build_config.mod_t != 0)) {
         std::cerr << "Error: --mod-t is required by, and only valid with, the mod-minimizer "
-                     "orders (mod-minimizer-xor, mod-minimizer-greedymini)"
+                     "schemes (mod-minimizer-xor, mod-minimizer-greedymini)"
                   << std::endl;
         return 1;
     }
     build_config.regular_parsing = parser.get<bool>("regular_parsing");
     if (build_config.regular_parsing and is_mod_mode(build_config.scheme)) {
-        std::cerr << "Error: --regular does not apply to the mod-minimizer orders" << std::endl;
+        std::cerr << "Error: --regular does not apply to the mod-minimizer schemes" << std::endl;
         return 1;
     }
 

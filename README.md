@@ -58,5 +58,4 @@ its data and how to run it.
 - **How the orders and the mod-minimizer are implemented, and how each method breaks ties:** [`common/minimizer-schemes/README.md`](common/minimizer-schemes/README.md).
 - **The measurement protocol, the full benchmark run and the workbook columns:** [`benchmark/README.md`](benchmark/README.md).
 - **The analyses:** also in [`benchmark/README.md`](benchmark/README.md): significance tests of scheme differences, how closely each metric follows the density, the profiling runs, and the run-to-run stability of two result sets.
-- **Result sets made before the order -> scheme renaming:** `benchmark/common/migrate_scheme_names.py` migrates them; see [`benchmark/README.md`](benchmark/README.md).
 - **Running one method's benchmark, its datasets and its outputs:** `benchmark/<method>/README.md`.

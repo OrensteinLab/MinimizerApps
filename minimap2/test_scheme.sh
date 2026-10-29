@@ -82,7 +82,7 @@ for o in $ALL_TEST_SCHEMES; do
 	fi
 done
 
-echo "== 4. split (-I) multi-part .mmi round-trip (order metadata written once, reused by later parts) =="
+echo "== 4. split (-I) multi-part .mmi round-trip (scheme metadata written once, reused by later parts) =="
 o=mod-minimizer-xor
 f=$(scheme_flags "$o")
 $BIN -a $f "$REF" "$QRY" > "$TMP/split_direct.sam" 2>/dev/null

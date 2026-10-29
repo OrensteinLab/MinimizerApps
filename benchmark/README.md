@@ -220,7 +220,6 @@ minimizers" stamp).
 | `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
 | `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Holm, TOST (the `significance` sheet) |
 | `mirror_results.py` | mirror a result set (large files hard-linked, small ones copied) for the profiling scripts |
-| `migrate_scheme_names.py` | migrate a result set made before the order -> scheme renaming (meta.json keys, recorded app flags, CSV names and columns); re-export after it |
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |

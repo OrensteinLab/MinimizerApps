@@ -1,4 +1,4 @@
-// Tests of the strand-symmetric mod-minimizer orders (mod-minimizer-xor, mod-minimizer-greedymini):
+// Tests of the strand-symmetric mod-minimizer schemes (mod-minimizer-xor, mod-minimizer-greedymini):
 // util::compute_mod_minimizer against a string-level reference of the definition, the
 // mirror-equivariance a single-probe lookup needs, and mod_minimizer_iterator against
 // util::compute_minimizer over whole sequences (with resets).

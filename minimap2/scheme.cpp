@@ -545,21 +545,21 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 	}
 	const bool mod = is_mod_kind(conf->kind);
 	if (mod && (conf->t <= 0 || conf->t >= conf->k)) {
-		set_err(errbuf, errbuf_len, "mod-minimizer order requires 0 < --mod-t < -k");
+		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires 0 < --mod-t < -k");
 		return nullptr;
 	}
 	if (mod && !mod_rule::t_is_canonical(conf->k, conf->w, conf->t)) {
-		set_err(errbuf, errbuf_len, "mod-minimizer order requires --mod-t == -k (mod -w) (the centre tie rule)");
+		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires --mod-t == -k (mod -w) (the centre tie rule)");
 		return nullptr;
 	}
 	if (!mod && conf->t != 0) {
-		set_err(errbuf, errbuf_len, "--mod-t given but the chosen order is not a mod-minimizer order");
+		set_err(errbuf, errbuf_len, "--mod-t given but the chosen scheme is not a mod-minimizer scheme");
 		return nullptr;
 	}
 	std::shared_ptr<const GreedyMiniTable> gm;
 	if (needs_gm_kind(conf->kind)) {
 		if (!conf->greedymini_file || !*conf->greedymini_file) {
-			set_err(errbuf, errbuf_len, "greedymini order requires --greedymini-file");
+			set_err(errbuf, errbuf_len, "greedymini scheme requires --greedymini-file");
 			return nullptr;
 		}
 		try {
@@ -573,11 +573,11 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 			return nullptr;
 		}
 	} else if (conf->greedymini_file && *conf->greedymini_file) {
-		set_err(errbuf, errbuf_len, "--greedymini-file given but the chosen order does not use a GreedyMini table");
+		set_err(errbuf, errbuf_len, "--greedymini-file given but the chosen scheme does not use a GreedyMini table");
 		return nullptr;
 	}
 	if (conf->gm_projection != MM_GM_PROJ_AT0_CG1 && !needs_gm_kind(conf->kind)) {
-		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini order");
+		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini scheme");
 		return nullptr;
 	}
 	mm_scheme_t *ord = new (std::nothrow) mm_scheme_t();
@@ -597,20 +597,20 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 extern "C" int mm_scheme_validate(const mm_scheme_t *ord, int k, int w, char *errbuf, size_t errbuf_len)
 {
 	char msg[160];
-	if (!ord) { set_err(errbuf, errbuf_len, "null order"); return -1; }
+	if (!ord) { set_err(errbuf, errbuf_len, "null scheme"); return -1; }
 	if (k <= 0 || k > 28) { // native mm_sketch()'s own bound
-		std::snprintf(msg, sizeof msg, "custom minimizer orders support -k up to 28 (got %d)", k);
+		std::snprintf(msg, sizeof msg, "custom minimizer schemes support -k up to 28 (got %d)", k);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
 	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k || !mod_rule::t_is_canonical(k, w, ord->t))) {
-		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k and t == k (mod w) (t = %d, k = %d, w = %d)", ord->t, k, w);
+		std::snprintf(msg, sizeof msg, "mod-minimizer scheme requires 0 < t < k and t == k (mod w) (t = %d, k = %d, w = %d)", ord->t, k, w);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
 	if (needs_gm_kind(ord->kind) != (ord->gm != nullptr)) {
-		set_err(errbuf, errbuf_len, needs_gm_kind(ord->kind) ? "greedymini order without a GreedyMini table"
-		                                                     : "GreedyMini table given for an order that does not use one");
+		set_err(errbuf, errbuf_len, needs_gm_kind(ord->kind) ? "greedymini scheme without a GreedyMini table"
+		                                                     : "GreedyMini table given for a scheme that does not use one");
 		return -1;
 	}
 	if (ord->gm && (!ord->gm_order || ord->gm_l != k)) {
@@ -746,21 +746,21 @@ extern "C" mm_scheme_t *mm_scheme_load(FILE *fp, char *errbuf, size_t errbuf_len
 	if (errbuf && errbuf_len) errbuf[0] = '\0';
 	uint64_t len = 0;
 	if (std::fread(&len, sizeof len, 1, fp) != 1 || len == 0) {
-		set_err(errbuf, errbuf_len, "truncated order metadata");
+		set_err(errbuf, errbuf_len, "truncated scheme metadata");
 		return nullptr;
 	}
 	SectionReader in{fp, len};
 	uint32_t kind32; uint64_t seed; int32_t t32; uint8_t has_gm;
 	if (!in.get(&kind32, sizeof kind32) || !in.get(&seed, sizeof seed) || !in.get(&t32, sizeof t32) || !in.get(&has_gm, sizeof has_gm)) {
-		set_err(errbuf, errbuf_len, "truncated order metadata");
+		set_err(errbuf, errbuf_len, "truncated scheme metadata");
 		return nullptr;
 	}
 	if (!valid_kind(kind32) || kind32 == MM_SCHEME_NATIVE) {
-		set_err(errbuf, errbuf_len, "index was built with a minimizer order this binary no longer supports; rebuild it");
+		set_err(errbuf, errbuf_len, "index was built with a minimizer scheme this binary no longer supports; rebuild it");
 		return nullptr;
 	}
 	if (has_gm != (needs_gm_kind((mm_scheme_kind_t)kind32) ? 1 : 0)) {
-		set_err(errbuf, errbuf_len, "corrupt order metadata (GreedyMini table flag does not match the order)");
+		set_err(errbuf, errbuf_len, "corrupt scheme metadata (GreedyMini table flag does not match the scheme)");
 		return nullptr;
 	}
 
@@ -792,7 +792,7 @@ extern "C" mm_scheme_t *mm_scheme_load(FILE *fp, char *errbuf, size_t errbuf_len
 	if (in.left >= sizeof gm_l) in.get(&gm_l, sizeof gm_l);
 	uint8_t mod_rule_id = 0; // absent: written before the centre tie rule
 	if (in.left >= sizeof mod_rule_id) in.get(&mod_rule_id, sizeof mod_rule_id);
-	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated order metadata"); return nullptr; }
+	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated scheme metadata"); return nullptr; }
 	if (is_mod_kind((mm_scheme_kind_t)kind32) && mod_rule_id != kModTieRuleCentre) {
 		set_err(errbuf, errbuf_len, "mod-minimizer index built with the retired G/T-strand tie rule; rebuild it");
 		return nullptr;
