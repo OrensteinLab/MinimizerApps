@@ -79,12 +79,12 @@ GM_SECTIONS = {
 }
 
 
-def gm_choices(order: str) -> tuple[list[str], list[str]]:
-    """(tables, projections) config.yaml registers for a GreedyMini order
+def gm_choices(scheme: str) -> tuple[list[str], list[str]]:
+    """(tables, projections) config.yaml registers for a GreedyMini scheme
     ("greedymini" or "mod-minimizer-greedymini"): table file names under
     paths.gm_dir and --gm-projection values. Each (table, projection) pair is one
-    variant of the order (its own gm_k / gm_table / projection fields)."""
-    sec = _cfg().get(GM_SECTIONS[order], {}) or {}
+    variant of the scheme (its own gm_k / gm_table / projection fields)."""
+    sec = _cfg().get(GM_SECTIONS[scheme], {}) or {}
     tables = [str(t) for t in (sec.get("tables") or [])]
     projections = [str(p) for p in (sec.get("projections") or ["at0-cg1"])]
     return tables, projections

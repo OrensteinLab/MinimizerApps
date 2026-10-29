@@ -2,7 +2,7 @@
 # Full benchmark of all four apps (measurement protocol: benchmark/README.md). The apps run in SLOTS,
 # one slot per NUMA node, the slots in parallel and the apps of a slot one after the other; every
 # timed step of an app runs on its slot's node (CPUs chosen there, memory bound to it, node-local
-# gate: common/pin_cpus.sh, bench_step.py, wait_low_load.sh), so all orders of an app are measured
+# gate: common/pin_cpus.sh, bench_step.py, wait_low_load.sh), so all schemes of an app are measured
 # under the same node. The two slots share no cores, L3 cache, memory controller or memory; they do
 # share the disk (/localdata) and the interconnect, which the step records track (disk_busy_frac,
 # start/end epochs):
@@ -16,7 +16,7 @@
 # about the same time, and kraken2's disk-heavy builds overlap only kmc's small datasets.
 #
 # Refuses to start into a results directory that already holds runs: a rerun must not mix runs made
-# under other conditions (another protocol or another version of an order) with the new ones. After an
+# under other conditions (another protocol or another version of a scheme) with the new ones. After an
 # interruption set RESUME=1 to continue the same directory (finished runs are skipped; the app logs
 # are appended to). The kernel settings the timings depend on (THP, NUMA balancing, zone reclaim)
 # and the commit are written to <results>/host_settings.txt. Exits 1 if any app failed.

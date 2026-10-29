@@ -4,19 +4,19 @@
 // load_dna_gm_file/KMC_DNA_GM_MAGIC for the reader).
 //
 // This is a KMC-specific artifact, not the same as kraken2's DNA-alphabet
-// .gm tables (see common/minimizer-orders/greedymini_rank.h's header
+// .gm tables (see common/minimizer-schemes/greedymini_rank.h's header
 // comment) -- but it's built from the same shared AT/CG-key and
 // reverse-complement primitives kmc's own runtime uses, via
-// common/minimizer-orders/greedymini_rank.h and dna_revcomp.h, so this tool
+// common/minimizer-schemes/greedymini_rank.h and dna_revcomp.h, so this tool
 // and kmc_api/mmer.h can never compute the DNA key / reverse complement
 // differently from each other.
 //
 // (Extend-k here is kmc's prefix extension; kraken2 and sshash extend a
 // binary table to longer l with the centre extension of
-// common/minimizer-orders/greedymini_centre.h instead.)
+// common/minimizer-schemes/greedymini_centre.h instead.)
 
-#include "../../../common/minimizer-orders/greedymini_rank.h"
-#include "../../../common/minimizer-orders/dna_revcomp.h"
+#include "../../../common/minimizer-schemes/greedymini_rank.h"
+#include "../../../common/minimizer-schemes/dna_revcomp.h"
 
 #include <algorithm>
 #include <cstdint>

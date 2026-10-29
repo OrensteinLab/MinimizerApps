@@ -1,6 +1,6 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -std=c++11
-COMMON := ../../../common/minimizer-orders
+COMMON := ../../../common/minimizer-schemes
 KMC_API := ../../../kmc/kmc_api
 
 .PHONY: all clean

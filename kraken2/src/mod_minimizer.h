@@ -14,7 +14,7 @@
  * MINIMIZER+GM on ℓ-mers.
  *
  * Plain mod-sampling is not strand-symmetric, so on DNA this sampler uses the
- * canonical variant of common/minimizer-orders/mod_minimizer_rule.h (the same
+ * canonical variant of common/minimizer-schemes/mod_minimizer_rule.h (the same
  * rule as the minimap2 and sshash forks' mod-minimizers): t == l (mod w), so
  * the offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in
  * the reverse complement correspond; a unique minimum samples its offset, and
@@ -33,7 +33,7 @@
 #include "minimizer_rankers.h"
 #include "sketching_schemes.h"
 #include "dna_kmer.h"
-#include "../../common/minimizer-orders/mod_minimizer_rule.h"
+#include "../../common/minimizer-schemes/mod_minimizer_rule.h"
 
 #include <cstdint>
 #include <memory>

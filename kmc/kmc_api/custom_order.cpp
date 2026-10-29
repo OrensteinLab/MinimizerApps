@@ -1,6 +1,6 @@
 #include "custom_order.h"
 #include "mmer.h"
-#include "../../common/minimizer-orders/pcg_rxs_m_xs.h"
+#include "../../common/minimizer-schemes/pcg_rxs_m_xs.h"
 
 #include <algorithm>
 #include <fstream>
@@ -178,7 +178,7 @@ void load_dna_gm_file(const std::string& path, uint64_t& seed, uint32_t& k)
 }
 
 // Classic .gm format ([u64 len][len x u64]); shared with kraken2's own
-// GreedyMini table loader (common/minimizer-orders/greedymini_rank.h).
+// GreedyMini table loader (common/minimizer-schemes/greedymini_rank.h).
 std::vector<uint64_t> load_gm_file(const std::string& path)
 {
 	auto ranks = load_gm_file_raw(path);

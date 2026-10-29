@@ -6,7 +6,7 @@ defaults:
   datasets: f_vesca
   k: 28
   input: gzip
-  signature_order: greedymini
+  scheme: greedymini
   signature_len: 9
   n_seeds: 1
   force: true

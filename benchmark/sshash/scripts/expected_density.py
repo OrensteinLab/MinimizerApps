@@ -1,4 +1,4 @@
-"""Theoretical expected density_factor for every sshash order variant (native,
+"""Theoretical expected density_factor for every sshash scheme variant (native,
 xor, xor-pcg-hash, greedymini and mod-minimizer-* per table/projection), via Monte Carlo simulation
 on an i.i.d. uniform-random DNA stream -- not measured on any real dataset.
 Thin adapter over benchmark/common/expected_density_driver.py (loop, mean/std,
@@ -13,8 +13,8 @@ statistical behavior as a random order (see density.py:native_hash's
 docstring), but it's still varied across seeds here for a fair
 apples-to-apples comparison.
 
-Feeds the `orders` xlsx sheet's expected_density_factor_mean/std columns (see
-scripts/export.py); cached to sshash_density_expected_orders.csv since it's
+Feeds the `schemes` xlsx sheet's expected_density_factor_mean/std columns (see
+scripts/export.py); cached to sshash_density_expected_schemes.csv since it's
 independent of any actual benchmark run (a pure function of m/w + the seed
 list) and each simulation costs real Monte Carlo time.
 """
@@ -33,9 +33,9 @@ from scripts.density import (
     mod_sampling_runs,
     native_hash,
 )
-import order_names as on
+import scheme_names as sn
 from scripts.config import gm_table_file
-from scripts.orders import ORDERS, expand_variants, mod_t, order_dir_name, variant_key
+from scripts.schemes import SCHEMES, expand_variants, mod_t, scheme_dir_name, variant_key
 
 DEFAULT_N_BASES = 300_000
 # the mod-minimizer's Monte Carlo is O(k) per k-mer in pure Python
@@ -44,21 +44,21 @@ DEFAULT_SEED = shared.DEFAULT_SEED
 ROUNDING = shared.Rounding(sample=10, avg=8, std=10, single_std=0.0)
 
 
-def _hash_fn(order: str, m: int, gm_ranks: list[int] | None, sigma_flip: bool = False):
-    """Return `f(value, seed) -> hash` for `order`, hashing a raw
+def _hash_fn(scheme: str, m: int, gm_ranks: list[int] | None, sigma_flip: bool = False):
+    """Return `f(value, seed) -> hash` for `scheme`, hashing a raw
     (uncanonicalized) m-mer."""
-    if order == "native":
+    if scheme == "native":
         return native_hash
-    if order == "xor":
+    if scheme == "xor":
         return xor_hash
-    if order == "xor-pcg-hash":
+    if scheme == "xor-pcg-hash":
         return xor_pcg_hash
     assert gm_ranks is not None
     return lambda value, seed: greedymini_hash(value, m, gm_ranks, seed, sigma_flip)
 
 
 def expected_density_factor(
-    order: str,
+    scheme: str,
     m: int,
     w: int,
     *,
@@ -68,30 +68,30 @@ def expected_density_factor(
     projection: str | None = None,
     rng_seed: int = DEFAULT_SEED,
 ) -> float | None:
-    is_mod = on.is_mod_minimizer(order)
+    is_mod = sn.is_mod_minimizer(scheme)
     if is_mod:
         n_bases = min(n_bases, DEFAULT_MOD_N_BASES)
     dna_stream = shared.random_dna(n_bases, rng_seed)
-    sigma_flip = on.is_greedymini(order) and on.projection_from_flag(projection) == "at1-cg0"
+    sigma_flip = sn.is_greedymini(scheme) and sn.projection_from_flag(projection) == "at1-cg0"
     if is_mod:
         k = w + m - 1
-        t = mod_t(order, k, m) if order == "mod-minimizer-xor" else gm_k_from_table(gm_ranks)
-        if order == "mod-minimizer-xor":
+        t = mod_t(scheme, k, m) if scheme == "mod-minimizer-xor" else gm_k_from_table(gm_ranks)
+        if scheme == "mod-minimizer-xor":
             fn = xor_hash
         else:
             assert gm_ranks is not None
             fn = lambda value, seed: greedymini_hash(value, t, gm_ranks, seed, sigma_flip)  # noqa: E731
         n_kmers, n_super = mod_sampling_runs(dna_stream, k, m, t, fn, seed)
         return ROUNDING.factor(n_super, n_kmers, w)
-    if order == "greedymini" and gm_ranks is not None and not gm_centre_valid(m, gm_k_from_table(gm_ranks)):
+    if scheme == "greedymini" and gm_ranks is not None and not gm_centre_valid(m, gm_k_from_table(gm_ranks)):
         return None  # needs m - gm_k even (sshash rejects it too)
 
     # one hash per canonicalized m-mer position, plain sliding-window argmin
-    keys = shared.canonical_keys(dna_stream, m, _hash_fn(order, m, gm_ranks, sigma_flip), canonical_mmer, seed)
+    keys = shared.canonical_keys(dna_stream, m, _hash_fn(scheme, m, gm_ranks, sigma_flip), canonical_mmer, seed)
     return shared.window_density(keys, w, ROUNDING)
 
 
-def compute_all_orders(
+def compute_all_schemes(
     m: int,
     w: int,
     seeds: list[int],
@@ -99,13 +99,13 @@ def compute_all_orders(
     n_bases: int = DEFAULT_N_BASES,
     variants: Iterable[dict] | None = None,
 ) -> list[dict]:
-    """Monte Carlo rows for `variants` (id dicts as scripts.orders.expand_variants
+    """Monte Carlo rows for `variants` (id dicts as scripts.schemes.expand_variants
     returns; default: every variant config.yaml registers at k = w + m - 1)."""
     if variants is None:
-        variants = expand_variants(ORDERS, w + m - 1, m)
+        variants = expand_variants(SCHEMES, w + m - 1, m)
 
     def prepare(v):
-        if not on.is_greedymini(v["order"]):
+        if not sn.is_greedymini(v["scheme"]):
             return None
         path = v.get("gm_file")
         if path is None:
@@ -119,37 +119,37 @@ def compute_all_orders(
         seeds_of=lambda v: seeds,
         prepare=prepare,
         sample=lambda v, gm_ranks, seed: expected_density_factor(
-            v["order"], m, w, seed=seed, n_bases=n_bases, gm_ranks=gm_ranks, projection=v.get("projection")),
-        row_id=lambda v: {**{f: v.get(f) for f in on.ID_FIELDS}, "k": m, "w": w, "L": m + w - 1},
+            v["scheme"], m, w, seed=seed, n_bases=n_bases, gm_ranks=gm_ranks, projection=v.get("projection")),
+        row_id=lambda v: {**{f: v.get(f) for f in sn.ID_FIELDS}, "k": m, "w": w, "L": m + w - 1},
         rounding=ROUNDING,
     )
 
 
-EXPECTED_ORDERS_FIELDS = (*on.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule")
+EXPECTED_SCHEMES_FIELDS = (*sn.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule")
 # The mod-minimizer tie rule the cached rows were computed with; a cache without it
 # (the retired G/T-strand rule) is recomputed.
 MOD_TIE_RULE = "centre"
 
 
-def expected_orders_csv_path(results: Path) -> Path:
-    return results / "csvs" / "sshash_density_expected_orders.csv"
+def expected_schemes_csv_path(results: Path) -> Path:
+    return results / "csvs" / "sshash_density_expected_schemes.csv"
 
 
 def _row_key(row: dict) -> tuple | None:
-    """variant_key of a CSV row; None for a stale row (an old order spelling)."""
+    """variant_key of a CSV row; None for a stale row (an old scheme spelling)."""
     try:
-        return variant_key(on.parse_id(row, baselines=("native",)))
+        return variant_key(sn.parse_id(row, baselines=("native",)))
     except (ValueError, KeyError):
         return None
 
 
-def load_expected_orders(results: Path) -> dict[tuple, dict]:
-    """The cached rows by variant_key (rows with an unknown order spelling, e.g. from
+def load_expected_schemes(results: Path) -> dict[tuple, dict]:
+    """The cached rows by variant_key (rows with an unknown scheme spelling, e.g. from
     before the canonical names, are ignored)."""
-    return shared.read_csv_rows(expected_orders_csv_path(results), _row_key)
+    return shared.read_csv_rows(expected_schemes_csv_path(results), _row_key)
 
 
-def ensure_expected_orders(
+def ensure_expected_schemes(
     results: Path,
     m: int,
     w: int,
@@ -162,15 +162,15 @@ def ensure_expected_orders(
     """Cached expected density per variant (keyed by variant_key). With `variants`
     given, only those are computed (the pure-Python Monte Carlo is slow), merged into
     whatever the cache already holds for this m/w."""
-    wanted = list(variants) if variants is not None else expand_variants(ORDERS, w + m - 1, m)
+    wanted = list(variants) if variants is not None else expand_variants(SCHEMES, w + m - 1, m)
     return shared.ensure_cache(
-        expected_orders_csv_path(results),
-        EXPECTED_ORDERS_FIELDS,
+        expected_schemes_csv_path(results),
+        EXPECTED_SCHEMES_FIELDS,
         wanted,
         key_of_variant=variant_key,
         key_of_row=_row_key,
-        load=lambda: load_expected_orders(results),
-        compute=lambda todo: compute_all_orders(m, w, seeds, n_bases=n_bases, variants=todo),
+        load=lambda: load_expected_schemes(results),
+        compute=lambda todo: compute_all_schemes(m, w, seeds, n_bases=n_bases, variants=todo),
         accept=lambda cached: all(
             int(r.get("k") or r.get("m") or 0) == m and int(r.get("w") or 0) == w
             and r.get("mod_tie_rule") == MOD_TIE_RULE for r in cached.values()),
@@ -191,9 +191,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = shared.base_parser(
         "scripts expected-density",
-        "Theoretical expected density_factor per sshash order (Monte Carlo "
+        "Theoretical expected density_factor per sshash scheme (Monte Carlo "
         "on i.i.d. random DNA; mean/std over the benchmark's predefined seeds). Feeds the "
-        "`orders` xlsx sheet's expected_density_factor_mean/std columns.",
+        "`schemes` xlsx sheet's expected_density_factor_mean/std columns.",
         default_results=str(default_results),
         default_n_bases=DEFAULT_N_BASES,
     )
@@ -206,12 +206,12 @@ def main(argv: list[str] | None = None) -> int:
     results = Path(args.results_dir).resolve()
     seeds = list(bench_seeds())[: args.n_seeds]
 
-    cached = ensure_expected_orders(results, args.m, w, seeds, force=args.force, n_bases=args.n_bases)
-    print(f"wrote {expected_orders_csv_path(results)} ({len(cached)} rows)", file=sys.stderr)
-    for v in expand_variants(ORDERS, w + args.m - 1, args.m):
+    cached = ensure_expected_schemes(results, args.m, w, seeds, force=args.force, n_bases=args.n_bases)
+    print(f"wrote {expected_schemes_csv_path(results)} ({len(cached)} rows)", file=sys.stderr)
+    for v in expand_variants(SCHEMES, w + args.m - 1, args.m):
         r = cached.get(variant_key(v))
         if r:
-            print(shared.format_row(order_dir_name(v["order"], v["gm_k"], v["projection"], v["mod_t"]), r))
+            print(shared.format_row(scheme_dir_name(v["scheme"], v["gm_k"], v["projection"], v["mod_t"]), r))
     return 0
 
 

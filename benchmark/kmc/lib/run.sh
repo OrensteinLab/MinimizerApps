@@ -67,34 +67,34 @@ config_dir_name() {
   echo "$name"
 }
 
-# Run-dir segment for an order: order_names.order_dir_name (e.g. "xor",
+# Run-dir segment for a scheme: scheme_names.scheme_dir_name (e.g. "xor",
 # "greedymini/k9_at1-cg0"), plus the kmc-specific table LUT backend for
 # greedymini ("/lut_dna" | "/lut_binary": same order, different storage).
 scheme_dir_name() {
   case "$1" in
-    default|lex|xor|xor-pcg-hash) bench_py gm order-dir --order "$1" ;;
+    default|lex|xor|xor-pcg-hash) bench_py gm scheme-dir --scheme "$1" ;;
     greedymini)
-      echo "$(bench_py gm order-dir --order greedymini --gm-k "$(signature_len_effective)" \
+      echo "$(bench_py gm scheme-dir --scheme greedymini --gm-k "$(signature_len_effective)" \
         --projection "${GM_PROJECTION:-at0-cg1}")/lut_${GM_LUT:-dna}"
       ;;
-    *) die "unknown signature order: $1" ;;
+    *) die "unknown scheme: $1" ;;
   esac
 }
 
 run_rel_path() {
-  local ds="$1" k="$2" kind="$3" order="$4" seed_idx="$5" mem="$6"
-  echo "${ds}/$(params_tag "$k")/$(config_dir_name "$kind" "$mem")/$(scheme_dir_name "$order")/${seed_idx}"
+  local ds="$1" k="$2" kind="$3" scheme="$4" seed_idx="$5" mem="$6"
+  echo "${ds}/$(params_tag "$k")/$(config_dir_name "$kind" "$mem")/$(scheme_dir_name "$scheme")/${seed_idx}"
 }
 
 run_one() {
-  local ds="$1" k="$2" kind="$3" order="$4" custom_order="$5" order_label="$6" seed="${7:-}" seed_idx="${8:-0}"
+  local ds="$1" k="$2" kind="$3" scheme="$4" custom_order="$5" order_label="$6" seed="${7:-}" seed_idx="${8:-0}"
 
   local mem label lst kmc_cmd wrapped p cfg_tag rid
   mem="$(dataset_mem "$ds")"
   label="$(csv_field "$ds" label)"
   p="$(signature_len_effective)"
   cfg_tag="$(config_dir_name "$kind" "$mem")"
-  rid="$(run_rel_path "$ds" "$k" "$kind" "$order" "$seed_idx" "$mem")"
+  rid="$(run_rel_path "$ds" "$k" "$kind" "$scheme" "$seed_idx" "$mem")"
 
   local run_dir="$RESULTS_DIR/runs/$rid"
   local tmp="$run_dir/tmp"
@@ -131,11 +131,11 @@ run_one() {
   fi
   if [[ -n "$SIGNATURE_LEN" ]]; then
     kmc_cmd+=("-p$SIGNATURE_LEN")
-  elif [[ "$order" == "greedymini" ]]; then
+  elif [[ "$scheme" == "greedymini" ]]; then
     kmc_cmd+=("-p$(signature_len_effective)")
   fi
   local gm_lut="${GM_LUT:-dna}" projection="${GM_PROJECTION:-at0-cg1}"
-  if [[ "$order" == "greedymini" ]]; then
+  if [[ "$scheme" == "greedymini" ]]; then
     local gm_file="$custom_order" embedded="$custom_order" embedded
     [[ -n "$gm_file" ]] || gm_file="$(resolve_gm_path "$k" "${seed:-0}")"
     [[ -f "$gm_file" ]] || die "GM table not found for k=$k p=$(signature_len_effective) seed=${seed:-0} gm_lut=$gm_lut: $gm_file"
@@ -154,13 +154,13 @@ run_one() {
       # projection is kmc's default backend for a binary-alphabet .gm source.
     fi
     custom_order="$gm_file"
-  elif [[ "$order" == "lex" ]]; then
+  elif [[ "$scheme" == "lex" ]]; then
     # True canonical lex (no is_allowed denylist): -or xor -os 0 is order-
     # equivalent to MIN(i, revcomp(i)) with no exclusions (verified offline;
     # see README). Always seed 0 -- deterministic, not a real random scheme.
     kmc_cmd+=("-orxor" "-ol$order_label" "-os0")
-  elif [[ "$order" == "xor" || "$order" == "xor-pcg-hash" ]]; then
-    kmc_cmd+=("-or$order" "-ol$order_label" "-os$((seed))")
+  elif [[ "$scheme" == "xor" || "$scheme" == "xor-pcg-hash" ]]; then
+    kmc_cmd+=("-or$scheme" "-ol$order_label" "-os$((seed))")
   fi
   kmc_cmd+=("@$lst" "$db_prefix" "$tmp")
 
@@ -193,13 +193,13 @@ run_one() {
     sig_mode="$("$PYTHON" -c "import json; print(json.load(open('$json_path')).get('signature_order_mode','') or '')")"
   fi
   if [[ -z "$sig_mode" ]]; then
-    case "$order" in
-      greedymini|xor|xor-pcg-hash) sig_mode="$order" ;;
+    case "$scheme" in
+      greedymini|xor|xor-pcg-hash) sig_mode="$scheme" ;;
       lex) sig_mode="xor" ;;
     esac
   fi
   local meta_gm_k="" meta_projection="" meta_gm_lut="" meta_gm_table=""
-  if [[ "$order" == "greedymini" ]]; then
+  if [[ "$scheme" == "greedymini" ]]; then
     meta_gm_k="$p"; meta_projection="$projection"; meta_gm_lut="$gm_lut"
     meta_gm_table="$(gm_table_stem "$k")"
   fi
@@ -215,7 +215,7 @@ run_one() {
   META_STRICT_MEM="$STRICT_MEM" \
   META_CONFIG_TAG="$cfg_tag" \
   META_SIGNATURE_LEN="$p" \
-  META_ORDER="$order" \
+  META_SCHEME="$scheme" \
   META_SIG_MODE="$sig_mode" \
   META_GM_K="$meta_gm_k" \
   META_PROJECTION="$meta_projection" \
@@ -256,12 +256,12 @@ run_schemes() {
 
   local ds kind k i seed order_label
 
-  case "$SIGNATURE_ORDER" in
+  case "$SCHEME" in
     default)
       # -n repeats lex the same way custom schemes repeat seeds: it has no
       # real "seed", but repeating it gives it a mean/std instead of a
       # single unrepeatable sample (see README: lex baseline noise).
-      [[ -z "$CUSTOM_ORDER" && -z "$ORDER_LABEL" ]] || die "--custom-order/--order-label require -O xor|xor-pcg-hash|greedymini|all"
+      [[ -z "$CUSTOM_ORDER" && -z "$ORDER_LABEL" ]] || die "--custom-order/--order-label require -S xor|xor-pcg-hash|greedymini|all"
       for ds in "${ds_arr[@]}"; do
         for kind in "${in_arr[@]}"; do
           for k in "${k_arr[@]}"; do
@@ -275,8 +275,8 @@ run_schemes() {
     lex)
       # True canonical lex, no is_allowed denylist (see README). Deterministic
       # (seed always 0, no real randomness) -- repeated -n times purely for
-      # wall-time noise stats, same rationale as -O default.
-      [[ -z "$CUSTOM_ORDER" && -z "$ORDER_LABEL" ]] || die "--custom-order/--order-label require -O xor|xor-pcg-hash|greedymini|all"
+      # wall-time noise stats, same rationale as -S default.
+      [[ -z "$CUSTOM_ORDER" && -z "$ORDER_LABEL" ]] || die "--custom-order/--order-label require -S xor|xor-pcg-hash|greedymini|all"
       for ds in "${ds_arr[@]}"; do
         for kind in "${in_arr[@]}"; do
           for k in "${k_arr[@]}"; do
@@ -288,14 +288,14 @@ run_schemes() {
       done
       ;;
     xor|xor-pcg-hash)
-      [[ -z "$CUSTOM_ORDER" ]] || die "--custom-order is only valid with -O greedymini or all"
+      [[ -z "$CUSTOM_ORDER" ]] || die "--custom-order is only valid with -S greedymini or all"
       for ((i = 0; i < N_SEEDS; i++)); do
         seed="${BENCH_SEEDS[$i]}"
         for ds in "${ds_arr[@]}"; do
           for kind in "${in_arr[@]}"; do
             for k in "${k_arr[@]}"; do
-              order_label="${ORDER_LABEL:-$SIGNATURE_ORDER}_s${seed}"
-              run_one "$(trim "$ds")" "$k" "$kind" "$SIGNATURE_ORDER" "" "$order_label" "$seed" "$i"
+              order_label="${ORDER_LABEL:-$SCHEME}_s${seed}"
+              run_one "$(trim "$ds")" "$k" "$kind" "$SCHEME" "" "$order_label" "$seed" "$i"
             done
           done
         done
@@ -316,7 +316,7 @@ run_schemes() {
       done
       ;;
     all)
-      [[ -z "$ORDER_LABEL" ]] || die "--order-label is not used with -O all"
+      [[ -z "$ORDER_LABEL" ]] || die "--order-label is not used with -S all"
       # Interleave default/xor/xor-pcg-hash/greedymini within each repetition `i` instead of
       # running all of one scheme, then all of the next: back-to-back
       # scheme blocks let any time-of-day/machine-state drift land as a
@@ -341,7 +341,7 @@ run_schemes() {
       done
       ;;
     *)
-      die "unsupported -O $SIGNATURE_ORDER (use default, lex, xor, xor-pcg-hash, greedymini, or all)"
+      die "unsupported -S $SCHEME (use default, lex, xor, xor-pcg-hash, greedymini, or all)"
       ;;
   esac
 }

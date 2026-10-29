@@ -1,9 +1,9 @@
 """Minimizer density helpers: generic sliding-window "particular" density
 counting, plus pure-Python re-implementations of sshash's hash/order
 formulas used by ``expected_density.py`` to Monte Carlo simulate the
-*theoretical* expected density_factor of each order on i.i.d. random DNA
+*theoretical* expected density_factor of each scheme on i.i.d. random DNA
 (mirrors ``benchmark/kmc/scripts/density.py``'s approach and terminology,
-ported for sshash's own orders since kmc's file re-derives kmc-specific
+ported for sshash's own schemes since kmc's file re-derives kmc-specific
 comparator/denylist logic that doesn't apply here).
 
 density_factor = density * (w + 1), where density = n_selected / n_kmers and
@@ -76,8 +76,8 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
 
     t-mers and k-mers are packed as sshash packs them (kmer.hpp: drop_char shifts
     the first base out of the low bits), first base least significant -- not this
-    module's MSB-first packing of the plain orders -- so the canonical t-mer (and
-    hence its xor hash) and the strand tie match the compiled order exactly."""
+    module's MSB-first packing of the plain-minimizer schemes -- so the canonical t-mer (and
+    hence its xor hash) and the strand tie match the compiled scheme exactly."""
     from density import mod_centre_selections  # benchmark/common
 
     n = len(dna_stream)
@@ -109,7 +109,7 @@ def mod_sampling_runs(dna_stream: list[int], k: int, m: int, t: int, hash_fn,
 
 
 # ---------------------------------------------------------------------------
-# .gm file I/O (matches common/minimizer-orders/greedymini_rank.h exactly)
+# .gm file I/O (matches common/minimizer-schemes/greedymini_rank.h exactly)
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ def read_gm_ranks(path: Path) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# Bit helpers (Python port of sshash/include/custom_order_hasher.hpp, on sshash's
+# Bit helpers (Python port of sshash/include/custom_scheme_hasher.hpp, on sshash's
 # default packing A=0,C=1,G=3,T=2: bit 0 of a base is Sigma (AT vs CG), bit 1 is
 # Gamma, and complementing a base flips bit 1)
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ def _gm_k_from_table(gm_ranks: list[int]) -> int:
 
 # ---------------------------------------------------------------------------
 # Order hash functions (pure-Python ports; see
-# sshash/include/custom_order_hasher.hpp for the authoritative C++)
+# sshash/include/custom_scheme_hasher.hpp for the authoritative C++)
 # ---------------------------------------------------------------------------
 
 
@@ -214,7 +214,7 @@ def gm_table_mirror_symmetric(gm_ranks: list[int]) -> bool:
 
 
 def greedymini_hash(value: int, l: int, gm_ranks: list[int], seed: int, sigma_flip: bool = False) -> int:
-    """Port of custom_order_hasher::hash_from_planes (the GreedyMini hash).
+    """Port of custom_scheme_hasher::hash_from_planes (the GreedyMini hash).
 
     View the m-mer as x y z with |x| = |z| = i = (l - gm_k) / 2, |y| = gm_k.
     Primary key: rank of Sigma(y) (one probe; strand-invariant because the

@@ -88,15 +88,15 @@ class Compare(unittest.TestCase):
             f.write("mod-minimizer-greedymini\tlib/mod-minimizer-greedymini/k6_at0-cg1_t6/1\t%s\t0101\t1\t6\tat0-cg1\tw5_k6_canonical\t6\n" % self.d)
             f.write("xor\tlib/xor/1\t%s\t0101\t1\t\t\t\t\n" % self.d)
         runs = C.load_manifest(man)
-        # one parameterisation per order: plain order label; several: "<order> (<params>)"
-        self.assertEqual([r["scheme"] for r in runs],
+        # one parameterisation per scheme: plain scheme label; several: "<scheme> (<params>)"
+        self.assertEqual([r["label"] for r in runs],
                          ["xor", "greedymini (k15_at0-cg1)", "greedymini (k15_at1-cg0)",
                           "mod-minimizer-greedymini"])
         g = runs[2]
-        self.assertEqual((g["order"], g["gm_k"], g["projection"], g["gm_table"], g["mod_t"]),
+        self.assertEqual((g["scheme"], g["gm_k"], g["projection"], g["gm_table"], g["mod_t"]),
                          ("greedymini", 15, "at1-cg0", "w5_k15_canonical", None))
         self.assertEqual(runs[3]["mod_t"], 6)
-        self.assertEqual(C.scheme_rank(runs[2]["scheme"]), 2)
+        self.assertEqual(C.scheme_rank(runs[2]["label"]), 2)
 
     def test_old_scheme_names_rejected(self):
         man = os.path.join(self.d, "m")

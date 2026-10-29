@@ -21,24 +21,24 @@ struct dictionary_builder  //
         d.m_regular_parsing = build_config.regular_parsing;
         d.m_spss.k = build_config.k;
         d.m_spss.m = build_config.m;
-        if (is_mod_mode(build_config.order) and
+        if (is_mod_mode(build_config.scheme) and
             !mod_rule::t_is_canonical(int(build_config.m), int(build_config.k - build_config.m + 1),
                                       int(build_config.mod_t))) {
             throw std::invalid_argument(
                 "the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie rule)");
         }
         d.m_hasher.seed(build_config.seed);
-        d.m_hasher.configure(build_config.order, build_config.m, build_config.greedy_mini_filename,
+        d.m_hasher.configure(build_config.scheme, build_config.m, build_config.greedy_mini_filename,
                              build_config.gm_proj, build_config.mod_t);
 
         build_stats.add("input_filename", filename.c_str());
         build_stats.add("k", d.m_k);
         build_stats.add("m", d.m_m);
         build_stats.add("seed", build_config.seed);
-        if (is_gm_mode(build_config.order)) {
+        if (is_gm_mode(build_config.scheme)) {
             build_stats.add("gm_projection", gm_projection_name(build_config.gm_proj));
         }
-        if (is_mod_mode(build_config.order)) build_stats.add("mod_t", build_config.mod_t);
+        if (is_mod_mode(build_config.scheme)) build_stats.add("mod_t", build_config.mod_t);
         build_stats.add("num_threads", build_config.num_threads);
 
         total_time_musec = 0;

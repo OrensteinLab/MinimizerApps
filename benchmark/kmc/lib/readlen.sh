@@ -12,7 +12,7 @@ readlen_summary_field() {
       for (i = 1; i <= NF; i++) h[$i] = i
       next
     }
-    $h["dataset"] == ds && $h["L"] == k && $h["order"] == "default" {
+    $h["dataset"] == ds && $h["L"] == k && $h["scheme"] == "default" {
       print $h[field]
       exit
     }

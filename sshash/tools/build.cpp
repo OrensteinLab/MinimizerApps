@@ -46,17 +46,17 @@ int build(int argc, char** argv) {
     parser.add("bucket_stats",
                "Also print the bucket-size and super-k-mer histograms after construction.",
                "--bucket-stats", false, true);
-    parser.add("order",
-               "Minimizer order: native (default), xor, xor-pcg-hash or greedymini; or the "
+    parser.add("scheme",
+               "Minimizer scheme: native (default), xor, xor-pcg-hash or greedymini; or the "
                "strand-symmetric mod-minimizer with t-mers ranked by xor (mod-minimizer-xor) or "
                "GreedyMini (mod-minimizer-greedymini), with --mod-t. See orders/README.md.",
-               "-O", false);
+               "--scheme", false);
     parser.add("greedy_mini_filename",
-               "GreedyMini .gm rank table (required with -O greedymini and -O mod-minimizer-greedymini; "
+               "GreedyMini .gm rank table (required with --scheme greedymini and --scheme mod-minimizer-greedymini; "
                "for mod-minimizer-greedymini a table of t-mers).",
                "--greedy-mini-file", false);
     parser.add("mod_t",
-               "t-mer length of the mod-minimizer orders (0 < t < m; the usual choice is "
+               "t-mer length of the mod-minimizer schemes (0 < t < m; the usual choice is "
                "4 + (m - 4) mod (k - m + 1)).",
                "--mod-t", false);
     parser.add("gm_projection",
@@ -91,8 +91,8 @@ int build(int argc, char** argv) {
     }
     if (parser.parsed("t")) build_config.num_threads = parser.get<uint64_t>("t");
 
-    if (parser.parsed("order")) {
-        build_config.order = parse_custom_order_mode(parser.get<std::string>("order"));
+    if (parser.parsed("scheme")) {
+        build_config.scheme = parse_custom_scheme_mode(parser.get<std::string>("scheme"));
     }
     if (parser.parsed("greedy_mini_filename")) {
         build_config.greedy_mini_filename = parser.get<std::string>("greedy_mini_filename");
@@ -100,30 +100,30 @@ int build(int argc, char** argv) {
     if (parser.parsed("gm_projection")) {
         build_config.gm_proj = parse_gm_projection(parser.get<std::string>("gm_projection"));
         if (build_config.gm_proj != gm_projection::AT0_CG1 and
-            !is_gm_mode(build_config.order)) {
+            !is_gm_mode(build_config.scheme)) {
             std::cerr << "Error: --gm-projection at1-cg0 requires a GreedyMini order" << std::endl;
             return 1;
         }
     }
-    if (is_gm_mode(build_config.order) && build_config.greedy_mini_filename.empty()) {
-        std::cerr << "Error: -O " << custom_order_mode_name(build_config.order)
+    if (is_gm_mode(build_config.scheme) && build_config.greedy_mini_filename.empty()) {
+        std::cerr << "Error: --scheme " << custom_scheme_mode_name(build_config.scheme)
                   << " requires --greedy-mini-file" << std::endl;
         return 1;
     }
     if (parser.parsed("mod_t")) build_config.mod_t = parser.get<uint64_t>("mod_t");
-    if (is_mod_mode(build_config.order) != (build_config.mod_t != 0)) {
+    if (is_mod_mode(build_config.scheme) != (build_config.mod_t != 0)) {
         std::cerr << "Error: --mod-t is required by, and only valid with, the mod-minimizer "
                      "orders (mod-minimizer-xor, mod-minimizer-greedymini)"
                   << std::endl;
         return 1;
     }
     build_config.regular_parsing = parser.get<bool>("regular_parsing");
-    if (build_config.regular_parsing and is_mod_mode(build_config.order)) {
+    if (build_config.regular_parsing and is_mod_mode(build_config.scheme)) {
         std::cerr << "Error: --regular does not apply to the mod-minimizer orders" << std::endl;
         return 1;
     }
 
-    if (is_mod_mode(build_config.order) and
+    if (is_mod_mode(build_config.scheme) and
         !mod_rule::t_is_canonical(int(m), int(k - m + 1), int(build_config.mod_t))) {
         std::cerr << "Error: the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie "
                      "rule; e.g. t = 4 + (m - 4) mod (k - m + 1))"
@@ -131,12 +131,12 @@ int build(int argc, char** argv) {
         return 1;
     }
 
-    if (is_gm_mode(build_config.order) or is_mod_mode(build_config.order)) {
+    if (is_gm_mode(build_config.scheme) or is_mod_mode(build_config.scheme)) {
         /* fail early with a clear message (e.g. an odd m - gm_k,
            or a table that is not mirror-symmetric) instead of an uncaught exception */
         try {
             hasher_type probe(build_config.seed);
-            probe.configure(build_config.order, m, build_config.greedy_mini_filename,
+            probe.configure(build_config.scheme, m, build_config.greedy_mini_filename,
                             build_config.gm_proj, build_config.mod_t);
         } catch (std::exception const& e) {
             std::cerr << "Error: " << e.what() << std::endl;

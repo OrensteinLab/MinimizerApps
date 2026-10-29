@@ -81,7 +81,7 @@ static bool has_tie(kmer_t kmer, uint64_t k, uint64_t m, hasher_type const& hash
 
 template <typename kmer_t>
 static void test_kmers(uint64_t k, uint64_t m, uint64_t num_kmers, std::mt19937_64& gen,
-                       custom_order_mode mode) {
+                       custom_scheme_mode mode) {
     hasher_type hasher(1234);
     hasher.configure(mode, m);
     std::string s(k, 0);
@@ -104,7 +104,7 @@ static void test_kmers(uint64_t k, uint64_t m, uint64_t num_kmers, std::mt19937_
     mirror-equivariant too but moves the anchor backwards on ~1e-5 of the
     windows).
 */
-template <typename kmer_t, custom_order_mode Mode>
+template <typename kmer_t, custom_scheme_mode Mode>
 static void test_iterator(uint64_t k, uint64_t m, uint64_t length, std::mt19937_64& gen) {
     hasher_type hasher(1234);
     hasher.configure(Mode, m);
@@ -244,8 +244,8 @@ int main(int argc, char** argv) {
     std::mt19937_64 gen(42);
 
     /* the strand-dependent orders: native, xor, xor-pcg-hash */
-    const custom_order_mode plain_modes[] = {custom_order_mode::NATIVE, custom_order_mode::XOR_HASH,
-                                             custom_order_mode::XOR_PCG_HASH};
+    const custom_scheme_mode plain_modes[] = {custom_scheme_mode::NATIVE, custom_scheme_mode::XOR_HASH,
+                                             custom_scheme_mode::XOR_PCG_HASH};
 
     std::cout << "checking mirror-equivariance of the minimizer..." << std::endl;
     for (auto mode : plain_modes) {
@@ -273,7 +273,7 @@ int main(int argc, char** argv) {
 
     std::cout << "checking the incremental iterator against the reference..." << std::endl;
     auto check_iterators = [&](auto mode) {
-        constexpr custom_order_mode Mode = decltype(mode)::value;
+        constexpr custom_scheme_mode Mode = decltype(mode)::value;
         for (uint64_t k : {5, 15, 31}) {
             for (uint64_t m = 1; m <= std::min<uint64_t>(k, kmer_t::max_m); ++m) {
                 test_iterator<kmer_t, Mode>(k, m, 20000, gen);
@@ -283,9 +283,9 @@ int main(int argc, char** argv) {
             for (uint64_t m : {2, 3, 13, 31}) { test_iterator<wide_kmer_t, Mode>(k, m, 20000, gen); }
         }
     };
-    check_iterators(order_tag<custom_order_mode::NATIVE>());
-    check_iterators(order_tag<custom_order_mode::XOR_HASH>());
-    check_iterators(order_tag<custom_order_mode::XOR_PCG_HASH>());
+    check_iterators(scheme_tag<custom_scheme_mode::NATIVE>());
+    check_iterators(scheme_tag<custom_scheme_mode::XOR_HASH>());
+    check_iterators(scheme_tag<custom_scheme_mode::XOR_PCG_HASH>());
 
     /* optional: GreedyMini tables given on the command line (strand-invariant raw path) */
     for (int a = 1; a < argc; ++a) {
@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
             for (uint64_t m : {13, 14, 15, 16, 17, 21, 23}) {
                 hasher_type hasher(1234);
                 try {
-                    hasher.configure(custom_order_mode::GREEDYMINI, m, argv[a],
+                    hasher.configure(custom_scheme_mode::GREEDYMINI, m, argv[a],
                                      proj);
                 } catch (std::exception const&) { continue; }  // gm_k > m, or m - gm_k odd
                 for (uint64_t k : {21, 25, 31}) {

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Significance tests of the wall-time and CPU-time differences between minimizer orders, per app.
+"""Significance tests of the wall-time and CPU-time differences between minimizer schemes, per app.
 
-  order_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir DIR [--exclude-cold-gb G] [--out FILE.csv]
+  scheme_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir DIR [--exclude-cold-gb G] [--out FILE.csv]
 
 For every context (dataset, repeat-filter condition, ...) and timed metric (wall seconds and CPU
-seconds of each step) it compares the candidate orders -- every GreedyMini and mod-minimizer
+seconds of each step) it compares the candidate schemes -- every GreedyMini and mod-minimizer
 variant, plus xor and xor-pcg-hash -- with
-  * the baseline order (native for minimap2/sshash, default for kmc; kraken2 has no such run, so
+  * the baseline scheme (native for minimap2/sshash, default for kmc; kraken2 has no such run, so
     its baseline is xor), and
-  * xor, the random-order control (so a gain is not just "any non-default order");
-using Welch's t-test on log times over the seeds/repeats of each order (ratio = ratio of geometric
-means, 90% CI, p, Holm-adjusted over the candidates of a block, TOST equivalence at +-5%: the order
+  * xor, the random-order control (so a gain is not just "any non-default scheme");
+using Welch's t-test on log times over the seeds/repeats of each scheme (ratio = ratio of geometric
+means, 90% CI, p, Holm-adjusted over the candidates of a block, TOST equivalence at +-5%: the scheme
 is "equivalent" iff the 90% CI of the ratio lies in [1/1.05, 1.05]). Groups need >= 2 runs; blocks
 with fewer are reported with n and no test. No scipy (common/stats_util.py).
 
 Timing runs are noisy on a shared host and a baseline with few repeats has little power: read the
-n columns, and prefer the CPU-time rows to settle whether a wall-time difference is the order's
+n columns, and prefer the CPU-time rows to settle whether a wall-time difference is the scheme's
 work (both differ) or load/cache (only wall time differs). --exclude-cold-gb G drops runs whose
 step read more than G GB from disk (all four apps record it per step), a sensitivity check for the
 page-cache confound; only the affected step of a run is dropped. Zero or missing times are skipped.
@@ -49,8 +49,8 @@ def num(v):
 
 
 def label_of(r):
-    """order + variant: greedymini/at0-cg1[/binary], mod-minimizer-xor/9, ..."""
-    parts = [r.get("order") or ""]
+    """scheme + variant: greedymini/at0-cg1[/binary], mod-minimizer-xor/9, ..."""
+    parts = [r.get("scheme") or ""]
     for c in ("gm_k", "projection", "gm_lut", "mod_t"):
         v = r.get(c)
         if v not in (None, "", "nan"):
@@ -101,7 +101,7 @@ def minimap2_fixed_block(rows):
     coincide with native's, so the value does not decide)."""
     native_thr, fixed_start, seen = {}, {}, set()
     for i, r in enumerate(rows):
-        if r["order"] != "native":
+        if r["scheme"] != "native":
             continue
         dk, key = (r["dataset"], r["k"]), (r["dataset"], r["k"], r.get("seed_idx"))
         native_thr[dk] = r["mid_occ_threshold"]
@@ -219,8 +219,8 @@ def run(app, results, exclude_cold_gb, loaded=None):
             tested = [x for x in res if x[1] is not None]
             adj = dict(zip([x[0] for x in tested], holm([x[4] for x in tested]))) if tested else {}
             for l, ratio, lo, hi, p in res:
-                row = {"app": app, "context": "/".join(ctx), "metric": metric, "order": l, "vs": ref,
-                       "n_order": len(groups[(ctx, metric, l)]), "n_vs": len(groups[(ctx, metric, ref)])}
+                row = {"app": app, "context": "/".join(ctx), "metric": metric, "scheme": l, "vs": ref,
+                       "n_scheme": len(groups[(ctx, metric, l)]), "n_vs": len(groups[(ctx, metric, ref)])}
                 if ratio is None:
                     row.update(ratio="", ci90_lo="", ci90_hi="", p="", p_holm="", verdict="n<2 (no test)")
                 else:
@@ -234,8 +234,8 @@ def run(app, results, exclude_cold_gb, loaded=None):
 def summarise(out, baseline):
     cnt = defaultdict(lambda: defaultdict(int))
     for r in out:
-        fam = "greedymini" if r["order"].startswith("greedymini") else (
-            "mod-minimizer" if r["order"].startswith("mod-minimizer") else r["order"])
+        fam = "greedymini" if r["scheme"].startswith("greedymini") else (
+            "mod-minimizer" if r["scheme"].startswith("mod-minimizer") else r["scheme"])
         cnt[(r["metric"], fam, r["vs"])][r["verdict"]] += 1
     lines = []
     for (metric, fam, vs), c in sorted(cnt.items()):
@@ -250,12 +250,12 @@ def main(argv=None):
     ap.add_argument("--results-dir", type=Path, required=True)
     ap.add_argument("--exclude-cold-gb", type=float, default=None,
                     help="drop runs that read more than this many GB from disk (sensitivity check)")
-    ap.add_argument("--out", type=Path, default=None, help="CSV of every test (default: <results-dir>/csvs/order_tests_<app>.csv)")
+    ap.add_argument("--out", type=Path, default=None, help="CSV of every test (default: <results-dir>/csvs/scheme_tests_<app>.csv)")
     a = ap.parse_args(argv)
     out, baseline = run(a.app, a.results_dir, a.exclude_cold_gb)
-    dest = a.out or a.results_dir / "csvs" / ("order_tests_%s.csv" % a.app)
+    dest = a.out or a.results_dir / "csvs" / ("scheme_tests_%s.csv" % a.app)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cols = ["app", "context", "metric", "order", "vs", "n_order", "n_vs", "ratio", "ci90_lo", "ci90_hi", "p", "p_holm", "verdict"]
+    cols = ["app", "context", "metric", "scheme", "vs", "n_scheme", "n_vs", "ratio", "ci90_lo", "ci90_hi", "p", "p_holm", "verdict"]
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()

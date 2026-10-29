@@ -46,7 +46,7 @@ sshash_version() {
 }
 
 # Idempotently ensures $DATA_DIR/<ds>/queries/{pos,neg}.txt (+cached
-# .fa) exist for dataset `$1`, generating them from a throwaway native-order
+# .fa) exist for dataset `$1`, generating them from a throwaway native-scheme
 # reference build the first time (scripts/equivalence.py). Sets
 # QUERY_POS_FASTA / QUERY_NEG_FASTA on return.
 ensure_query_sets() {
@@ -66,22 +66,22 @@ ensure_query_sets() {
   bench_py equivalence to-fasta --txt "$neg_txt" --fasta "$QUERY_NEG_FASTA" >/dev/null
 }
 
-# runs/{dataset}/{modality}/{order}[/k<gm_k>_<projection>_t<mod_t>]/{seed_idx} -- k/m
+# runs/{dataset}/{modality}/{scheme}[/k<gm_k>_<projection>_t<mod_t>]/{seed_idx} -- k/m
 # aren't in the path (fixed for the whole benchmark, recorded in meta.json instead).
-# args: dataset order seed_idx modality gm_k projection mod_t
+# args: dataset scheme seed_idx modality gm_k projection mod_t
 run_rel_path() {
-  local ds="$1" order="$2" seed_idx="$3" modality="${4:-canonical}"
-  echo "${ds}/${modality}/$(order_dir_name "$order" "${5:-}" "${6:-}" "${7:-}")/${seed_idx}"
+  local ds="$1" scheme="$2" seed_idx="$3" modality="${4:-canonical}"
+  echo "${ds}/${modality}/$(scheme_dir_name "$scheme" "${5:-}" "${6:-}" "${7:-}")/${seed_idx}"
 }
 
-# args: dataset k m order gm_file seed seed_idx modality projection gm_k gm_table mod_t
+# args: dataset k m scheme gm_file seed seed_idx modality projection gm_k gm_table mod_t
 # (the last four are the variant's identity fields, empty when not applicable)
 run_one() {
-  local ds="$1" k="$2" m="$3" order="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" modality="${8:-canonical}"
+  local ds="$1" k="$2" m="$3" scheme="$4" gm_file="$5" seed="${6:-}" seed_idx="${7:-0}" modality="${8:-canonical}"
   local projection="${9:-}" gm_k="${10:-}" gm_table="${11:-}" mod_t="${12:-}"
 
   local rid run_dir index_path meta_path
-  rid="$(run_rel_path "$ds" "$order" "$seed_idx" "$modality" "$gm_k" "$projection" "$mod_t")"
+  rid="$(run_rel_path "$ds" "$scheme" "$seed_idx" "$modality" "$gm_k" "$projection" "$mod_t")"
   run_dir="$RESULTS_DIR/runs/$rid"
   meta_path="$run_dir/meta.json"
 
@@ -102,10 +102,10 @@ run_one() {
   fasta="$(dataset_fasta_path "$ds")"
   [[ -f "$fasta" ]] || die "missing $fasta; run: $0 download -d $ds"
 
-  build_order_flags "$order" "$seed" "$gm_file" "$modality" "$projection" "$mod_t"
+  build_scheme_flags "$scheme" "$seed" "$gm_file" "$modality" "$projection" "$mod_t"
 
   local build_log="$run_dir/build.log" build_time="$run_dir/build_time.txt"
-  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose --bucket-stats "${ORDER_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
+  local build_cmd=("$SSHASH_BIN" build -i "$fasta" -k "$k" -m "$m" -t "$THREADS" --verbose --bucket-stats "${SCHEME_FLAGS[@]}" -d "$tmp_dir" -o "$index_path")
   local wrapped
 
   local cmd_file
@@ -191,7 +191,7 @@ run_one() {
   META_DATASET="$ds" \
   META_K="$k" \
   META_M="$m" \
-  META_ORDER="$order" \
+  META_SCHEME="$scheme" \
   META_MODALITY="$modality" \
   META_SEED="${seed:-}" \
   META_SEED_IDX="$seed_idx" \
@@ -225,18 +225,18 @@ run_sweep() {
   [[ "$N_SEEDS" -ge 1 && "$N_SEEDS" -le "$n" ]] || die "-n must be between 1 and $n"
 
   IFS=',' read -r -a ds_arr <<<"$DATASETS"
-  local orders_list
-  orders_list="$(resolve_orders)"
-  expand_order_variants "$orders_list" "$K" "$M"
+  local schemes_list
+  schemes_list="$(resolve_schemes)"
+  expand_scheme_variants "$schemes_list" "$K" "$M"
 
   # A plain greedymini variant extends its gm_k table to the m-mer by the centre
   # extension, which needs m - gm_k even: fail up front with a clear message
   # instead of after the first (failing) sshash build.
   local v
-  for v in "${ORDER_VARIANTS[@]}"; do
+  for v in "${SCHEME_VARIANTS[@]}"; do
     unpack_variant "$v"
-    [[ "$V_ORDER" == greedymini ]] || continue
-    bench_py orders check-gm "$V_ORDER" "$M" "$V_GM_FILE" || die "order $V_ORDER ($V_GM_TABLE) is not valid for m=$M"
+    [[ "$V_SCHEME" == greedymini ]] || continue
+    bench_py schemes check-gm "$V_SCHEME" "$M" "$V_GM_FILE" || die "scheme $V_SCHEME ($V_GM_TABLE) is not valid for m=$M"
   done
 
   local ds i seed
@@ -245,9 +245,9 @@ run_sweep() {
     [[ -n "$ds" ]] || continue
     for ((i = 0; i < N_SEEDS; i++)); do
       seed="${BENCH_SEEDS[$i]}"
-      for v in "${ORDER_VARIANTS[@]}"; do
+      for v in "${SCHEME_VARIANTS[@]}"; do
         unpack_variant "$v"
-        run_one "$ds" "$K" "$M" "$V_ORDER" "$V_GM_FILE" "$seed" "$i" "${MODALITY:-canonical}" \
+        run_one "$ds" "$K" "$M" "$V_SCHEME" "$V_GM_FILE" "$seed" "$i" "${MODALITY:-canonical}" \
           "$V_PROJECTION" "$V_GM_K" "$V_GM_TABLE" "$V_MOD_T"
       done
     done

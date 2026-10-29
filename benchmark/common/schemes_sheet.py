@@ -1,8 +1,8 @@
-"""Shared layout of the `orders` sheet (and <app>_orders.csv) of all four apps.
+"""Shared layout of the `schemes` sheet (and <app>_schemes.csv) of all four apps.
 
-One row per (order variant, k, w, L):
+One row per (scheme variant, k, w, L):
 
-  order, k, w, L, gm_k, projection, gm_table, [gm_lut], mod_t,   <- identity
+  scheme, k, w, L, gm_k, projection, gm_table, [gm_lut], mod_t,   <- identity
   description, cli,                                              <- what it is
   <density columns>                                              <- app-specific
 
@@ -16,8 +16,8 @@ Density columns are named `expected_density_factor_{mean,std}` and, per
 dataset, `<dataset>_particular_density_factor_{mean,std}`.
 """
 
-ORDERS_ID_FIELDS = ("order", "k", "w", "L", "gm_k", "projection", "gm_table", "gm_lut", "mod_t")
-ORDERS_DESC_FIELDS = ("description", "cli")
+SCHEMES_ID_FIELDS = ("scheme", "k", "w", "L", "gm_k", "projection", "gm_table", "gm_lut", "mod_t")
+SCHEMES_DESC_FIELDS = ("description", "cli")
 EXPECTED_FIELDS = ("expected_density_factor_mean", "expected_density_factor_std")
 
 
@@ -33,10 +33,10 @@ def particular_fields(datasets):
     return tuple(out)
 
 
-def orders_fields(datasets, with_gm_lut=False, extra_density=()):
-    """Column order of the orders sheet."""
-    ids = tuple(f for f in ORDERS_ID_FIELDS if with_gm_lut or f != "gm_lut")
-    return ids + ORDERS_DESC_FIELDS + EXPECTED_FIELDS + particular_fields(datasets) + tuple(extra_density)
+def schemes_fields(datasets, with_gm_lut=False, extra_density=()):
+    """Column order of the schemes sheet."""
+    ids = tuple(f for f in SCHEMES_ID_FIELDS if with_gm_lut or f != "gm_lut")
+    return ids + SCHEMES_DESC_FIELDS + EXPECTED_FIELDS + particular_fields(datasets) + tuple(extra_density)
 
 
 def with_klw(row, k, w):
@@ -47,8 +47,8 @@ def with_klw(row, k, w):
 
 def missing_cells(rows, fields, optional=()):
     """[(row_index, field)] of empty cells; `optional` fields (e.g. std of a
-    deterministic order) are not reported. Used by each exporter to refuse
-    writing an orders sheet with holes."""
+    deterministic scheme) are not reported. Used by each exporter to refuse
+    writing a schemes sheet with holes."""
     skip = set(optional)
     return [(i, f) for i, r in enumerate(rows) for f in fields
             if f not in skip and r.get(f) in (None, "")]

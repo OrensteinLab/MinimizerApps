@@ -77,20 +77,20 @@ extern "C" {
 typedef struct { uint64_t x, y; } mm128_t;
 typedef struct { size_t n, m; mm128_t *a; } mm128_v;
 
-// Custom minimizer order (lab fork; see order.h/order.cpp). The order only
+// Custom minimizer scheme (lab fork; see scheme.h/scheme.cpp). The scheme only
 // changes which k-mer wins a window during sketching -- the value stored in
 // the index (mm128_t::x) is always derived the same injective way mm_sketch()
-// already does for the native order (see order.cpp's design comment).
+// already does for the native order (see scheme.cpp's design comment).
 typedef enum {
-	// Values are persisted in .mmi files (order.cpp mm_order_dump): keep
+	// Values are persisted in .mmi files (scheme.cpp mm_scheme_dump): keep
 	// them stable. 4 was the removed forward (not strand-symmetric)
 	// mod-minimizer-xor, 5 the removed mod-minimizer-pcg-xor-hash.
-	MM_ORDER_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()
-	MM_ORDER_XOR = 1,           // kmer ^ seed
-	MM_ORDER_XOR_PCG_HASH = 2,  // pcg_rxs_m_xs64(kmer ^ seed)
-	MM_ORDER_GREEDYMINI = 3,    // GreedyMini UHS rank table (binary alphabet + projection)
-	MM_ORDER_MOD_XOR = 6        // strand-symmetric mod-minimizer, O_t = xor (order.cpp)
-} mm_order_kind_t;
+	MM_SCHEME_NATIVE = 0,        // upstream default: mm_sketch()'s own hash64()
+	MM_SCHEME_XOR = 1,           // kmer ^ seed
+	MM_SCHEME_XOR_PCG_HASH = 2,  // pcg_rxs_m_xs64(kmer ^ seed)
+	MM_SCHEME_GREEDYMINI = 3,    // GreedyMini UHS rank table (binary alphabet + projection)
+	MM_SCHEME_MOD_XOR = 6        // strand-symmetric mod-minimizer, O_t = xor (scheme.cpp)
+} mm_scheme_kind_t;
 
 // GreedyMini DNA -> binary projection polarity (Sigma plane = {A,T} vs {C,G}),
 // same choice as sshash's --gm-projection.
@@ -100,18 +100,18 @@ typedef enum {
 } mm_gm_projection_t;
 
 typedef struct {
-	mm_order_kind_t kind;
+	mm_scheme_kind_t kind;
 	uint64_t seed;                // xor / xor-pcg-hash / mod-minimizer-xor O_t seed
-	const char *greedymini_file;  // path to a .gm table; only read at mm_order_init() time
+	const char *greedymini_file;  // path to a .gm table; only read at mm_scheme_init() time
 	mm_gm_projection_t gm_projection; // greedymini only
 	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
 	int k;                        // the minimizer length this order is used with (validated
 	                               // against the GreedyMini table's own gm_k at init time)
 	int w;                        // the window (k-mer count) it is used with: a mod-minimizer
 	                               // order needs t == k (mod w)
-} mm_order_conf_t;
+} mm_scheme_conf_t;
 
-typedef struct mm_order_s mm_order_t; // opaque; see order.h/order.cpp
+typedef struct mm_scheme_s mm_scheme_t; // opaque; see scheme.h/scheme.cpp
 
 // minimap2 index
 typedef struct {
@@ -133,7 +133,7 @@ typedef struct {
 	struct mm_idx_spsc_s *spsc;// splice score (hidden)
 	struct mm_idx_jjump_s *J;  // junctions to create jumps (hidden)
 	void *km, *h;
-	mm_order_t *order;         // NULL = native order (upstream behaviour, untouched)
+	mm_scheme_t *scheme;         // NULL = native order (upstream behaviour, untouched)
 } mm_idx_t;
 
 // minimap2 alignment
@@ -168,7 +168,7 @@ typedef struct {
 	short k, w, flag, bucket_bits;
 	int64_t mini_batch_size;
 	uint64_t batch_size;
-	mm_order_conf_t order_conf; // default-initialized kind=MM_ORDER_NATIVE (all-zero)
+	mm_scheme_conf_t scheme_conf; // default-initialized kind=MM_SCHEME_NATIVE (all-zero)
 } mm_idxopt_t;
 
 typedef struct {
@@ -239,7 +239,7 @@ typedef struct {
 		struct mm_bseq_file_s *seq;
 		FILE *idx;
 	} fp;
-	mm_order_t *order; // owned clone materialized once from opt.order_conf (build) or the first loaded part's order (load); cloned onto each mm_idx_t part (see mm_idx_reader_read in index.c)
+	mm_scheme_t *scheme; // owned clone materialized once from opt.scheme_conf (build) or the first loaded part's order (load); cloned onto each mm_idx_t part (see mm_idx_reader_read in index.c)
 } mm_idx_reader_t;
 
 // memory buffer for thread-local storage during mapping
@@ -345,7 +345,7 @@ mm_idx_t *mm_idx_load(FILE *fp);
  * @param fp             pointer to FILE object
  * @param mi             minimap2 index
  * @param is_first_part  1 for a uni-part index or the first part of a
- *                       multi-part one; embeds mi->order's metadata (and,
+ *                       multi-part one; embeds mi->scheme's metadata (and,
  *                       for a GreedyMini order, its table bytes) so a reload
  *                       needs nothing re-supplied. 0 for a later part: the
  *                       loader reuses the first part's order (see index.c).

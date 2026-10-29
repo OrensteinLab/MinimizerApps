@@ -13,14 +13,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-import order_names
+import scheme_names
 from scripts.common import die
 from scripts.config import default_signature_len, gm_dir
 
 KMC_DNA_GM_MAGIC = 0x314D444E414D4B43  # "KMCANDM1"; see custom_order.cpp
 
 _MONOREPO_ROOT = Path(__file__).resolve().parents[3]
-GM_SERIALIZER_DIR = _MONOREPO_ROOT / "common/minimizer-orders"
+GM_SERIALIZER_DIR = _MONOREPO_ROOT / "common/minimizer-schemes"
 GM_SERIALIZER_BIN = GM_SERIALIZER_DIR / "gm_serializer"
 GM_SIGMA_EXTEND_DIR = _MONOREPO_ROOT / "benchmark/kmc/tools"
 GM_SIGMA_EXTEND_BIN = GM_SIGMA_EXTEND_DIR / "gm_sigma_extend"
@@ -193,15 +193,15 @@ def main(argv: list[str] | None = None) -> int:
     p_resolve.add_argument("--lut-mode", choices=("dna", "binary"), default="dna")
     p_resolve.add_argument("--gm-dir", type=Path, default=None)
 
-    p_dir = sub.add_parser("order-dir", help="print the run-dir path for an order (order_names.order_dir_name)")
-    p_dir.add_argument("--order", required=True)
+    p_dir = sub.add_parser("scheme-dir", help="print the run-dir path for a scheme (scheme_names.scheme_dir_name)")
+    p_dir.add_argument("--scheme", required=True)
     p_dir.add_argument("--gm-k", type=int, default=None)
     p_dir.add_argument("--projection", default=None)
 
     args = ap.parse_args(argv)
-    if args.cmd == "order-dir":
-        order_names.validate_order(args.order, ("default", "lex"))
-        print(order_names.order_dir_name(args.order, args.gm_k, args.projection))
+    if args.cmd == "scheme-dir":
+        scheme_names.validate_scheme(args.scheme, ("default", "lex"))
+        print(scheme_names.scheme_dir_name(args.scheme, args.gm_k, args.projection))
         return 0
     if args.cmd == "ensure":
         print(ensure_gm_tables(args.k, args.p, args.seed, args.gm_dir))

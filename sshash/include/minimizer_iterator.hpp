@@ -34,9 +34,9 @@ namespace sshash {
     every locus, via rc(x_i) = rc(x)_{k-m-i}, so no m-mer is ever
     reverse-complemented on its own.
 */
-template <typename Kmer, custom_order_mode Mode>
+template <typename Kmer, custom_scheme_mode Mode>
 struct minimizer_iterator {
-    static_assert(Mode != custom_order_mode::GREEDYMINI);
+    static_assert(Mode != custom_scheme_mode::GREEDYMINI);
 
     minimizer_iterator() {}
 
@@ -207,7 +207,7 @@ private:
     Ranks first (GreedyMini): a hash is (rank, tie-break)
     with the rank in its top bits, so two windows with different ranks are ordered by their
     ranks alone. The iterator therefore keeps only the Sigma plane of the kmer, slid by one
-    base per call, and the rank of every window (one table load, custom_order_hasher::
+    base per call, and the rank of every window (one table load, custom_scheme_hasher::
     centre_rank), in a ring (m_ring: 64 slots, each rank stored twice so that the k-m+1 window
     ranks of the current kmer are contiguous, window i at slot (m_base + i) mod 64; a re-scan
     takes their minimum 8 ranks at a time). The full hash of a window (pext + bit reversal, hash_gm) is
@@ -518,7 +518,7 @@ private:
     one-base slide of the previous kmer (the assertion against util::compute_minimizer checks
     the result in debug builds).
 */
-template <typename Kmer, custom_order_mode Mode>
+template <typename Kmer, custom_scheme_mode Mode>
 struct mod_minimizer_iterator {
     static_assert(is_mod_mode(Mode));
 
@@ -775,10 +775,10 @@ private:
 };
 
 /* The iterator of the classical path for the order `Mode`. */
-template <typename Kmer, custom_order_mode Mode>
-using order_minimizer_iterator = std::conditional_t<
+template <typename Kmer, custom_scheme_mode Mode>
+using scheme_minimizer_iterator = std::conditional_t<
     is_mod_mode(Mode), mod_minimizer_iterator<Kmer, Mode>,
-    std::conditional_t<Mode == custom_order_mode::GREEDYMINI,
+    std::conditional_t<Mode == custom_scheme_mode::GREEDYMINI,
                        strand_invariant_minimizer_iterator<Kmer>, minimizer_iterator<Kmer, Mode>>>;
 
 }  // namespace sshash

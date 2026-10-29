@@ -5,20 +5,20 @@ buckets/space-breakdown sheets, no equivalence hard-fail gate -- minimap2's
 benchmark doesn't have those concepts). Writes, under --results-dir (csvs/ subdir created here; workbook directly in it):
 
 - minimap2_overview.csv, minimap2_datasets.csv, minimap2_summary.csv,
-  minimap2_orders.csv, minimap2_runs.csv -- one CSV per sheet, same rows as
+  minimap2_schemes.csv, minimap2_runs.csv -- one CSV per sheet, same rows as
   the XLSX below
 - minimap2_results.xlsx -- overview (per-column legend, like sshash's own
-  'index' sheet), datasets, summary, orders, runs, with sshash's
+  'index' sheet), datasets, summary, schemes, runs, with sshash's
   own layout conventions: a category band (row 1) grouping columns into
   sections, vertical merges on columns that repeat within a dataset's
   block (dataset/k/w), a bottom-border divider after each dataset's last
-  row (summary/runs only -- datasets/orders are one row per dataset/order
+  row (summary/runs only -- datasets/schemes are one row per dataset/scheme
   already), and the 'smoke' dataset excluded throughout (fast-iteration/CI
   dataset, not a source of real accuracy/density conclusions -- see
   README.md's "Datasets" section).
 
-summary's {metric}_ratio columns (this order's mean / native's mean for the
-same dataset -- native itself is always 1) isolate each order's own effect
+summary's {metric}_ratio columns (this scheme's mean / native's mean for the
+same dataset -- native itself is always 1) isolate each scheme's own effect
 from run-to-run noise on the same machine, and get a green(better than
 native)->white(1)->red(worse) color scale. Polarity is metric-specific, not
 uniformly "lower is better" the way sshash's own metrics are: density_factor/
@@ -30,8 +30,8 @@ column's polarity to benchmark/common/xlsx_book.write_book (ratio_fields) so
 an accuracy metric. The workbook layout (category band, merges, dividers,
 colour scales, footer rows) is entirely xlsx_book's.
 
-Order identity is five separate columns (benchmark/common/order_names.py):
-order, gm_k, projection, gm_table, mod_t. greedymini runs with each AT/CG
+Scheme identity is five separate columns (benchmark/common/scheme_names.py):
+scheme, gm_k, projection, gm_table, mod_t. greedymini runs with each AT/CG
 projection are separate rows (and run directories).
 
 datasets: one row per dataset, describing what it actually is (genome size,
@@ -39,18 +39,18 @@ read count/source, repeat region), read straight off disk (genome.fa.fai via
 samtools faidx, truth.tsv, repeats.bed) rather than hand-maintained, so it
 can't go stale.
 
-summary: one row per (dataset, k, w, order, gm_k, projection, gm_table, mod_t) -- mean/std of every numeric
+summary: one row per (dataset, k, w, scheme, gm_k, projection, gm_table, mod_t) -- mean/std of every numeric
 metric across seeds (native doesn't depend on its seed: its runs are repeats of the baseline, which
-give it a mean/std like every other order).
+give it a mean/std like every other scheme).
 
-orders: one row per (order variant, k, w, L) -- greedymini once per projection, each order once per (k, w, L) the
-datasets were run with (L = k + w - 1; layout: benchmark/common/orders_sheet.py) -- with the expected (theoretical,
+schemes: one row per (scheme variant, k, w, L) -- greedymini once per projection, each scheme once per (k, w, L) the
+datasets were run with (L = k + w - 1; layout: benchmark/common/schemes_sheet.py) -- with the expected (theoretical,
 for that row's own k, w, mod_t) density_factor, then per dataset its particular (measured) density_factor on the rows
 of its own (k, w, mod_t); export fails if an applicable cell is empty. expected_density.py
 computes the theoretical value via Monte Carlo simulation on i.i.d. random
 DNA for that dataset's k, w, mod-minimizer t and HPC setting (k and t differ
 by preset: map-pb k=19 t=9, map-ont k=15 t=5), reusing
-benchmark/common/density.py's shared primitives -- the same ones order.cpp's
+benchmark/common/density.py's shared primitives -- the same ones scheme.cpp's
 own C++ is built on; cached per (k, w, t, HPC) plus the GreedyMini table,
 seeds and Monte Carlo sizes (expected_density.py cache_key), since it is independent of any
 actual run.
@@ -60,7 +60,7 @@ occurrences * (w+1) / n_sketch_kmers, where n_sketch_kmers counts the k-mers
 minimap2 actually sketches (lib/sketch_kmers.py) -- homopolymer-compressed
 ones for an HPC preset (map-pb, the default; see each dataset's preset in
 lib/constants.sh:dataset_preset), raw ones otherwise (map-ont). That's the
-same scale as the dataset's Monte Carlo expected value (the orders sheet's expected_*). write_meta.py's meta.json density_factor
+same scale as the dataset's Monte Carlo expected value (the schemes sheet's expected_*). write_meta.py's meta.json density_factor
 instead divides by the *raw* length (minimap2 -d's "average spacing"),
 understating HPC density by the genome's compression ratio (~0.70 on human)
 and any N gaps; that's kept as density_factor_raw_bp in the runs sheet only.
@@ -80,8 +80,8 @@ import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
 import density_effect  # noqa: E402
 import significance  # noqa: E402
-from order_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
-from orders_sheet import EXPECTED_FIELDS, missing_cells, orders_fields, particular_fields, span_length, with_klw  # noqa: E402
+from scheme_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
+from schemes_sheet import EXPECTED_FIELDS, missing_cells, schemes_fields, particular_fields, span_length, with_klw  # noqa: E402
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib  # noqa: E402
 from xlsx_book import DATA_START_ROW, write_book  # noqa: E402
 from xlsx_util import col_letter, write_csv  # noqa: E402
@@ -107,9 +107,9 @@ def dataset_preset(dataset_dir: Path, runs: list[dict]) -> str:
     return f.read_text().strip() if f.is_file() else "map-pb"
 
 # Grouped so each row-1 category band is one contiguous span:
-# id (dataset, order, app params, seeds) -> density -> space -> total -> build -> map -> accuracy -> telemetry (runs only).
+# id (dataset, scheme, app params, seeds) -> density -> space -> total -> build -> map -> accuracy -> telemetry (runs only).
 RUN_FIELDS = [
-    "dataset", "n_reads", "n_reads_in_repeat", "k", "w", "L", "order", "gm_k", "projection", "gm_table", "mod_t", "mid_occ_threshold", "threads", "seed", "seed_idx",
+    "dataset", "n_reads", "n_reads_in_repeat", "k", "w", "L", "scheme", "gm_k", "projection", "gm_table", "mod_t", "mid_occ_threshold", "threads", "seed", "seed_idx",
     "density_factor", "density_factor_raw_bp", "distinct_minimizers", "avg_occurrences",
     "index_size_gb",
     "total_wall_s",
@@ -124,15 +124,15 @@ RUN_FIELDS = [
     *step_record.names("build"), *step_record.names("map"),
 ]
 
-# mid_occ_threshold (shown after the order columns): the effective repeat-filter threshold minimap2 mapped
+# mid_occ_threshold (shown after the scheme columns): the effective repeat-filter threshold minimap2 mapped
 # with. Internally every row also carries mid_occ_cap, the map-time `-f` condition
 # (lib/run.sh's MID_OCC): this label for minimap2's own per-index default, else the fixed
 # absolute cap. Every per-block computation (native ratio, divider, merge, correlation) is
 # keyed on (dataset, mid_occ_cap) -- not displayed, since the threshold shows it: identical
-# for every order in a fixed-cap block, per-index in a default block -- so a fixed-cap
+# for every scheme in a fixed-cap block, per-index in a default block -- so a fixed-cap
 # control never gets compared against the other condition's native.
 DEFAULT_MID_OCC_CAP = "default"
-MOD_ORDERS = frozenset({"mod-minimizer-xor"})
+MOD_SCHEMES = frozenset({"mod-minimizer-xor"})
 
 
 SUMMARY_METRICS = (
@@ -154,7 +154,7 @@ CORRELATION_DRIVERS = (
     ("correlation with distinct minimizers", "distinct_minimizers_ratio"),
 )
 
-# A ratio < 1 (this order's mean below native's) means "better than native"
+# A ratio < 1 (this scheme's mean below native's) means "better than native"
 # for these -- fewer/faster/smaller/less-mis-mapped.
 LOWER_IS_BETTER = frozenset({
     "density_factor", "distinct_minimizers",
@@ -177,31 +177,31 @@ HIGHER_IS_BETTER = frozenset({
 assert LOWER_IS_BETTER | HIGHER_IS_BETTER == set(SUMMARY_METRICS)
 assert not (LOWER_IS_BETTER & HIGHER_IS_BETTER)
 
-ORDER_SORT = [
+SCHEME_SORT = [
     "native", "xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor",
 ]
 PROJECTION_SORT = ["at0-cg1", "at1-cg0"]
 
-ORDER_DESCRIPTIONS = {
+SCHEME_DESCRIPTIONS = {
     "native": {
-        "description": "minimap2's own unmodified baseline order (mm_hash64-based)",
-        "cli": "(no --minimizer-order)",
+        "description": "minimap2's own unmodified baseline scheme (mm_hash64-based order)",
+        "cli": "(no --scheme)",
     },
     "xor": {
         "description": "XOR the k-mer with the seed, then rank canonically",
-        "cli": "--minimizer-order xor --order-seed SEED",
+        "cli": "--scheme xor --order-seed SEED",
     },
     "xor-pcg-hash": {
         "description": "xor's XOR step, then PCG RXS-M-XS 64-bit scramble before ranking",
-        "cli": "--minimizer-order xor-pcg-hash --order-seed SEED",
+        "cli": "--scheme xor-pcg-hash --order-seed SEED",
     },
     "greedymini": {
         "description": "Ranks k-mers by the precomputed GreedyMini table gm_table (gm_k = its k) under the binary AT/CG projection (at0-cg1: A,T -> 0, C,G -> 1; at1-cg0: flipped, every table key complemented, as sshash's --gm-projection), centre-extended to k (k = gm_k + 2i: the table ranks the middle gm_k bases, then Sigma and Gamma of the whole k-mer break ties; greedymini_centre.h, as in kraken2/sshash)",
-        "cli": "--minimizer-order greedymini --greedymini-file orders/GreedyMini/<gm_table>.gm --gm-projection <projection> --order-seed SEED",
+        "cli": "--scheme greedymini --greedymini-file orders/GreedyMini/<gm_table>.gm --gm-projection <projection> --order-seed SEED",
     },
     "mod-minimizer-xor": {
         "description": "Strand-symmetric mod-minimizer (mod-sampling, WABI 2024, with the centre tie rule of Cologni & Pibiri as in SSHash; this repo): ranks t-mers by xor, t == k mod w; the minimal t-mer at x samples the k-mer at offset x mod w, a tie the offset closest to the window centre (two equally close ones: the left if the window <= its reverse complement), so a sequence and its reverse complement select the same loci and the scheme is forward",
-        "cli": "--minimizer-order mod-minimizer-xor --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
+        "cli": "--scheme mod-minimizer-xor --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
     },
 }
 
@@ -261,7 +261,7 @@ def _total_time(build_sec, map_sec) -> float | None:
 
 def flatten(meta: dict) -> dict:
     try:
-        idd = make_id(meta.get("order"), meta.get("gm_k"), meta.get("projection"), meta.get("gm_table"),
+        idd = make_id(meta.get("scheme"), meta.get("gm_k"), meta.get("projection"), meta.get("gm_table"),
                       meta.get("mod_t"), baselines=BASELINES, default_projection=False)
     except ValueError as e:
         raise SystemExit(f"error: {e}")
@@ -272,8 +272,8 @@ def flatten(meta: dict) -> dict:
         "dataset": meta.get("dataset"),
         "mid_occ_cap": meta.get("mid_occ_cap") or DEFAULT_MID_OCC_CAP,
         "mid_occ_threshold": meta.get("mid_occ"),
-        # order, gm_k, projection, gm_table, mod_t (order_names.ID_FIELDS; only the
-        # fields that apply to the order are set, e.g. mod_t only for mod-minimizer-*)
+        # scheme, gm_k, projection, gm_table, mod_t (scheme_names.ID_FIELDS; only the
+        # fields that apply to the scheme are set, e.g. mod_t only for mod-minimizer-*)
         **idd,
         "seed": meta.get("seed"),
         "seed_idx": meta.get("seed_idx"),
@@ -357,7 +357,7 @@ def load_runs(results_dir: Path, datasets: set[str] | None = None) -> list[dict]
         row.update(_build_collect(meta_path.parent / "build.log", row.get("build_wall_s")))
         row.update(_map_profile(meta_path.parent / "map_profile.log"))
         rows.append(row)
-    return sorted(rows, key=lambda r: (*_block_sort_key(r), _order_rank(r), int(r.get("seed_idx") or 0)))
+    return sorted(rows, key=lambda r: (*_block_sort_key(r), _scheme_rank(r), int(r.get("seed_idx") or 0)))
 
 
 def attach_sketch_density(runs: list[dict], n_kmers: dict[str, int]) -> None:
@@ -447,17 +447,17 @@ def _mean_std(values: list[float]) -> tuple[float | None, float | None]:
 
 
 def _variant(row: dict) -> tuple:
-    """The order identity (order_names.ID_FIELDS) of a run/summary row."""
+    """The scheme identity (scheme_names.ID_FIELDS) of a run/summary row."""
     return tuple(row.get(f) for f in ID_FIELDS)
 
 
-def _order_rank(row: dict) -> tuple:
-    """Sort key: canonical order position, then gm_k, projection, gm_table, mod_t."""
-    order = row.get("order") or ""
+def _scheme_rank(row: dict) -> tuple:
+    """Sort key: canonical scheme position, then gm_k, projection, gm_table, mod_t."""
+    scheme = row.get("scheme") or ""
     try:
-        o = ORDER_SORT.index(order)
+        o = SCHEME_SORT.index(scheme)
     except ValueError:
-        o = len(ORDER_SORT)
+        o = len(SCHEME_SORT)
     proj = row.get("projection")
     p = PROJECTION_SORT.index(proj) if proj in PROJECTION_SORT else len(PROJECTION_SORT)
     return (o, row.get("gm_k") or 0, p, row.get("gm_table") or "", row.get("mod_t") or 0)
@@ -490,15 +490,15 @@ def summary_rows(runs: list[dict]) -> list[dict]:
             row[f"{metric}_mean"] = round(mean, 6) if mean is not None else None
             row[f"{metric}_std"] = round(std, 6) if std is not None else None
         out.append(row)
-    return sorted(out, key=lambda r: (*_block_sort_key(r), _order_rank(r)))
+    return sorted(out, key=lambda r: (*_block_sort_key(r), _scheme_rank(r)))
 
 
 def attach_native_ratios(summary: list[dict]) -> None:
-    """{metric}_ratio = this order's mean / native's mean for the same
+    """{metric}_ratio = this scheme's mean / native's mean for the same
     (dataset, mid_occ_cap) block (native = 1 exactly). native has no seed variance of its own, so
     it's an unambiguous, always-present baseline (unlike sshash, which needs
     a modality fallback -- this benchmark has no modality axis)."""
-    native_by_block = {_block(r): r for r in summary if r.get("order") == "native"}
+    native_by_block = {_block(r): r for r in summary if r.get("scheme") == "native"}
     for r in summary:
         base = native_by_block.get(_block(r))
         for metric in SUMMARY_METRICS:
@@ -628,19 +628,19 @@ def dataset_field_order() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# orders -- one row per order; per dataset, the expected (theoretical, for that
+# schemes -- one row per scheme; per dataset, the expected (theoretical, for that
 # dataset's k, t and HPC setting -- see expected_density.py) and particular
 # (measured, mean/std over seeds) density_factor side by side. Same shape as
-# sshash's own scripts/export.py:orders_rows.
+# sshash's own scripts/export.py:schemes_rows.
 # ---------------------------------------------------------------------------
 
 
 def _variant_cli(row: dict) -> str:
-    """The minimap2 flags selecting one order variant (greedymini's table and
-    projection are its own parameters, not part of the order name)."""
-    info = ORDER_DESCRIPTIONS.get(row["order"], {"cli": ""})
+    """The minimap2 flags selecting one scheme variant (greedymini's table and
+    projection are its own parameters, not part of the scheme name)."""
+    info = SCHEME_DESCRIPTIONS.get(row["scheme"], {"cli": ""})
     cli = info["cli"]
-    if row["order"] == "greedymini" and row.get("gm_table"):
+    if row["scheme"] == "greedymini" and row.get("gm_table"):
         cli = cli.replace("<gm_table>", row["gm_table"]).replace("<projection>", row.get("projection") or "at0-cg1")
     return cli
 
@@ -662,15 +662,15 @@ def dataset_combos(datasets: list[dict]) -> list[dict]:
 
 
 def _plain_variant(row: dict) -> tuple:
-    """(order, gm_k, projection, gm_table): an order variant without mod_t,
-    which belongs to the (k, w, L) combination, not to the order."""
+    """(scheme, gm_k, projection, gm_table): a scheme variant without mod_t,
+    which belongs to the (k, w, L) combination, not to the scheme."""
     return tuple(row.get(f) for f in ID_FIELDS if f != "mod_t")
 
 
-def orders_rows(summary: list[dict], datasets: list[dict],
+def schemes_rows(summary: list[dict], datasets: list[dict],
                 expected: dict[tuple, dict[tuple, dict]] | None = None) -> list[dict]:
-    """One row per (order variant, k, w, L) -- see benchmark/common/orders_sheet.py.
-    datasets: dataset_rows(); expected: {(k, w, mod_t): {(order, projection or ''):
+    """One row per (scheme variant, k, w, L) -- see benchmark/common/schemes_sheet.py.
+    datasets: dataset_rows(); expected: {(k, w, mod_t): {(scheme, projection or ''):
     expected_density row}}. A dataset's particular cells are filled on the rows of
     its own (k, w, mod_t); on other combinations they stay empty."""
     expected = expected or {}
@@ -679,37 +679,37 @@ def orders_rows(summary: list[dict], datasets: list[dict],
     measured: dict[tuple, dict] = {}   # (dataset, plain variant, mod_t or None) -> summary row
     variants: set[tuple] = set()
     for r in summary:
-        if r.get("order") and r.get("mid_occ_cap") == DEFAULT_MID_OCC_CAP:
+        if r.get("scheme") and r.get("mid_occ_cap") == DEFAULT_MID_OCC_CAP:
             pv = _plain_variant(r)
             variants.add(pv)
-            t = r.get("mod_t") if r["order"] in MOD_ORDERS else None
+            t = r.get("mod_t") if r["scheme"] in MOD_SCHEMES else None
             measured[(r.get("dataset"), pv, t)] = r
 
     def rank(pv):
-        return _order_rank(dict(zip((f for f in ID_FIELDS if f != "mod_t"), pv)))
+        return _scheme_rank(dict(zip((f for f in ID_FIELDS if f != "mod_t"), pv)))
 
     out = []
     for pv in sorted(variants, key=rank):
         ident = dict(zip((f for f in ID_FIELDS if f != "mod_t"), pv))
-        info = ORDER_DESCRIPTIONS.get(ident["order"], {"description": "", "cli": ""})
+        info = SCHEME_DESCRIPTIONS.get(ident["scheme"], {"description": "", "cli": ""})
         seen_klw = set()
         for c in combos:
-            if ident["order"] not in MOD_ORDERS:  # no mod_t: one row per (k, w, L)
+            if ident["scheme"] not in MOD_SCHEMES:  # no mod_t: one row per (k, w, L)
                 if (c["k"], c["w"]) in seen_klw:
                     continue
                 seen_klw.add((c["k"], c["w"]))
             t = c["mod_t"]
-            row = {"order": ident["order"], **{f: ident[f] for f in ("gm_k", "projection", "gm_table")}}
+            row = {"scheme": ident["scheme"], **{f: ident[f] for f in ("gm_k", "projection", "gm_table")}}
             with_klw(row, c["k"], c["w"])
-            row["mod_t"] = t if ident["order"] in MOD_ORDERS else None
+            row["mod_t"] = t if ident["scheme"] in MOD_SCHEMES else None
             row["description"], row["cli"] = info["description"], _variant_cli(ident)
-            if ident["order"] in MOD_ORDERS:
+            if ident["scheme"] in MOD_SCHEMES:
                 row["cli"] = row["cli"].replace("T (T = 4 + (k-4) % w)", f"{t}")
-            exp = expected.get((c["k"], c["w"], t), {}).get((ident["order"], ident["projection"] or ""), {})
+            exp = expected.get((c["k"], c["w"], t), {}).get((ident["scheme"], ident["projection"] or ""), {})
             row["expected_density_factor_mean"] = _num(exp.get("density_factor_mean"))
             row["expected_density_factor_std"] = _num(exp.get("density_factor_std"))
             for ds in names:
-                r = measured.get((ds, pv, t if ident["order"] in MOD_ORDERS else None)) if ds in c["datasets"] else None
+                r = measured.get((ds, pv, t if ident["scheme"] in MOD_SCHEMES else None)) if ds in c["datasets"] else None
                 mean = r.get("density_factor_mean") if r else None
                 std = r.get("density_factor_std") if r else None
                 if mean not in (None, "") and std in (None, ""):
@@ -720,8 +720,8 @@ def orders_rows(summary: list[dict], datasets: list[dict],
     return out
 
 
-def check_orders_complete(rows: list[dict], datasets: list[dict]) -> None:
-    """Refuse an orders sheet with holes in applicable cells: expected on every
+def check_schemes_complete(rows: list[dict], datasets: list[dict]) -> None:
+    """Refuse a schemes sheet with holes in applicable cells: expected on every
     row, a dataset's particular cells on the rows of its own (k, w, mod_t)."""
     own = {}
     for c in dataset_combos(datasets):
@@ -733,12 +733,12 @@ def check_orders_complete(rows: list[dict], datasets: list[dict]) -> None:
                                                    if key[:2] == (r["k"], r["w"]) and (r["mod_t"] is None or key[2] == r["mod_t"])])]
         bad += [(r, f) for _, f in missing_cells([r], fields)]
     if bad:
-        detail = "; ".join(f"{r['order']} {r.get('projection') or ''} k={r['k']} w={r['w']} t={r['mod_t']}: {f}" for r, f in bad[:12])
-        raise SystemExit(f"error: orders sheet has {len(bad)} empty applicable cell(s): {detail}")
+        detail = "; ".join(f"{r['scheme']} {r.get('projection') or ''} k={r['k']} w={r['w']} t={r['mod_t']}: {f}" for r, f in bad[:12])
+        raise SystemExit(f"error: schemes sheet has {len(bad)} empty applicable cell(s): {detail}")
 
 
-def orders_field_order(summary: list[dict]) -> list[str]:
-    return list(orders_fields(summary_datasets(summary)))
+def schemes_field_order(summary: list[dict]) -> list[str]:
+    return list(schemes_fields(summary_datasets(summary)))
 
 
 # ---------------------------------------------------------------------------
@@ -779,9 +779,9 @@ def _field_category(field: str) -> str:
     return _METRIC_CATEGORY.get(base, "")
 
 
-def _orders_field_category(field: str) -> str:
+def _schemes_field_category(field: str) -> str:
     if field in (*ID_FIELDS, "k", "w", "L", "description", "cli", *EXPECTED_FIELDS):
-        return "order"
+        return "scheme"
     for marker in ("_expected_density_factor_", "_particular_density_factor_"):
         if marker in field:
             return field.split(marker, 1)[0]
@@ -806,24 +806,24 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         # --- id / params
         row("all", "dataset", "the Winnowmap paper's datasets (Jain et al. 2020): chm13_chrX = D1 (CHM13 chrX v0.7) and grch38_wg = D2 (GRCh38 whole genome), PacBio CLR reads simulated with PBSIM 1.0.3 as in the paper (10% error, 15 kb mean, lengths 100-25,000), mapped with -x map-pb; chm13_rel3_ont = D3, 1,000 real CHM13 rel3 ultra-long ONT reads (random sample, >= 1 kbp) mapped to GRCh38 with -x map-ont, no ground truth (see datasets sheet)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "reads in the dataset / of those, simulated reads whose true origin overlaps repeats.bed (chm13_chrX: the DXZ1 centromeric array, the paper's Table 3; grch38_wg: a chr9 segmental duplication pair, our addition; chm13_rel3_ont: none)"),
-        row("all", "k / w / L", "minimizer length k, window size w and L = k + w - 1 (the span of a window; derived, right after w in every sheet that has k and w -- datasets, summary, runs, orders): each preset's own default, as the paper ran minimap2 (map-pb k=19, map-ont k=15; w=10); HPC (homopolymer-compressed) k-mers on for map-pb, off for map-ont (datasets sheet: preset, k, w, L)"),
-        row("all", "order", "minimizer order (canonical names): native (minimap2's own hash, the baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor -- see orders sheet. The next four columns are the order's parameters, separate from its name; blank when they do not apply"),
+        row("all", "k / w / L", "minimizer length k, window size w and L = k + w - 1 (the span of a window; derived, right after w in every sheet that has k and w -- datasets, summary, runs, schemes): each preset's own default, as the paper ran minimap2 (map-pb k=19, map-ont k=15; w=10); HPC (homopolymer-compressed) k-mers on for map-pb, off for map-ont (datasets sheet: preset, k, w, L)"),
+        row("all", "scheme", "minimizer scheme (canonical names): native (minimap2's own hash, the baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor -- see schemes sheet. The next four columns are the scheme's parameters, separate from its name; blank when they do not apply"),
         row("all", "gm_k / gm_table", "greedymini only: the GreedyMini table stem (orders/GreedyMini/<gm_table>.gm, e.g. w10_k15_canonical) and its k (gm_k = 15 here; at -k 19 the table is centre-extended to k = gm_k + 2i)"),
         row("all", "projection", "greedymini only: DNA -> binary projection, --gm-projection at0-cg1 (A,T -> 0, C,G -> 1, the default) or at1-cg0 (flipped: every table key complemented, as sshash). Each projection is a separate set of rows"),
-        row("all", "mod_t", "mod-minimizer only: t-mer length of its inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); merged across each order's seeds"),
-        row("summary/runs", "mid_occ_threshold", "effective repeat-filter threshold minimap2 mapped with (its own '[M::mm_mapopt_update] mid_occ = N' log line; summary: mean over seeds): any minimizer occurring more than this many times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below. In a default block (minimap2 picks it per index) it differs per order; in a fixed-cap block (-f <N> for every order, N = native's own default threshold) it is the same for all orders. Each such block is its own group of rows: own native baseline, divider; the ratios are computed within it"),
+        row("all", "mod_t", "mod-minimizer only: t-mer length of its inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); merged across each scheme's seeds"),
+        row("summary/runs", "mid_occ_threshold", "effective repeat-filter threshold minimap2 mapped with (its own '[M::mm_mapopt_update] mid_occ = N' log line; summary: mean over seeds): any minimizer occurring more than this many times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below. In a default block (minimap2 picks it per index) it differs per scheme; in a fixed-cap block (-f <N> for every scheme, N = native's own default threshold) it is the same for all schemes. Each such block is its own group of rows: own native baseline, divider; the ratios are computed within it"),
         row("runs", "threads", "minimap2 -t for build and map (meta.json; older runs: the build log's CMD line)"),
         row("runs", "seed / seed_idx", "order seed (XOR key; for greedymini the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so its seed_idx is just the repeat number"),
         row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats are identical-index runs that only measure timing noise"),
         # --- density
-        row("summary/runs/orders", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the orders sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),
+        row("summary/runs/schemes", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the schemes sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),
         row("runs", "density_factor_raw_bp", "same occurrences over the raw genome length instead ((w+1) / minimap2 -d's 'average spacing'): understates density by the genome's HPC compression ratio (sketch_len_bp / genome_len_bp under map-pb, ~0.70 on human) and N gaps -- informational only"),
         row("runs", "distinct_minimizers", "distinct minimizer keys in the index (informational; undercounts selected positions whenever a minimizer repeats, so not used for density)"),
-        row("runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density orders are higher here. Raw run value only (not aggregated in the summary)"),
+        row("runs", "avg_occurrences", "mean reference positions per distinct minimizer (minimap2 -d's 'average occurrences'); higher = fewer, more repeated minimizers -- lower-density schemes are higher here. Raw run value only (not aggregated in the summary)"),
         # --- total / build / map
         row("summary/runs", "total_wall_s", "build_wall_s + map_wall_s: end-to-end cost of one run"),
         row("summary/runs", "build_wall_s / build_max_rss_gb", f"index build (minimap2 -d -x <preset> -k <k> -w 10 -t {threads}; runs sheet: threads): wall time and peak memory (decimal GB, 1 GB = 10^9 bytes; /usr/bin/time's KiB converted via bytes), from /usr/bin/time -v"),
-        row("summary/runs", "build_cpu_s / map_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / map step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
+        row("summary/runs", "build_cpu_s / map_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / map step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare schemes on both -- a difference in wall time without one in CPU time is load or I/O, not the scheme"),
         row("runs", "build_collect_s / build_collect_pct", "index build: seconds until minimap2 has collected the selected k-mers of the reference (its own 'collected minimizers' elapsed stamp in build.log: reading and sketching the genome, mostly one thread), and their % of build_wall_s; the rest is sorting the selected k-mers, building the hash tables and writing the index"),
         row("runs", "map_prof_sketch_pct / map_prof_seed_pct / map_prof_chain_pct / map_prof_align_pct", "profiling run only (experiments/profile_run.sh: minimap2 built with -DMM_PHASE_PROF, one thread, a sample of the reads, the fixed threshold; map_profile.log; blank otherwise): % of the mapping time spent computing the selected k-mers of the reads, collecting their hits in the index (seeds -> anchors), chaining, and aligning (including chain post-processing after the strand filter)"),
         row("summary/runs", "map_load_s / map_run_s", "map_wall_s split: seconds minimap2 spent loading the prebuilt index (its own 'loaded/built the index' elapsed stamp; meta.json key index_load_s) and the remainder (reads, seeding, chaining, alignment, output); map_run_s is the index-independent mapping time"),
@@ -840,14 +840,14 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("summary/runs", "mean_identity", "mean of 1 - de (gap-compressed per-base divergence from PAF's de:f: tag, dv:f: fallback) over primary alignments"),
         # --- summary aggregates
         row("summary", "{metric}_mean / {metric}_std", "mean / sample standard deviation over the row's n_repeats runs (std = 0 when n_repeats = 1)"),
-        row("summary", "{metric}_ratio", "this order's mean / native's mean in the same block (same dataset and repeat-filter condition; native = 1, white). Colored green = better than native, red = worse; direction is per metric -- lower is better for density/distinct minimizers/time/memory/frac_incorrectly_mapped, higher is better for frac_mapped/frac_correct*/mean_identity"),
-        row("summary", "correlation with density / distinct minimizers", "two rows right under the table (sshash's layout): for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over all summary rows (ratios are order / native within one block, so rows are comparable); blank for a constant column. No colour scale"),
+        row("summary", "{metric}_ratio", "this scheme's mean / native's mean in the same block (same dataset and repeat-filter condition; native = 1, white). Colored green = better than native, red = worse; direction is per metric -- lower is better for density/distinct minimizers/time/memory/frac_incorrectly_mapped, higher is better for frac_mapped/frac_correct*/mean_identity"),
+        row("summary", "correlation with density / distinct minimizers", "two rows right under the table (sshash's layout): for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over all summary rows (ratios are scheme / native within one block, so rows are comparable); blank for a constant column. No colour scale"),
         row("summary/runs", "index_size_gb", "size of the built index (.mmi, decimal GB = 10^9 bytes): 16 B per distinct key (hash table) + 8 B per occurrence of a repeated key (position array) + the 4-bit packed genome"),
-        # --- orders / datasets
-        row("orders", "description / cli", "what the order does and the minimap2 flags that select it; one row per (order variant, k, w, L) (greedymini once per projection)"),
-        row("orders", "k / w / L / mod_t", "minimizer length k, window w (k-mers) and L = k + w - 1 (the span of a window), and the mod-minimizer t used at that (k, w, L), blank for the other orders (t = 4 + (k-4) % w; 9 at k=19, 5 at k=15). Each order appears once per (k, w, L) the datasets were run with"),
-        row("orders", "expected_density_factor_mean/std", "theoretical density_factor for that row's own k, w, mod_t (HPC for map-pb datasets, raw for map-ont): Monte Carlo on i.i.d. random DNA, mean/std over the 5 seeds (std 0 for native) -- see lib/expected_density.py"),
-        row("orders", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap); filled on the rows of the (k, w, L, mod_t) the dataset was run with (native std 0), empty on rows of another (k, w, L)"),
+        # --- schemes / datasets
+        row("schemes", "description / cli", "what the scheme does and the minimap2 flags that select it; one row per (scheme variant, k, w, L) (greedymini once per projection)"),
+        row("schemes", "k / w / L / mod_t", "minimizer length k, window w (k-mers) and L = k + w - 1 (the span of a window), and the mod-minimizer t used at that (k, w, L), blank for the other schemes (t = 4 + (k-4) % w; 9 at k=19, 5 at k=15). Each scheme appears once per (k, w, L) the datasets were run with"),
+        row("schemes", "expected_density_factor_mean/std", "theoretical density_factor for that row's own k, w, mod_t (HPC for map-pb datasets, raw for map-ont): Monte Carlo on i.i.d. random DNA, mean/std over the 5 seeds (std 0 for native) -- see lib/expected_density.py"),
+        row("schemes", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap); filled on the rows of the (k, w, L, mod_t) the dataset was run with (native std 0), empty on rows of another (k, w, L)"),
         row("datasets", "n_contigs / genome_len_bp / n_reads / n_repeat_regions / repeat_bp", "read off disk: genome.fa.fai, truth.tsv (reads.fa when there is no truth), repeats.bed"),
         row("datasets", "k / w / L / mod_t", "the dataset's k (its preset's default), w, L = k + w - 1 and mod-minimizer t, as used by every run on it"),
         row("datasets", "preset", "minimap2 -x preset for build and map (data/<dataset>/preset; default map-pb): map-pb = PacBio CLR with HPC k-mers, map-ont = ONT without"),
@@ -855,8 +855,8 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         # --- mid_occ algorithm
         row("mid_occ (algorithm)", "what it filters", "at map time each read minimizer is looked up in the index; each hit becomes a chaining anchor. A minimizer with more than mid_occ reference occurrences is dropped (seed.c mm_collect_matches), and one repeated > mid_occ times within the read itself and > 1% of its minimizers is dropped too (mm_seed_mz_flt). Bases covered by dropped minimizers count as rep_len, which lowers MAPQ"),
         row("mid_occ (algorithm)", "rescue", "if mid_occ < max_max_occ (4095, -U), inside each run of dropped minimizers the lowest-occurrence ones are kept, ~1 per 500 bp of read (--occ-dist, mm_seed_select); never above 4095. So the rescue is active when a dataset's mid_occ is below 4095 and the filter is a hard cutoff above it (see the mid_occ column)"),
-        row("mid_occ (algorithm)", "default value", "without -f, mid_occ = occurrence count at the top 0.02% (-f 2e-4) of the index's distinct minimizers, clamped to [10, 1e6] (index.c mm_idx_cal_max_occ) -- so it's computed per index, per order"),
-        row("mid_occ (algorithm)", "why it drifts with the order", "a lower-density order has fewer distinct minimizers, each occurring more often (higher avg_occurrences), so the same 0.02% quantile lands higher (compare mid_occ across orders in the default-cap block). More repetitive hits then pass, adding chaining work without changing where reads map; fixing -f to native's value (mid_occ_cap) removes this confound"),
+        row("mid_occ (algorithm)", "default value", "without -f, mid_occ = occurrence count at the top 0.02% (-f 2e-4) of the index's distinct minimizers, clamped to [10, 1e6] (index.c mm_idx_cal_max_occ) -- so it's computed per index, per scheme"),
+        row("mid_occ (algorithm)", "why it drifts with the scheme", "a lower-density scheme has fewer distinct minimizers, each occurring more often (higher avg_occurrences), so the same 0.02% quantile lands higher (compare mid_occ across schemes in the default-cap block). More repetitive hits then pass, adding chaining work without changing where reads map; fixing -f to native's value (mid_occ_cap) removes this confound"),
     ]
 
 
@@ -866,8 +866,8 @@ def sheet_categories(raw_name: str, fields: list[str]) -> list[str] | None:
         return ["reference"] * len(fields)
     if raw_name in ("runs", "summary"):
         return [_field_category(f) for f in fields]
-    if raw_name == "orders":
-        return [_orders_field_category(f) for f in fields]
+    if raw_name == "schemes":
+        return [_schemes_field_category(f) for f in fields]
     if raw_name == "datasets":
         return ["dataset reference"] * len(fields)
     return None
@@ -880,15 +880,15 @@ def sheet_categories(raw_name: str, fields: list[str]) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 # Repeated across every row of a (dataset, mid_occ_cap) block -- merged
-# vertically instead of printing the same value on every row. 'order' and
+# vertically instead of printing the same value on every row. 'scheme' and
 # 'seed'/'seed_idx' stay unmerged so each row's own identity is always visible.
 XLSX_MERGE_FIELDS = ["dataset", "n_reads", "n_reads_in_repeat", "k", "w", "L"]
-# The order parameters are merged only within one order variant's rows (same
-# order, gm_k, projection, gm_table, mod_t), so two adjacent variants that
+# The scheme parameters are merged only within one scheme variant's rows (same
+# scheme, gm_k, projection, gm_table, mod_t), so two adjacent variants that
 # happen to share a value still each get their own merged cell.
 XLSX_PARAM_FIELDS = ["gm_k", "projection", "gm_table", "mod_t"]
 # summary/runs: a divider after each (dataset, mid_occ_cap) block; 'datasets'
-# and 'orders' are one row per dataset/order already, so no blocks there.
+# and 'schemes' are one row per dataset/scheme already, so no blocks there.
 XLSX_BLOCK_FIELDS = ["dataset", "mid_occ_cap"]
 
 
@@ -912,8 +912,8 @@ def _sheet(name: str, fields: list[str], rows: list[dict], **opts) -> dict:
 
 def _block_opts(fields: list[str]) -> dict:
     """Block/merge options of the summary and runs sheets: blocks by
-    (dataset, mid_occ_cap); the dataset cell spans its caps; the order
-    parameters merge within one order variant's rows."""
+    (dataset, mid_occ_cap); the dataset cell spans its caps; the scheme
+    parameters merge within one scheme variant's rows."""
     variant = ["dataset", "mid_occ_cap", *ID_FIELDS]
     scope = {"dataset": ["dataset"]}
     scope.update({f: variant for f in XLSX_PARAM_FIELDS})
@@ -954,7 +954,7 @@ def main(argv=None) -> int:
     ap.add_argument("--data-dir", type=Path, default=None, help="dataset root, for the 'datasets' sheet (default: $MINIMAP2_DATA_DIR or --results-dir/../data)")
     ap.add_argument("--samtools", default=None, help="samtools binary, for genome.fa.fai (falls back to $SAMTOOLS or 'samtools' on PATH)")
     ap.add_argument("--datasets", default=None, help="comma-separated datasets to export (default: all)")
-    ap.add_argument("--gm-file", type=Path, default=None, help="GreedyMini table, for the 'orders' sheet's expected density (default: orders/GreedyMini/<gm_table>.gm of the dataset's greedymini runs, else w10_k15_canonical)")
+    ap.add_argument("--gm-file", type=Path, default=None, help="GreedyMini table, for the 'schemes' sheet's expected density (default: orders/GreedyMini/<gm_table>.gm of the dataset's greedymini runs, else w10_k15_canonical)")
     args = ap.parse_args(argv)
 
     runs = load_runs(args.results_dir, set(args.datasets.split(",")) if args.datasets else None)
@@ -980,11 +980,11 @@ def main(argv=None) -> int:
     for c in dataset_combos(datasets):
         tables = sorted({r["gm_table"] for r in runs if r["dataset"] in c["datasets"] and r.get("gm_table")})
         gm_file = args.gm_file or gm_dir / f"{tables[0] if tables else 'w10_k15_canonical'}.gm"
-        expected[(c["k"], c["w"], c["mod_t"])] = expected_density.ensure_expected_orders(
+        expected[(c["k"], c["w"], c["mod_t"])] = expected_density.ensure_expected_schemes(
             args.results_dir, c["k"], c["w"], seeds, gm_file=gm_file, mod_t=c["mod_t"], is_hpc=c["hpc"],
         )
-    orders = orders_rows(summary, datasets, expected)
-    check_orders_complete(orders, datasets)
+    schemes = schemes_rows(summary, datasets, expected)
+    check_schemes_complete(schemes, datasets)
 
     csvs_dir, xlsx_dir = args.results_dir / "csvs", args.results_dir
     csvs_dir.mkdir(parents=True, exist_ok=True)
@@ -993,15 +993,15 @@ def main(argv=None) -> int:
     write_csv(csvs_dir / "minimap2_datasets.csv", dataset_field_order(), datasets)
     write_csv(csvs_dir / "minimap2_summary.csv", summary_field_order(), summary)
     write_csv(csvs_dir / "minimap2_runs.csv", RUN_FIELDS, runs)
-    write_csv(csvs_dir / "minimap2_orders.csv", orders_field_order(summary), orders)
-    print(f"wrote {len(datasets)} dataset row(s), {len(summary)} summary row(s), {len(runs)} run row(s), {len(orders)} order row(s) under {csvs_dir}")
+    write_csv(csvs_dir / "minimap2_schemes.csv", schemes_field_order(summary), schemes)
+    print(f"wrote {len(datasets)} dataset row(s), {len(summary)} summary row(s), {len(runs)} run row(s), {len(schemes)} scheme row(s) under {csvs_dir}")
 
-    # sheet order as sshash's export: legend, orders, datasets, summary, runs
+    # sheet order as sshash's export: legend, schemes, datasets, summary, runs
     summary_fields = summary_field_order()
     write_book(xlsx_dir / "minimap2_results.xlsx", [
         _sheet("overview", OVERVIEW_FIELDS, overview_rows(runs),
                widths={"sheet": 20, "column": 42, "meaning": 160}),
-        _sheet("orders", orders_field_order(summary), orders),
+        _sheet("schemes", schemes_field_order(summary), schemes),
         _sheet("datasets", dataset_field_order(), datasets),
         _sheet("summary", summary_fields, summary, **_block_opts(summary_fields),
                ratio_fields=_ratio_polarity(summary_fields), ratio_baseline=1.0,

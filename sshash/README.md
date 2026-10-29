@@ -127,8 +127,8 @@ compile the library with the flag `-DSSHASH_USE_MAX_KMER_LENGTH_63=On`.
 Custom minimizer
 ----------------
 
-This fork adds pluggable minimizer orders (`build -O`) on top of upstream
-SSHash's own default order (`native`), including a shared GreedyMini-based
+This fork adds pluggable minimizer schemes (`build --scheme`) on top of upstream
+SSHash's own default scheme (`native`), including a shared GreedyMini-based
 low-density order also used by this monorepo's
 [kraken2](../kraken2/README.md#custom-minimizer) and
 [kmc](../kmc/README.md#custom-minimizer) forks. See
@@ -136,15 +136,15 @@ low-density order also used by this monorepo's
 shared implementation.
 
 ```bash
-./sshash build -i FILE -k 31 -m 21 -O native ...                                # default, unchanged
-./sshash build -i FILE -k 31 -m 21 -O xor -s SEED ...
-./sshash build -i FILE -k 31 -m 21 -O xor-pcg-hash -s SEED ...
-./sshash build -i FILE -k 31 -m 21 -O greedymini \
+./sshash build -i FILE -k 31 -m 21 --scheme native ...                                # default, unchanged
+./sshash build -i FILE -k 31 -m 21 --scheme xor -s SEED ...
+./sshash build -i FILE -k 31 -m 21 --scheme xor-pcg-hash -s SEED ...
+./sshash build -i FILE -k 31 -m 21 --scheme greedymini \
     --greedy-mini-file ../orders/GreedyMini/w11_k13_canonical.gm \
     [--gm-projection at0-cg1|at1-cg0] ...    # DNA->binary polarity
-./sshash build -i FILE -k 31 -m 21 -O native --regular ...   # two-probe "regular parsing"
-./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-xor --mod-t 10 -s SEED ...       # strand-symmetric mod-minimizer
-./sshash build -i FILE -k 31 -m 21 -O mod-minimizer-greedymini --mod-t 10 \
+./sshash build -i FILE -k 31 -m 21 --scheme native --regular ...   # two-probe "regular parsing"
+./sshash build -i FILE -k 31 -m 21 --scheme mod-minimizer-xor --mod-t 10 -s SEED ...       # strand-symmetric mod-minimizer
+./sshash build -i FILE -k 31 -m 21 --scheme mod-minimizer-greedymini --mod-t 10 \
     --greedy-mini-file ../orders/GreedyMini/w22_k10_canonical.gm ...           # (a table of t-mers)
 ```
 
@@ -173,7 +173,7 @@ rejected with a clear error. Expected density on i.i.d. DNA at `m = 21, w = 11`:
 and 1.524 (k15). `--gm-projection` flips the Sigma polarity. Older
 indexes are refused.
 
-*Mod-minimizer orders.* `-O mod-minimizer-xor` and `-O mod-minimizer-greedymini` (with `--mod-t T`) sample by
+*Mod-minimizer schemes.* `--scheme mod-minimizer-xor` and `--scheme mod-minimizer-greedymini` (with `--mod-t T`) sample by
 strand-symmetric mod-sampling: the k-mer's `T = k - t + 1` t-mers are ranked (canonical t-mer
 XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`, or of a smaller table
 extended to the t-mer by its centre as above, `t - gm_k` even); a minimal t-mer at `x` offers
@@ -184,7 +184,7 @@ The builder requires `t == m (mod w)` (e.g. `t = 4 + (m - 4) mod w`, 10 at k=31,
 k-mer and its reverse complement sample mirrored m-mers of the same canonical value
 (single-probe lookup), the scheme is forward (the builder checks it) and has mod-sampling's
 density (1.56 xor, 1.46 with `w22_k10` on i.i.d. DNA). The rule is shared with the kraken2 and
-minimap2 forks (`common/minimizer-orders/mod_minimizer_rule.h`; it replaced a G/T-strand rule,
+minimap2 forks (`common/minimizer-schemes/mod_minimizer_rule.h`; it replaced a G/T-strand rule,
 index version 15). `--regular` does not
 apply. `util::compute_mod_minimizer` is the definition (used by `lookup`),
 `mod_minimizer_iterator` its incremental version (build, streaming); `test/test_mod_minimizer.cpp`
@@ -198,7 +198,7 @@ the minimizer code (`strand_invariant_minimizer_iterator`, `util::compute_minimi
 hashes the *raw* forward m-mer and builds the canonical m-mer value only for a locus that
 becomes the minimum (the order is a compile-time parameter of the hot paths -- `minimizer_iterator<Kmer, Mode>`,
 `streaming_query<Dict, Mode>`, `util::compute_minimizer_for<Mode>`, the builder's loop --
-selected once by `dispatch_order`, so the native order compiles to upstream's multiply and xor
+selected once by `dispatch_scheme`, so the native order compiles to upstream's multiply and xor
 with the magic precomputed, and xor/xor-pcg-hash to a xor and a PCG scramble). A hash is
 `(rank, tie-break)` with the rank in its top bits, so windows with different ranks are ordered
 by their ranks alone: `hash()` is computed from the Sigma/Gamma bit planes of the m-mer and of
@@ -209,7 +209,7 @@ iterator rolls the Sigma plane one base per call, keeps the window ranks in a ri
 stored twice so a window set is contiguous; a re-scan takes the minimum 8 ranks at a time
 with SSE4.1), and requires either consecutive one-base slides or a `reset()`/`set_position()`
 before the first k-mer of a read or string. `util::compute_minimizer` (used by `lookup`) is
-rank-first too. `custom_order_hasher.hpp` keeps the slow per-base `hash_reference()` and
+rank-first too. `custom_scheme_hasher.hpp` keeps the slow per-base `hash_reference()` and
 `test/minimizer_reference.hpp` the all-windows `compute_minimizer_reference()`; `test/test_gm_centre.cpp`
 (fast == reference == independent string implementation == Python-reference vectors,
 rc-invariance, injectivity, rejections) and `test/test_gm_rolling.cpp` (ranks, rolling,
@@ -223,10 +223,10 @@ DNA-alphabet tables of kmc are not. The on-disk version is 14.
 **NOTE**: GreedyMini works on sshash's default nucleotide encoding (A=00, C=01, G=11, T=10):
 Sigma is bit 0 of a base, Gamma is bit 1, and complementing flips bit 1 only. Its hash of a
 window depends on the base sequence alone, so it equals the one computed on the ACGT = 0123
-packing of the shared implementation (`common/minimizer-orders/greedymini_rank.h`); only
+packing of the shared implementation (`common/minimizer-schemes/greedymini_rank.h`); only
 the numeric tie-break between a k-mer-window and its reverse complement (the canonical m-mer
 value) depends on the packing. `-DSSHASH_USE_TRADITIONAL_NUCLEOTIDE_ENCODING=On` is still
-accepted for the native and xor orders but `-O greedymini` is then refused when the hasher is configured (at build start).
+accepted for the native and xor orders but `--scheme greedymini` is then refused when the hasher is configured (at build start).
 With the default encoding the `native` order builds the same index as vanilla upstream
 `sshash` (apart from the version and the fields this fork adds to the serialized hasher and
 dictionary).

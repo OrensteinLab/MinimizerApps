@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full kraken2 benchmark (strain-exclusion library -E; query sets strain-exclusion, fda-argos, cami;
-# 7 order variants x 5 seeds; --minimum-hit-groups 0 and 2; build 16 threads, classify 1 thread)
+# 7 scheme variants x 5 seeds; --minimum-hit-groups 0 and 2; build 16 threads, classify 1 thread)
 # into a fresh results dir, each timed step waiting for a quiet machine
 # (benchmark/common/wait_low_load.sh), then density microbench + comparison + export (one
 # run_benchmark.sh invocation does all of these).

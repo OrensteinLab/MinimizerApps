@@ -1,6 +1,6 @@
 // streaming_query<Dict, Mode> must be instantiated with the order of the dictionary: a mismatched
 // instantiation throws std::logic_error, a matching one does not.
-// Usage: test_streaming_order INPUT.fa[.gz] GREEDYMINI_TABLE.gm
+// Usage: test_streaming_scheme INPUT.fa[.gz] GREEDYMINI_TABLE.gm
 #include <iostream>
 
 #include "include/dictionary_types.hpp"
@@ -14,7 +14,7 @@
 
 using namespace sshash;
 
-template <custom_order_mode Mode>
+template <custom_scheme_mode Mode>
 static bool constructs(dictionary_type const& dict) {
     try {
         streaming_query<dictionary_type, Mode> q(&dict);
@@ -36,11 +36,11 @@ int main(int argc, char** argv) {
     config.num_threads = 2;
 
     dictionary_type native;
-    config.order = custom_order_mode::NATIVE;
+    config.scheme = custom_scheme_mode::NATIVE;
     native.build(argv[1], config);
 
     dictionary_type gm;
-    config.order = custom_order_mode::GREEDYMINI;
+    config.scheme = custom_scheme_mode::GREEDYMINI;
     config.greedy_mini_filename = argv[2];
     gm.build(argv[1], config);
 
@@ -51,10 +51,10 @@ int main(int argc, char** argv) {
             ++failures;
         }
     };
-    constexpr auto NATIVE = custom_order_mode::NATIVE;
-    constexpr auto XOR_HASH = custom_order_mode::XOR_HASH;
-    constexpr auto XOR_PCG_HASH = custom_order_mode::XOR_PCG_HASH;
-    constexpr auto GREEDYMINI = custom_order_mode::GREEDYMINI;
+    constexpr auto NATIVE = custom_scheme_mode::NATIVE;
+    constexpr auto XOR_HASH = custom_scheme_mode::XOR_HASH;
+    constexpr auto XOR_PCG_HASH = custom_scheme_mode::XOR_PCG_HASH;
+    constexpr auto GREEDYMINI = custom_scheme_mode::GREEDYMINI;
     expect(constructs<NATIVE>(native), true, "native + native instantiation constructs");
     expect(constructs<XOR_HASH>(native), false, "native + xor instantiation throws");
     expect(constructs<XOR_PCG_HASH>(native), false, "native + xor-pcg-hash instantiation throws");

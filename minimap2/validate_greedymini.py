@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-validation of the greedymini order (order.cpp RankState<MM_ORDER_GREEDYMINI>: the
+"""Cross-validation of the greedymini order (scheme.cpp RankState<MM_SCHEME_GREEDYMINI>: the
 shared GreedyMini centre extension, injective packing) against two
 independent Python implementations:
 
@@ -20,7 +20,7 @@ The compiled sketch (sketch_dump driver, `make sketch_dump`) is compared with
 - on sequences with N runs, a Python port of minimap2's own mm_sketch loop
   (sketch.c) fed the reference values. minimap2 does not flush the pending
   minimum at an N (l resets, min is overwritten), so a segment's last
-  minimizer can be dropped -- upstream behaviour that order.cpp's
+  minimizer can be dropped -- upstream behaviour that scheme.cpp's
   sketch_single_window copies on purpose; the port is itself checked against
   the compiled native order (mm_hash64) on the same sequences.
 Covers k = 15 (no extension), 17, 19, 21, 23 and both projections, plus
@@ -146,9 +146,9 @@ def mm_sketch_port(seq: str, w: int, k: int, value) -> list[int]:
     return sorted(set(out))
 
 
-def run_binary(seq: str, w: int, k: int, flip: bool, order: str = "greedymini", seed: int = 0) -> list[int]:
-    args = [str(SKETCH_DUMP), order, str(w), str(k), hex(seed), "0"]
-    if order == "greedymini":
+def run_binary(seq: str, w: int, k: int, flip: bool, scheme: str = "greedymini", seed: int = 0) -> list[int]:
+    args = [str(SKETCH_DUMP), scheme, str(w), str(k), hex(seed), "0"]
+    if scheme == "greedymini":
         args += [str(GM_FILE), "at1-cg0" if flip else "at0-cg1"]
     res = subprocess.run(args, input=seq, capture_output=True, text=True, check=True)
     return sorted(set(int(x) for x in res.stdout.split()))
@@ -195,7 +195,7 @@ def main() -> int:
                 if with_n:
                     kmask = (1 << 2 * k) - 1
                     nat_exp = mm_sketch_port(seq, w, k, lambda codes: mm_hash64(pack(codes), kmask))
-                    nat_got = run_binary(seq, w, k, flip, order="native")
+                    nat_got = run_binary(seq, w, k, flip, scheme="native")
                     if nat_exp != nat_got:
                         failures.append(f"k={k} w={w}: mm_sketch port != compiled native ({len(nat_exp)} vs {len(nat_got)})")
                     exp = mm_sketch_port(seq, w, k, gm_value)

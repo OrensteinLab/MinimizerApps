@@ -1,20 +1,20 @@
-# SSHash minimizer-order benchmark
+# SSHash minimizer-scheme benchmark
 
 Benchmarks [SSHash](https://github.com/jermp/sshash) (a compact k-mer dictionary index) across
-its **minimizer order**: `native` (sshash's own baseline), `xor`, `xor-pcg-hash`,
+its **minimizer scheme**: `native` (sshash's own baseline), `xor`, `xor-pcg-hash`,
 `greedymini` (the GreedyMini rank tables, centre-extended to the m-mer),
 and the strand-symmetric mod-minimizer `mod-minimizer-xor` / `mod-minimizer-greedymini`
-(see below and `../../orders/README.md`). Order names are the canonical ones shared by all
-four benchmarks (`benchmark/common/order_names.py`) and never carry parameters: the GreedyMini
+(see below and `../../orders/README.md`). Scheme names are the canonical ones shared by all
+four benchmarks (`benchmark/common/scheme_names.py`) and never carry parameters: the GreedyMini
 table, projection and the mod-minimizer t-mer length are the separate result fields `gm_k`,
 `projection`, `gm_table` and `mod_t`. Unlike kmc's `lex`
-baseline, sshash has no seed-less order — every order, including `native`, takes a seed, so this
-harness runs every order once per seed with no special-casing.
+baseline, sshash has no seed-less scheme — every scheme, including `native`, takes a seed, so this
+harness runs every scheme once per seed with no special-casing.
 
 ## What is measured
 
-For each dataset, k=31, m=21 (fixed across every order -- see "Choice of m" below), and
-order:
+For each dataset, k=31, m=21 (fixed across every scheme -- see "Choice of m" below), and
+scheme:
 
 - **construction time + peak RSS**: `sshash build` wrapped in `/usr/bin/time -v`
 - **correctness**: `sshash check` (must print `EVERYTHING OK!`)
@@ -23,12 +23,12 @@ order:
   headline query-time metric the SSHash paper itself reports
 - **query time, secondary**: `sshash query` against the dataset's real paired FASTQ reads,
   also `/usr/bin/time -v`-wrapped
-  (streaming queries extend along the stored string after each hit, for every order, so the
-  report's `query_n_searches`/`query_n_extensions` split is comparable across orders)
+  (streaming queries extend along the stored string after each hit, for every scheme, so the
+  report's `query_n_searches`/`query_n_extensions` split is comparable across schemes)
 - **space**: the built `.sshash` file's size on disk (`os.path.getsize`, which should match
   `build`'s own reported `index_size_in_bytes` (exported as `index_size_gb`) up to a small serialization-estimate delta) and
   derived bits/kmer
-- **order equivalence** (hard-fail gate, not just a warning -- see below): every order must
+- **scheme equivalence** (hard-fail gate, not just a warning -- see below): every scheme must
   report the identical `n_kmers` for the same dataset, and must answer a fixed set of
   positive/negative k-mer queries identically
 
@@ -104,28 +104,28 @@ benchmark/sshash/
 |---|---|
 | `config.yaml` | Shared seeds (same 10 hex literals as `benchmark/kmc/config.yaml`, for cross-tool consistency), paths, dataset list, GreedyMini table labels |
 | `sshash_bench.sh` | Main entry (download / run / export / experiment) |
-| `lib/*.sh` | Bash helpers: `constants.sh` (shared defaults + `config.yaml` loading), `env.sh` (.env loading), `datasets.sh` (download + md5), `orders.sh` (order -> CLI flags), `run.sh` (build/check/bench/query + equivalence, `/usr/bin/time -v` wrapping), `experiment.sh` (YAML sweep dispatch) |
+| `lib/*.sh` | Bash helpers: `constants.sh` (shared defaults + `config.yaml` loading), `env.sh` (.env loading), `datasets.sh` (download + md5), `schemes.sh` (scheme -> CLI flags), `run.sh` (build/check/bench/query + equivalence, `/usr/bin/time -v` wrapping), `experiment.sh` (YAML sweep dispatch) |
 | `scripts/config.py` | Load `config.yaml` |
-| `scripts/orders.py` | Order name -> sshash CLI flags (Python twin of `lib/orders.sh`) |
+| `scripts/schemes.py` | Scheme name -> sshash CLI flags (Python twin of `lib/schemes.sh`) |
 | `scripts/equivalence.py` | Fixed positive/negative k-mer query-set generation + per-run equivalence checks |
 | `scripts/export.py` | CSV / XLSX export + the equivalence hard-fail gate |
 | `scripts/zenodo.py` | Zenodo record 17582116 lookup (maintainers only; not on the normal run path) |
 | `scripts/meta.py` | Per-run `meta.json` writer |
 | `scripts/common.py` | Shared helpers (`.env` loading, `die()`) |
 | `scripts/density.py` | Sliding-window "particular" density + pure-Python re-implementations of sshash's order formulas |
-| `scripts/expected_density.py` | Monte Carlo theoretical `density_factor` per order (feeds the `orders` xlsx sheet); thin adapter over the shared `benchmark/common/expected_density_driver.py` (variant x seed loop, mean/std, cache) |
+| `scripts/expected_density.py` | Monte Carlo theoretical `density_factor` per scheme (feeds the `schemes` xlsx sheet); thin adapter over the shared `benchmark/common/expected_density_driver.py` (variant x seed loop, mean/std, cache) |
 | `scripts/experiments.py` | Load/expand `experiments/*.yaml` (shared engine in `benchmark/common/experiments_lib.py`) |
 | `data/` | Dataset catalog (`datasets.csv`) + committed sanity-test query sets (`queries/`) |
 | `experiments/*.yaml` | Multi-config sweep definitions |
-| `tests/` | Offline sanity checks: `test_order_sanity.py` (order/equivalence correctness against the in-repo sample) + `test_export.py` (`export.py`'s aggregation/validation/CSV/XLSX logic, synthetic rows, no sshash binary needed); `make venv` once, then `make test` |
+| `tests/` | Offline sanity checks: `test_scheme_sanity.py` (scheme/equivalence correctness against the in-repo sample) + `test_export.py` (`export.py`'s aggregation/validation/CSV/XLSX logic, synthetic rows, no sshash binary needed); `make venv` once, then `make test` |
 
 Python CLI (from the repo root, `BENCHMARK_DIR=benchmark/sshash` set by `sshash_bench.sh`):
 
 ```bash
 python3 -m scripts export --results-dir …
 python3 -m scripts experiment list
-python3 -m scripts orders flags xor 0xDEADBEEF
-python3 -m scripts orders variants all --k 31 --m 21   # the (order, table, projection) runs
+python3 -m scripts schemes flags xor 0xDEADBEEF
+python3 -m scripts schemes variants all --k 31 --m 21   # the (scheme, table, projection) runs
 python3 -m scripts zenodo list-files
 ```
 
@@ -139,7 +139,7 @@ source this harness doesn't touch; `make -C benchmark/sshash venv` creates it) a
 make -C sshash all                                  # build sshash (cmake + make); do not edit its sources
 cp benchmark/sshash/.env.example benchmark/sshash/.env   # edit SSHASH_BENCH_ROOT
 benchmark/sshash/sshash_bench.sh download -d cod
-benchmark/sshash/sshash_bench.sh run -d cod -n 1     # quick smoke: 1 seed, all 9 orders
+benchmark/sshash/sshash_bench.sh run -d cod -n 1     # quick smoke: 1 seed, all 9 schemes
 # → $SSHASH_BENCH_ROOT/results/csvs/sshash_{runs,summary,...}.csv
 # → $SSHASH_BENCH_ROOT/results/sshash_results.xlsx
 ```
@@ -149,32 +149,32 @@ benchmark/sshash/sshash_bench.sh run -d cod -n 1     # quick smoke: 1 seed, all 
 ```bash
 benchmark/sshash/sshash_bench.sh -h
 benchmark/sshash/sshash_bench.sh download -d cod
-benchmark/sshash/sshash_bench.sh run -d cod -n 1                     # 1 seed, all orders
-benchmark/sshash/sshash_bench.sh run -d cod,kestrel,human,ncbi-virus,se,hprc -O all -n 5 -t 16   # full sweep
+benchmark/sshash/sshash_bench.sh run -d cod -n 1                     # 1 seed, all schemes
+benchmark/sshash/sshash_bench.sh run -d cod,kestrel,human,ncbi-virus,se,hprc -S all -n 5 -t 16   # full sweep
 benchmark/sshash/sshash_bench.sh export                              # re-export CSV/XLSX only
 benchmark/sshash/sshash_bench.sh all -d cod -n 1                      # download + run + export
 ```
 
-Defaults: `cod,kestrel,human,ncbi-virus,se,hprc`, k=31, m=21, `-O all` (native, xor, xor-pcg-hash, greedymini,
+Defaults: `cod,kestrel,human,ncbi-virus,se,hprc`, k=31, m=21, `-S all` (native, xor, xor-pcg-hash, greedymini,
 mod-minimizer-xor, mod-minimizer-greedymini), `-M canonical`, `-n 5` seeds, 8 threads.
 
 The command name (`download`/`run`/`export`/`all`/`experiment`) must come **first**, before any
 options -- e.g. `sshash_bench.sh run --dataset-file PATH -n 1`, not the reverse.
 
 `-M/--modality` selects `canonical` (default, single-probe) or `regular` (two-probe, `sshash
-build --regular`), a separate axis from the order, e.g. `-O native -M regular`. `--force` re-runs a config even if its `meta.json` already exists (default:
+build --regular`), a separate axis from the scheme, e.g. `-S native -M regular`. `--force` re-runs a config even if its `meta.json` already exists (default:
 skip unchanged configs).
 
 **Experiments** (multi-config sweeps from YAML):
 
 ```bash
 benchmark/sshash/sshash_bench.sh experiment list
-benchmark/sshash/sshash_bench.sh experiment sweep_orders   # primary: all orders x 5 seeds, all 6 datasets
+benchmark/sshash/sshash_bench.sh experiment sweep_schemes   # primary: all schemes x 5 seeds, all 6 datasets
 benchmark/sshash/sshash_bench.sh experiment sweep_m        # secondary/optional: native only, m in {7,9,11,13}
 ```
 
 Experiment files live in `experiments/`. Each has shared `defaults` plus a `configs` list; keys
-are `datasets`, `k`, `m`, `orders`, `n_seeds`, `threads`, `force`, `run_tag`.
+are `datasets`, `k`, `m`, `schemes`, `n_seeds`, `threads`, `force`, `run_tag`.
 
 ### Smoke testing
 
@@ -198,46 +198,46 @@ hard-fail gate) runs unmodified against either.
 
 ### Choice of m
 
-**m is fixed at 21 for every order** in the primary comparison (`sweep_orders.yaml` /
-`run -O all`), by deliberate design: the point of this benchmark is isolating the *order's*
+**m is fixed at 21 for every scheme** in the primary comparison (`sweep_schemes.yaml` /
+`run -S all`), by deliberate design: the point of this benchmark is isolating the *scheme's*
 effect on space/time at a fixed minimizer length, not conflating it with an m sweep. m=21 gives
 w=k-m+1=11, the window the GreedyMini tables `w11_k13`/`w11_k15` were built for, and using the same
-(k, m) for every order keeps the comparison apples-to-apples.
+(k, m) for every scheme keeps the comparison apples-to-apples.
 `greedymini` runs `orders/GreedyMini/w11_k13_canonical.gm` and `w11_k15_canonical.gm` (two variants),
 extended to `l=21` around the centre `gm_k`-mer (`m - gm_k` even). Varying
 m *is* useful as its own, separate question -- `experiments/sweep_m.yaml` covers that, explicitly
-at a single order (`native`) so it isn't mistaken for a second order comparison, and is
-optional/secondary to the primary `sweep_orders` results.
+at a single scheme (`native`) so it isn't mistaken for a second scheme comparison, and is
+optional/secondary to the primary `sweep_schemes` results.
 
 ### Equivalence checking
 
 Two independent hard-fail gates run at `export` time (mirroring kmc's
 `validate_custom_vs_lex`, generalized here since sshash has no seed-less baseline to compare
-everything else *against* -- every order, including `native`, is just another group member):
+everything else *against* -- every scheme, including `native`, is just another group member):
 
-1. **`n_kmers` must be identical** across every order/seed run of the same dataset. sshash
+1. **`n_kmers` must be identical** across every scheme/seed run of the same dataset. sshash
    already asserts this internally in a sense (`build --check`/`sshash check` verify the index
-   is self-consistent), but this is the cross-order check that the *set of k-mers indexed*
-   didn't silently change because of the order.
+   is self-consistent), but this is the cross-scheme check that the *set of k-mers indexed*
+   didn't silently change because of the scheme.
 2. **Fixed positive/negative k-mer query answers must be identical.** Once per dataset,
-   `scripts/equivalence.py` builds a throwaway `native`-order reference index, samples ~10,000
+   `scripts/equivalence.py` builds a throwaway `native`-scheme reference index, samples ~10,000
    real k-mers from the input as positives and ~10,000 random 31-mers verified absent (via
    `sshash query` against that reference index) as negatives, and caches them under
-   `$SSHASH_DATA_DIR/<id>/queries/{pos,neg}.txt`. Every subsequent order/seed run re-queries
+   `$SSHASH_DATA_DIR/<id>/queries/{pos,neg}.txt`. Every subsequent scheme/seed run re-queries
    both fixed sets against its own index and records `query_pos_match`/`query_neg_match`
    booleans (all-present / all-absent, from `sshash query`'s own aggregate
    `query_n_positive_kmers`/`query_n_negative_kmers` counts -- it doesn't report per-k-mer answers, so
    the aggregate count against a fixed all-positive or all-negative file is the check).
    `sshash check`'s own `EVERYTHING OK!` is also folded into this gate (`check_ok`).
 
-`export` (`scripts/export.py:validate_orders_equivalence`) reads these fields back from every
+`export` (`scripts/export.py:validate_schemes_equivalence`) reads these fields back from every
 run's `meta.json` and `die()`s hard, printing every violation, if any is false or if
 `n_kmers` disagrees -- not a warning, a failed export.
 
-The offline sanity test (`tests/test_order_sanity.py::test_sshash_integration`) exercises the
+The offline sanity test (`tests/test_scheme_sanity.py::test_sshash_integration`) exercises the
 same logic end-to-end against the in-repo sample dataset, using the **committed**
 `data/queries/salmonella_enterica_k31_{pos,neg}.txt` (3000 k-mers each, generated the same way
-against a native-order build of that sample) instead of generating a fresh set, so the test has
+against a native-scheme build of that sample) instead of generating a fresh set, so the test has
 no network dependency and a fixed expected `n_kmers` (4787534) to assert against.
 
 ## Outputs
@@ -258,9 +258,9 @@ Per-run artifacts live under `$SSHASH_BENCH_ROOT/results/runs/` in a nested layo
 runs/
   {dataset}/
     {modality}/            # canonical | regular -- see -M/--modality
-      {order}[/params]/     # native | xor | xor-pcg-hash | mod-minimizer-xor/t10 |
+      {scheme}[/params]/    # native | xor | xor-pcg-hash | mod-minimizer-xor/t10 |
                             # greedymini/k15_at0-cg1 | mod-minimizer-greedymini/k10_at0-cg1_t10
-                            # (order_names.order_dir_name: k<gm_k>_<projection>_t<mod_t>)
+                            # (scheme_names.scheme_dir_name: k<gm_k>_<projection>_t<mod_t>)
         {seed_idx}/          # 0…n-1
           build.log          # sshash build --verbose --bucket-stats stdout+stderr (trailing JSON blob)
           build_time.txt     # GNU /usr/bin/time -v
@@ -279,19 +279,19 @@ runs/
 | file | rows | purpose | in `.xlsx` |
 |---|---|---|---|
 | `sshash_runs.csv` | one per run | all metrics + telemetry | `runs` |
-| `sshash_orders.csv` | one per order variant (k, w, L) | description, CLI, expected + particular density_factor | `orders` |
-| `sshash_summary.csv` | one per dataset x order variant | mean/std across seeds, ratio vs native | `summary` |
-| `sshash_space_breakdown.csv` | one per dataset x order variant | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
+| `sshash_schemes.csv` | one per scheme variant (k, w, L) | description, CLI, expected + particular density_factor | `schemes` |
+| `sshash_summary.csv` | one per dataset x scheme variant | mean/std across seeds, ratio vs native | `summary` |
+| `sshash_space_breakdown.csv` | one per dataset x scheme variant | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
 | `significance_sshash.csv` | one per metric x dataset x scheme | paired test of the change from native (`benchmark/common/significance.py`, see `benchmark/README.md`) | `significance` |
 | `density_effect_sshash.csv` | one per metric x (all, dataset) | Pearson r of the metric and the density factor, both as ratios to native's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
-| `sshash_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram`, `density_effect`, `density_effect_points`, `significance` (benchmark/common/xlsx_book.py) | — |
+| `sshash_results.xlsx` | — | `overview`, `schemes`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram`, `density_effect`, `density_effect_points`, `significance` (benchmark/common/xlsx_book.py) | — |
 
 Re-export only: `benchmark/sshash/sshash_bench.sh export` (no network needed once local run
 data exists).
 
 ### CSV columns (main fields)
 
-**Shared keys:** `dataset`, `k` (minimizer length, sshash's m), `w` (window), `L` (= k+w-1, sshash's k-mer length), the order variant `order` (`native`/`xor`/`xor-pcg-hash`/`greedymini`/
+**Shared keys:** `dataset`, `k` (minimizer length, sshash's m), `w` (window), `L` (= k+w-1, sshash's k-mer length), the scheme variant `scheme` (`native`/`xor`/`xor-pcg-hash`/`greedymini`/
 `mod-minimizer-xor`/`mod-minimizer-greedymini`), `gm_k`, `projection` (`at0-cg1`/`at1-cg0`),
 `gm_table` (table file stem), `mod_t` (blank where they do not apply), then the app parameters `modality`
 (`canonical`/`regular`, see `-M/--modality`) and, in runs, `threads`, then the seed columns (`n_repeats`, the number of runs aggregated into the row's mean/std, in
@@ -319,10 +319,10 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | sheet | content |
 |---|---|
 | `overview` | column reference: what every non-obvious column means |
-| `orders` | one row per (order variant, k, w, L) with the unified names shared by all apps (k = minimizer length = 21, w = window = 11, L = k + w - 1 = 31 = sshash's k-mer length): order, k, w, L, gm_k, projection, gm_table, mod_t, description, cli, expected + per-dataset particular density_factor mean/std (no empty density cell, `export` fails otherwise; also written as `sshash_orders.csv`; layout in `benchmark/common/orders_sheet.py`) |
+| `schemes` | one row per (scheme variant, k, w, L) with the unified names shared by all apps (k = minimizer length = 21, w = window = 11, L = k + w - 1 = 31 = sshash's k-mer length): scheme, k, w, L, gm_k, projection, gm_table, mod_t, description, cli, expected + per-dataset particular density_factor mean/std (no empty density cell, `export` fails otherwise; also written as `sshash_schemes.csv`; layout in `benchmark/common/schemes_sheet.py`) |
 | `datasets` | one row per dataset: k, w, L, measured n_kmers |
-| `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this variant's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x order rows. |
-| `space_breakdown` | one row per dataset x order: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
+| `summary` | mean/std per dataset x scheme across seeds, plus `{metric}_ratio` = this variant's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x scheme rows. |
+| `space_breakdown` | one row per dataset x scheme: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
 | `runs` | one row per run (every metric + telemetry, unfiltered); after `experiments/profile_run.sh` also the streaming-query profile `query_prof_full_lookups`, `query_prof_positions_per_full_lookup`, `query_prof_verify_calls`, `query_prof_positions_per_verify` (the two ratios also on `summary`) |
 
 ## Measurement protocol
@@ -333,27 +333,27 @@ and query 1 + 1; one NUMA node, one thread per core; lists in `cpus.txt`, `cpus_
 exported as `build_/bench_/query_pinned_cpus`; with its memory bound to the slot's node and a step record (`step_*.json`, exported as `build|bench|query_node`, `_huge_fraction`, `_foreign_busy_cores`, ... -- see the protocol)) and per-step wall and CPU
 seconds, RSS, major page faults and reads (runs sheets only). Query wall time splits into `query_load_s`
 (index load and start-up) and `query_run_s` (sshash's own timed queries, seconds). `native` runs once per seed
-like every other order. `experiments/full_run.sh` needs the default-encoding binary
+like every other scheme. `experiments/full_run.sh` needs the default-encoding binary
 (`sshash/build/sshash`, `SSHASH_BIN` overrides; a build with the traditional nucleotide encoding cannot run
 GreedyMini).
 
 ## Notes
 
-- Every order (including `native`) takes `-s SEED`; there is no seed-less baseline the way
-  kmc's `lex` is, so this benchmark never special-cases a "run once" order the way kmc does.
-- `greedymini` (sshash `-O greedymini --greedy-mini-file TABLE`, the centre extension of the
+- Every scheme (including `native`) takes `-s SEED`; there is no seed-less baseline the way
+  kmc's `lex` is, so this benchmark never special-cases a "run once" scheme the way kmc does.
+- `greedymini` (sshash `--scheme greedymini --greedy-mini-file TABLE`, the centre extension of the
   table to the m-mer, see `orders/README.md`) runs once per variant, a (table, projection)
   pair from `config.yaml`'s `greedymini` section (`tables`: `w11_k13_canonical.gm`,
   `w11_k15_canonical.gm`; `projections`: `at0-cg1`). Add `at1-cg0` there (or pass
   `--gm-projections at0-cg1,at1-cg0`; `--gm-tables` likewise selects tables) for the flipped
   DNA->binary polarity (`sshash build --gm-projection at1-cg0`: AT->1, CG->0 instead of the
   default AT->0, CG->1). Each variant is its own run directory (`greedymini/k15_at1-cg0/...`),
-  summary/orders row and `meta.json` entry with its own `gm_k`, `projection` and `gm_table`.
+  summary/schemes row and `meta.json` entry with its own `gm_k`, `projection` and `gm_table`.
   The centre extension needs `m - gm_k` even, so e.g. a table with an even `gm_k` is rejected at
-  m=21; `sshash_bench.sh run` checks this up front (`python -m scripts orders check-gm greedymini M
+  m=21; `sshash_bench.sh run` checks this up front (`python -m scripts schemes check-gm greedymini M
   TABLE`). Example:
-  `./sshash_bench.sh run -d cod,kestrel -n 5 -O native,greedymini --gm-projections at0-cg1,at1-cg0`.
-- Strand-symmetric mod-minimizer orders (sshash `-O mod-minimizer-xor` / `-O
+  `./sshash_bench.sh run -d cod,kestrel -n 5 -S native,greedymini --gm-projections at0-cg1,at1-cg0`.
+- Strand-symmetric mod-minimizer schemes (sshash `--scheme mod-minimizer-xor` / `--scheme
   mod-minimizer-greedymini` with `--mod-t T`, see `orders/README.md`): `mod-minimizer-xor` ranks
   the k-mer's t-mers by xor, `T = 4 + (m - 4) mod w` (10 at k=31, m=21);
   `mod-minimizer-greedymini` by a GreedyMini table of t-mers from `config.yaml`'s
@@ -361,10 +361,10 @@ GreedyMini).
   `all`; `--regular` does not apply to them. With
   t = m mod w (both here) the scheme is forward, which the build checks; any other t makes the
   two strands' offset rules disagree (a t=11 table gave density ~2.2, worse than native).
-  The orders sheet's expected density is the Monte Carlo on i.i.d. DNA (equal for both polarities
+  The schemes sheet's expected density is the Monte Carlo on i.i.d. DNA (equal for both polarities
   up to sampling noise by symmetry); the particular density per dataset is what can differ.
 - The built `.sshash` index is deleted after each run's check/bench/query/equivalence steps
-  finish (to keep disk usage bounded across cod/kestrel/human x 9 orders x N seeds x up to 2
+  finish (to keep disk usage bounded across cod/kestrel/human x 9 schemes x N seeds x up to 2
   `t` values); pass `--keep-index` to retain it.
 - `sshash build`/`bench`/`query --verbose` all print one trailing single-line JSON blob (values
   are JSON *strings*, parsed with `json.loads` then cast) -- `lib/run.sh` captures each tool's

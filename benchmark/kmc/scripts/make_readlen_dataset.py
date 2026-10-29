@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("next (pass --mem explicitly; derived datasets aren't in data/datasets.csv):")
     print(
-        f"  benchmark/kmc3_bench.sh run -d {args.out_id} -k 28 -O all -n 5 "
+        f"  benchmark/kmc3_bench.sh run -d {args.out_id} -k 28 -S all -n 5 "
         "--mem 12 --bins 512 -t 12 --force"
     )
     return 0

@@ -20,19 +20,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(K2), "common"))
 import step_record  # noqa: E402
 
 import export_layout as E  # noqa: E402
-import order_names  # noqa: E402
+import scheme_names  # noqa: E402
 from xlsx_check import check_xlsx  # noqa: E402
 from xlsx_util import load_xlsx  # noqa: E402
 
-ORDERS = ["xor", "xor-pcg-hash", "greedymini/k15_at0-cg1", "mod-minimizer-xor/t6"]   # run directory names
-SHORT = ["xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor"]                  # canonical `order` values
+SCHEME_DIRS = ["xor", "xor-pcg-hash", "greedymini/k15_at0-cg1", "mod-minimizer-xor/t6"]   # run directory names
+SHORT = ["xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor"]                  # canonical `scheme` values
 TABLES = {"greedymini": "w5_k15_canonical"}
 
 
-def ident(order_dir):
+def ident(sdir):
     """The five identity fields of a run directory + its table (as the manifest columns)."""
-    idd = order_names.parse_order_dir(order_dir)
-    idd["gm_table"] = TABLES.get(idd["order"])
+    idd = scheme_names.parse_scheme_dir(sdir)
+    idd["gm_table"] = TABLES.get(idd["scheme"])
     return idd
 MHGS = (0, 2)
 
@@ -40,13 +40,13 @@ MHGS = (0, 2)
 def per_seed(library, dataset, seeds=(1, 2, 3)):
     rows = []
     for mhg in MHGS:
-        for oi, order in enumerate(ORDERS):
+        for oi, sdir in enumerate(SCHEME_DIRS):
             for sd in seeds:
                 wall = 2.0 + oi + 0.1 * sd + 10 * mhg
-                rows.append(dict(ident(order), **{
-                    "scheme": order.split("/")[0], "dataset": dataset, "minimum_hit_groups": mhg,
+                rows.append(dict(ident(sdir), **{
+                    "scheme": sdir.split("/")[0], "dataset": dataset, "minimum_hit_groups": mhg,
                     "seed_idx": sd,
-                    "context": "%s/%s/%d [%s, mhg%d]" % (library, order, sd, dataset, mhg),
+                    "context": "%s/%s/%d [%s, mhg%d]" % (library, sdir, sd, dataset, mhg),
                     "seed": "1" * 20 + "0" * 44,
                     "build_s": 100.0 * (oi + 1) + sd, "build_gb": 10.0 + oi,
                     "class_s": wall, "db_load_s": 0.5 * wall, "class_proc_s": 0.5 * wall,
@@ -59,10 +59,10 @@ def per_seed(library, dataset, seeds=(1, 2, 3)):
 
 def acc_rows(library, dataset, kind):
     rows = []
-    for mhg, oi, order, s in [(m, o, ORDERS[o], sd) for m in MHGS for o in range(len(ORDERS)) for sd in (1, 2, 3)]:
+    for mhg, oi, sdir, s in [(m, o, SCHEME_DIRS[o], sd) for m in MHGS for o in range(len(SCHEME_DIRS)) for sd in (1, 2, 3)]:
         if True:
-            ctx = "%s/%s/%d" % (library, order, s)
-            base = {"scheme": order.split("/")[0], "dataset": dataset, "minimum_hit_groups": mhg,
+            ctx = "%s/%s/%d" % (library, sdir, s)
+            base = {"scheme": sdir.split("/")[0], "dataset": dataset, "minimum_hit_groups": mhg,
                     "seed_idx": s, "seed": "1" * 20 + "0" * 44, "context": ctx}
             if kind == "labeled":
                 for dom in ("all", "prokaryote", "virus"):
@@ -89,10 +89,10 @@ def acc_rows(library, dataset, kind):
     return rows
 
 
-DENS = [dict(dict((k, v) for k, v in ident(o).items() if k != "order"), scheme=o.split("/")[0],
+DENS = [dict(dict((k, v) for k, v in ident(o).items() if k != "scheme"), scheme=o.split("/")[0],
              seed_idx=s, k=31.0, w=5.0, L=35.0, fac_expected=1.5 + 0.1 * i,
              fac_particular=1.6 + 0.1 * i, ns_per_minimizer=90.0)
-        for i, o in enumerate(ORDERS) for s in (1, 2)]
+        for i, o in enumerate(SCHEME_DIRS) for s in (1, 2)]
 QUERY = [{"dataset": "strain-exclusion", "sources": "held-out genomes (Mason)", "n_sources": 50,
           "n_fragments": 1000, "read_length_bp": 100, "paired": "yes", "path": "/x"}]
 
@@ -102,10 +102,10 @@ def make_library(base, lib, datasets):
     if not os.path.isdir(run_root):
         os.makedirs(run_root)
     ps, acc = [], {}
-    # fake hash.k2d headers (capacity, size, key_bits, value_bits): size = 1000 * (order index + 1)
-    for oi, order in enumerate(ORDERS):
+    # fake hash.k2d headers (capacity, size, key_bits, value_bits): size = 1000 * (scheme index + 1)
+    for oi, sdir in enumerate(SCHEME_DIRS):
         for sd in (1, 2, 3):
-            d = os.path.join(run_root, order, str(sd), "db")
+            d = os.path.join(run_root, sdir, str(sd), "db")
             if not os.path.isdir(d):
                 os.makedirs(d)
             with open(os.path.join(d, "hash.k2d"), "wb") as f:
@@ -159,7 +159,7 @@ class ExportLayout(unittest.TestCase):
                 continue
             for r in rows:
                 for k, v in r.items():
-                    if k in ("order", "scheme"):
+                    if k == "scheme":
                         self.assertIn(v, SHORT)
         for r in tables["overview"][1]:
             text = " ".join(str(x) for x in r.values())
@@ -189,21 +189,21 @@ class ExportLayout(unittest.TestCase):
         for old in ("n_seeds", "db_load_s", "classify_processing_s", "least-busy"):
             self.assertNotIn(old, text)
 
-    def test_build_once_per_library_order(self):
+    def test_build_once_per_library_scheme(self):
         run_root, (xlsx, tdir, tables) = self.lib()
         build_runs, build = tables["build_runs"][1], tables["build"][1]
-        self.assertEqual(len(build_runs), 4 * 3)          # order x seed, not x dataset / mhg
+        self.assertEqual(len(build_runs), 4 * 3)          # scheme x seed, not x dataset / mhg
         self.assertEqual(len(build), 4)
         self.assertNotIn("minimum_hit_groups", tables["build"][0])
         self.assertNotIn("minimum_hit_groups", tables["build_runs"][0])
-        r0 = [r for r in build if r["order"] == "xor"][0]
+        r0 = [r for r in build if r["scheme"] == "xor"][0]
         self.assertAlmostEqual(r0["build_wall_s_mean"], 102.0)
         self.assertAlmostEqual(r0["build_wall_s_std"], 1.0)
         self.assertEqual(r0["build_wall_s_ratio"], 1.0)
-        pcg = [r for r in build if r["order"] == "xor-pcg-hash"][0]
+        pcg = [r for r in build if r["scheme"] == "xor-pcg-hash"][0]
         self.assertAlmostEqual(pcg["build_wall_s_ratio"], round(202.0 / 102.0, 4))
         self.assertAlmostEqual(r0["expected_density_factor_mean"], 1.5)
-        self.assertEqual(sorted(r["order"] for r in build), sorted(SHORT))
+        self.assertEqual(sorted(r["scheme"] for r in build), sorted(SHORT))
         for sheet in ("summary", "runs"):
             for f in tables[sheet][0]:
                 self.assertFalse(f.startswith(("build_", "index_size", "rank_")) and f != "build_pinned_cpus", (sheet, f))
@@ -229,12 +229,12 @@ class ExportLayout(unittest.TestCase):
             cats = E._categories(sheet, fields)
             self.assertEqual(cats[fields.index(fields[i])], "density")
             self.assertIn("minimizers", cats)
-        # runs carries the per-seed order properties joined by seed
+        # runs carries the per-seed scheme properties joined by seed
         runs = tables["runs"][1]
-        r = [x for x in runs if x["order"] == "greedymini" and x["seed_idx"] == 2][0]
+        r = [x for x in runs if x["scheme"] == "greedymini" and x["seed_idx"] == 2][0]
         self.assertEqual(r["distinct_minimizers"], 3002)
-        self.assertEqual(tables["orders"][0][-4:-2], ["expected_density_factor_mean", "expected_density_factor_std"])
-        self.assertEqual(tables["orders"][0][:10], ["order", "k", "w", "L", "gm_k", "projection", "gm_table",
+        self.assertEqual(tables["schemes"][0][-4:-2], ["expected_density_factor_mean", "expected_density_factor_std"])
+        self.assertEqual(tables["schemes"][0][:10], ["scheme", "k", "w", "L", "gm_k", "projection", "gm_table",
                                                      "mod_t", "description", "cli"])
 
     def test_distinct_minimizers_header(self):
@@ -255,7 +255,7 @@ class ExportLayout(unittest.TestCase):
 
     def test_distinct_minimizers_columns(self):
         run_root, (xlsx, tdir, tables) = self.lib()
-        build = dict((r["order"], r) for r in tables["build"][1])
+        build = dict((r["scheme"], r) for r in tables["build"][1])
         self.assertAlmostEqual(build["xor"]["distinct_minimizers_mean"], 1002.0)
         self.assertEqual(build["xor"]["distinct_minimizers_ratio"], 1.0)
         self.assertAlmostEqual(build["greedymini"]["distinct_minimizers_ratio"], round(3002 / 1002, 4))
@@ -315,23 +315,23 @@ class ExportLayout(unittest.TestCase):
     def test_classify_and_runs(self):
         run_root, (xlsx, tdir, tables) = self.lib()
         runs, summ = tables["runs"][1], tables["summary"][1]
-        self.assertEqual(len(runs), 3 * 4 * 2 * 3)        # dataset x order x mhg x seed
+        self.assertEqual(len(runs), 3 * 4 * 2 * 3)        # dataset x scheme x mhg x seed
         self.assertEqual(len(summ), 3 * 4 * 2)
         f = tables["runs"][0]
-        self.assertEqual(f[:9], ["run_id", "library", "dataset", "order", "gm_k",
+        self.assertEqual(f[:9], ["run_id", "library", "dataset", "scheme", "gm_k",
                                  "projection", "gm_table", "mod_t", "minimum_hit_groups"])
-        self.assertEqual(tables["summary"][0][:9], ["library", "dataset", "order", "gm_k",
+        self.assertEqual(tables["summary"][0][:9], ["library", "dataset", "scheme", "gm_k",
                                                     "projection", "gm_table", "mod_t", "minimum_hit_groups", "n_repeats"])
-        g = [r for r in runs if r["order"] == "greedymini"][0]
+        g = [r for r in runs if r["scheme"] == "greedymini"][0]
         self.assertEqual((g["gm_k"], g["projection"], g["gm_table"], g["mod_t"]),
                          (15, "at0-cg1", "w5_k15_canonical", None))
         self.assertEqual(g["run_id"].split("/")[1:3], ["greedymini", "k15_at0-cg1"])
-        m = [r for r in runs if r["order"] == "mod-minimizer-xor"][0]
+        m = [r for r in runs if r["scheme"] == "mod-minimizer-xor"][0]
         self.assertEqual((m["gm_k"], m["projection"], m["mod_t"]), (None, None, 6))
         for c in ("classify_load_s", "classify_run_s", "classify_wall_s", "classify_max_rss_gb"):
             self.assertIn(c, f)
         self.assertLess(f.index("classify_wall_s"), f.index("classify_load_s"))
-        r0 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["order"] == "xor"
+        r0 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["scheme"] == "xor"
               and r["minimum_hit_groups"] == 0][0]
         self.assertAlmostEqual(r0["classify_wall_s_mean"], 2.2, places=6)    # seeds 1..3 -> 2.1 2.2 2.3
         self.assertAlmostEqual(r0["classify_wall_s_std"], 0.1, places=6)
@@ -339,17 +339,17 @@ class ExportLayout(unittest.TestCase):
         self.assertAlmostEqual(r0["classify_run_s_mean"], 1.1, places=6)
         self.assertEqual(r0["classify_wall_s_ratio"], 1.0)
         self.assertEqual(r0["n_repeats"], 3)
-        r2 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["order"] == "xor"
+        r2 = [r for r in summ if r["dataset"] == "strain-exclusion" and r["scheme"] == "xor"
               and r["minimum_hit_groups"] == 2][0]
         self.assertAlmostEqual(r2["classify_wall_s_mean"], 22.2, places=6)
         self.assertAlmostEqual(r2["classified_pct_mean"], 75.0)
         self.assertEqual(runs[0]["seed"][:2], "0x")
         self.assertFalse([c for c in f if c.startswith(("se_", "argos_", "cami_", "mock_"))])
         self.assertAlmostEqual(r0["genus_sensitivity_mean"], 0.702, places=6)
-        cami = [r for r in summ if r["dataset"] == "cami" and r["order"] == "xor"][0]
+        cami = [r for r in summ if r["dataset"] == "cami" and r["scheme"] == "xor"][0]
         self.assertEqual(cami["genus_f1_mean"], 0.7)
         self.assertIsNone(cami.get("genus_concordant_fraction_mean"))
-        argos = [r for r in summ if r["dataset"] == "fda-argos" and r["order"] == "xor-pcg-hash"][0]
+        argos = [r for r in summ if r["dataset"] == "fda-argos" and r["scheme"] == "xor-pcg-hash"][0]
         self.assertAlmostEqual(argos["genus_concordant_fraction_mean"], 0.87)
         gone = ("class_s", "class_gb", "mrd_min", "cls_pct", "mape_g", "nextmin_", "fac_", "build_s", "build_gb")
         for name, (fields, _rows) in tables.items():
@@ -361,24 +361,24 @@ class ExportLayout(unittest.TestCase):
     def test_sorting_and_ratio_reference_per_dataset_mhg(self):
         run_root, (xlsx, tdir, tables) = self.lib()
         summ = tables["summary"][1]
-        keys = [(E.dataset_key(r["dataset"]), r["minimum_hit_groups"], E.order_key(r)) for r in summ]
+        keys = [(E.dataset_key(r["dataset"]), r["minimum_hit_groups"], E.scheme_key(r)) for r in summ]
         self.assertEqual(keys, sorted(keys))
-        # the orders of one (dataset, mhg) are consecutive, xor first
+        # the schemes of one (dataset, mhg) are consecutive, xor first
         for i in range(0, len(summ), 4):
             chunk = summ[i:i + 4]
-            self.assertEqual([r["order"] for r in chunk], SHORT)
+            self.assertEqual([r["scheme"] for r in chunk], SHORT)
             self.assertEqual(len(set((r["dataset"], r["minimum_hit_groups"]) for r in chunk)), 1)
-        # ratio = order mean / xor mean at the same dataset + mhg (not across mhg)
+        # ratio = scheme mean / xor mean at the same dataset + mhg (not across mhg)
         for r in summ:
-            ref = [x for x in summ if x["order"] == "xor" and x["dataset"] == r["dataset"]
+            ref = [x for x in summ if x["scheme"] == "xor" and x["dataset"] == r["dataset"]
                    and x["minimum_hit_groups"] == r["minimum_hit_groups"]][0]
             self.assertAlmostEqual(r["classify_wall_s_ratio"],
                                    round(r["classify_wall_s_mean"] / ref["classify_wall_s_mean"], 4))
-        pcg2 = [r for r in summ if r["dataset"] == "cami" and r["order"] == "xor-pcg-hash"
+        pcg2 = [r for r in summ if r["dataset"] == "cami" and r["scheme"] == "xor-pcg-hash"
                 and r["minimum_hit_groups"] == 2][0]
         self.assertAlmostEqual(pcg2["classify_wall_s_ratio"], round(23.2 / 22.2, 4))
         runs = tables["runs"][1]
-        rk = [(E.dataset_key(r["dataset"]), r["minimum_hit_groups"], E.order_key(r), r["seed_idx"]) for r in runs]
+        rk = [(E.dataset_key(r["dataset"]), r["minimum_hit_groups"], E.scheme_key(r), r["seed_idx"]) for r in runs]
         self.assertEqual(rk, sorted(rk))
         # sheet spec: borders per (dataset, mhg) block, dataset cell spans both mhg blocks
         spec = E.sheet_spec("summary", tables["summary"][0], summ)
@@ -410,8 +410,8 @@ class ExportLayout(unittest.TestCase):
         self.assertFalse([f for f in t2["summary"][0] if f.startswith(("genus_", "species_"))])
 
     def test_ratio_blank_when_reference_missing_or_zero(self):
-        def row(ds, mhg, order, v):
-            return {"library": "L", "dataset": ds, "minimum_hit_groups": mhg, "order": order,
+        def row(ds, mhg, scheme, v):
+            return {"library": "L", "dataset": ds, "minimum_hit_groups": mhg, "scheme": scheme,
                     "classify_wall_s_mean": v}
         rows = [
             row("d", 0, "xor", 0.0), row("d", 0, "xor-pcg-hash", 5.0),
@@ -435,7 +435,7 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(len(prof), 3 * 4 * 2)
         for sheet in ("profile", "vs_reference"):
             self.assertIn("minimum_hit_groups", tables[sheet][0])
-        pr = [r for r in prof if r["dataset"] == "strain-exclusion" and r["order"] == "mod-minimizer-xor"
+        pr = [r for r in prof if r["dataset"] == "strain-exclusion" and r["scheme"] == "mod-minimizer-xor"
               and r["minimum_hit_groups"] == 2][0]
         self.assertAlmostEqual(pr["scan_s_ratio"], round(0.33 / 0.3, 4))
         vr = tables["vs_reference"][1]
@@ -451,21 +451,21 @@ class ExportLayout(unittest.TestCase):
             self.assertEqual(set(r["dataset"] for r in rows), set([dataset]))
             self.assertEqual(set(r["minimum_hit_groups"] for r in rows), set(MHGS))
             self.assertEqual(fields[:2], ["library", "dataset"])
-            self.assertLess(fields.index("order"), fields.index("minimum_hit_groups"))
+            self.assertLess(fields.index("scheme"), fields.index("minimum_hit_groups"))
             self.assertEqual(fields.index("n_repeats"), fields.index("minimum_hit_groups") + 1)
             self.assertIn(has, fields)
             self.assertNotIn(hasnt, fields)
             self.assertNotIn("seed_idx", fields)
-            self.assertEqual(sorted(set(r["order"] for r in rows)), sorted(SHORT))
+            self.assertEqual(sorted(set(r["scheme"] for r in rows)), sorted(SHORT))
         se = tables["accuracy_strain_exclusion"][1]
-        self.assertEqual(len(se), 4 * 2 * 3 * 2)           # order x mhg x group x rank
+        self.assertEqual(len(se), 4 * 2 * 3 * 2)           # scheme x mhg x group x rank
         self.assertEqual(se[0]["n_repeats"], 3)
 
     def test_accuracy_sheets_share_layout(self):
         run_root, (xlsx, tdir, tables) = self.lib()
         sf, sr = tables["accuracy_strain_exclusion"]
         cf, cr = tables["accuracy_cami"]
-        ident = ["library", "dataset", "group", "rank"] + list(order_names.ID_FIELDS) + ["minimum_hit_groups", "n_repeats"]
+        ident = ["library", "dataset", "group", "rank"] + list(scheme_names.ID_FIELDS) + ["minimum_hit_groups", "n_repeats"]
         self.assertEqual(sf[:len(ident)], ident)
         self.assertEqual(cf[:len(ident)], ident)
         for f in ("domain", "n_mean"):
@@ -491,7 +491,7 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(list(OrderedDict.fromkeys(r["group"] for r in sr)), ["all", "prokaryote", "virus"])
         self.assertEqual(list(OrderedDict.fromkeys(r["group"] for r in cr)),
                          ["all", "prokaryote", "virus", "bacteria", "archaea"])
-        self.assertEqual(len(cr), 5 * 4 * 2 * 2)          # group x order x mhg x rank
+        self.assertEqual(len(cr), 5 * 4 * 2 * 2)          # group x scheme x mhg x rank
 
     def test_accuracy_aggregation(self):
         run_root, (xlsx, tdir, tables) = self.lib()
@@ -499,13 +499,13 @@ class ExportLayout(unittest.TestCase):
         for i in range(0, len(rows), 4):
             chunk = rows[i:i + 4]
             self.assertEqual(len(set((r["minimum_hit_groups"], r["group"], r["rank"]) for r in chunk)), 1)
-            self.assertEqual([r["order"] for r in chunk], SHORT)
+            self.assertEqual([r["scheme"] for r in chunk], SHORT)
         # mhg is the outermost sort key after dataset
         mh = [r["minimum_hit_groups"] for r in rows]
         self.assertEqual(mh, sorted(mh))
 
-        def pick(order, mhg):
-            return [x for x in rows if x["order"] == order and x["group"] == "all" and x["rank"] == "genus"
+        def pick(scheme, mhg):
+            return [x for x in rows if x["scheme"] == scheme and x["group"] == "all" and x["rank"] == "genus"
                     and x["minimum_hit_groups"] == mhg][0]
         ref0, ref2 = pick("xor", 0), pick("xor", 2)
         self.assertAlmostEqual(ref0["sensitivity_mean"], 0.702, places=6)
@@ -527,7 +527,7 @@ class ExportLayout(unittest.TestCase):
         self.assertEqual(spec["ratio_fields"]["sensitivity_ratio"], "higher")
         self.assertIn("minimum_hit_groups", spec["block_fields"])
         self.assertIn("group", spec["block_fields"])
-        self.assertNotIn("order", spec["merge_fields"])
+        self.assertNotIn("scheme", spec["merge_fields"])
         self.assertEqual(spec["merge_scope"]["minimum_hit_groups"], ("library", "dataset", "minimum_hit_groups"))
 
     def test_paper_check(self):
@@ -554,7 +554,7 @@ class ExportLayout(unittest.TestCase):
         self.assertAlmostEqual(sum(pub[("S5", None, m)] for m in
                                    ("concordant", "discordant", "ancestor", "unclassified")), 1.0, places=5)
         # within tolerance / not in repo / missing
-        base = {"accuracy_strain_exclusion": [dict(library="strain_exclusion", order="xor", minimum_hit_groups=0,
+        base = {"accuracy_strain_exclusion": [dict(library="strain_exclusion", scheme="xor", minimum_hit_groups=0,
                                                    rank="genus", group="prokaryote", n_repeats=5,
                                                    f1_mean=0.9650, f1_std=0.001)]}
         pubs = [dict(table="S1", row="Kraken 2", domain="prokaryote", rank="genus", metric="f1", value=0.9657),
@@ -570,12 +570,12 @@ class ExportLayout(unittest.TestCase):
         _rr, (_x, _t, t2) = make_library(self.fresh_base(), "standard_p10", ["strain-exclusion"])
         self.assertNotIn("paper_check", t2)
 
-    def test_orders_density(self):
+    def test_schemes_density(self):
         run_root, (xlsx, tdir, tables) = self.lib()
-        fields, orders = tables["orders"]
+        fields, schemes = tables["schemes"]
         self.assertIn("expected_density_factor_mean", fields)
         self.assertIn("strain_exclusion_particular_density_factor_mean", fields)
-        o = dict((r["order"], r) for r in orders)
+        o = dict((r["scheme"], r) for r in schemes)
         self.assertAlmostEqual(o["xor"]["expected_density_factor_mean"], 1.5)
         self.assertAlmostEqual(o["xor-pcg-hash"]["strain_exclusion_particular_density_factor_mean"], 1.7)
         self.assertEqual(o["mod-minimizer-xor"]["sketching"], "mod-minimizer")
@@ -586,18 +586,18 @@ class ExportLayout(unittest.TestCase):
         # unified names: k = minimizer length (old l), w = window, L = k + w - 1
         self.assertEqual(fields[10:14], ["sketching", "rank_order", "minimizer_spaces", "spaced_seed_mask"])
         self.assertNotIn("l", fields)
-        for r in orders:
+        for r in schemes:
             self.assertEqual((r["k"], r["w"], r["L"]), (31, 5, 35))
 
-    def test_orders_empty_cells_fail(self):
+    def test_schemes_empty_cells_fail(self):
         run_root, (xlsx, tdir, tables) = self.lib()
-        rows = [dict(r) for r in tables["orders"][1]]
-        E.check_orders(rows)
+        rows = [dict(r) for r in tables["schemes"][1]]
+        E.check_schemes(rows)
         rows[1]["expected_density_factor_mean"] = None
         with self.assertRaises(SystemExit) as cm:
-            E.check_orders(rows)
+            E.check_schemes(rows)
         self.assertIn("xor-pcg-hash/expected_density_factor_mean", str(cm.exception))
-        # an order without density rows makes the whole export fail
+        # a scheme without density rows makes the whole export fail
         nodens = [d for d in DENS if d["scheme"] != "xor-pcg-hash"]
         with self.assertRaises(SystemExit):
             E.export_library(run_root, "L", per_seed("L", "speed"), {}, nodens, QUERY)
@@ -632,7 +632,7 @@ class ExportLayout(unittest.TestCase):
         _f, lrows = E.read_csv(os.path.join(rdir, "kraken2_libraries.csv"))
         self.assertEqual(sorted(r["library"] for r in lrows), ["standard_p10", "strain_exclusion"])
         for r in summ:
-            if r["order"] == "xor":
+            if r["scheme"] == "xor":
                 self.assertEqual(r["classify_wall_s_ratio"], 1.0)
         _f, build = E.read_csv(os.path.join(rdir, "kraken2_build.csv"))
         self.assertEqual(len(build), 2 * 4)
@@ -650,7 +650,7 @@ class ExportLayout(unittest.TestCase):
             self.assertIsNone(E.export_results(empty))
             os.makedirs(os.path.join(empty, "results", "csvs"))
             with open(os.path.join(empty, "results", "csvs", "kraken2_runs.csv"), "w") as f:
-                f.write("library,dataset,order,classify_wall_s\nstandard,speed,xor,1\n")
+                f.write("library,dataset,scheme,classify_wall_s\nstandard,speed,xor,1\n")
             self.assertIsNone(E.export_results(empty))
         finally:
             shutil.rmtree(empty, ignore_errors=True)
@@ -678,25 +678,25 @@ class ExportLayout(unittest.TestCase):
                 base = re.sub(r"^.*_particular_density_factor", "<library>_particular_density_factor", base)
                 self.assertTrue(base in documented or f in documented, "%s.%s undocumented" % (sheet, f))
 
-    def test_order_identity_helpers(self):
-        # the order is the canonical name; the params are separate fields (never in the name)
+    def test_scheme_identity_helpers(self):
+        # the scheme is the canonical name; the params are separate fields (never in the name)
         r = E.id_from_context("lib/greedymini/k15_at1-cg0/3 [cami, mhg2]", {("greedymini", 15, "at1-cg0", None): "w5_k15_canonical"})
-        self.assertEqual(r, {"order": "greedymini", "gm_k": 15, "projection": "at1-cg0",
+        self.assertEqual(r, {"scheme": "greedymini", "gm_k": 15, "projection": "at1-cg0",
                              "gm_table": "w5_k15_canonical", "mod_t": None})
-        self.assertEqual(E.order_dir(r), "greedymini/k15_at1-cg0")
+        self.assertEqual(E.scheme_dir(r), "greedymini/k15_at1-cg0")
         r = E.id_from_context("lib/mod-minimizer-greedymini/k6_at0-cg1_t6/1")
-        self.assertEqual((r["order"], r["gm_k"], r["projection"], r["mod_t"]), ("mod-minimizer-greedymini", 6, "at0-cg1", 6))
-        self.assertEqual(E.id_from_context("lib/xor-pcg-hash/2")["order"], "xor-pcg-hash")
+        self.assertEqual((r["scheme"], r["gm_k"], r["projection"], r["mod_t"]), ("mod-minimizer-greedymini", 6, "at0-cg1", 6))
+        self.assertEqual(E.id_from_context("lib/xor-pcg-hash/2")["scheme"], "xor-pcg-hash")
         self.assertEqual(E.split_context("lib/xor-pcg-hash/3 [cami, mhg2]"), ("lib", "xor-pcg-hash", "3"))
         self.assertEqual(E.split_context("lib/greedymini/k15_at0-cg1/3"), ("lib", "greedymini/k15_at0-cg1", "3"))
         with self.assertRaises(ValueError):
             E.id_from_context("lib/greedymini_w5_k15_canonical/1")
-        # sort: canonical order, then gm_k / projection
-        a = {"order": "greedymini", "gm_k": 15, "projection": "at0-cg1"}
-        b = {"order": "greedymini", "gm_k": 15, "projection": "at1-cg0"}
-        self.assertLess(E.order_key(a), E.order_key(b))
-        self.assertLess(E.order_key("xor"), E.order_key("xor-pcg-hash"))
-        self.assertLess(E.order_key("xor-pcg-hash"), E.order_key(a))
+        # sort: canonical rank of the scheme name, then gm_k / projection
+        a = {"scheme": "greedymini", "gm_k": 15, "projection": "at0-cg1"}
+        b = {"scheme": "greedymini", "gm_k": 15, "projection": "at1-cg0"}
+        self.assertLess(E.scheme_key(a), E.scheme_key(b))
+        self.assertLess(E.scheme_key("xor"), E.scheme_key("xor-pcg-hash"))
+        self.assertLess(E.scheme_key("xor-pcg-hash"), E.scheme_key(a))
 
     def test_two_projections_are_separate_rows(self):
         rows = []
@@ -710,34 +710,34 @@ class ExportLayout(unittest.TestCase):
         raw = E.build_tables("L", rows, {}, [])
         self.assertEqual(len(raw["build_runs"]), 5)
         build = E.aggregate(raw["build_runs"], E.BUILD_NAMES, E.AGG_KEYS["build"])
-        self.assertEqual([(r["order"], r["projection"]) for r in build],
+        self.assertEqual([(r["scheme"], r["projection"]) for r in build],
                          [("xor", None), ("greedymini", "at0-cg1"), ("greedymini", "at1-cg0")])
         self.assertAlmostEqual(build[1]["build_wall_s_mean"], 11.5)
         self.assertAlmostEqual(build[2]["build_wall_s_mean"], 16.5)
         spec = E.sheet_spec("build_runs", E.build_runs_field_order(), raw["build_runs"])
-        for f in order_names.ID_FIELDS:
+        for f in scheme_names.ID_FIELDS:
             self.assertIn(f, spec["merge_fields"])
-        self.assertEqual(E.order_dir(raw["build_runs"][1]), "greedymini/k15_at0-cg1")
+        self.assertEqual(E.scheme_dir(raw["build_runs"][1]), "greedymini/k15_at0-cg1")
 
-    def test_orders_sheet_and_joins(self):
+    def test_schemes_sheet_and_joins(self):
         run_root, (xlsx, tdir, tables) = self.lib()
-        orders = tables["orders"][1]
-        self.assertEqual([o["order"] for o in orders], SHORT)
-        self.assertEqual(orders[2]["gm_table"], "w5_k15_canonical")
-        self.assertEqual((orders[2]["gm_k"], orders[2]["projection"], orders[3]["mod_t"]), (15, "at0-cg1", 6))
-        self.assertIn("w5_k15_canonical", orders[2]["cli"])
-        self.assertIn("--gm-projection at0-cg1", orders[2]["cli"])
+        schemes = tables["schemes"][1]
+        self.assertEqual([o["scheme"] for o in schemes], SHORT)
+        self.assertEqual(schemes[2]["gm_table"], "w5_k15_canonical")
+        self.assertEqual((schemes[2]["gm_k"], schemes[2]["projection"], schemes[3]["mod_t"]), (15, "at0-cg1", 6))
+        self.assertIn("w5_k15_canonical", schemes[2]["cli"])
+        self.assertIn("--gm-projection at0-cg1", schemes[2]["cli"])
         raw = E.build_tables("L", per_seed("L", "speed"), {}, DENS)
-        b = [r for r in raw["build_runs"] if r["order"] == "greedymini" and r["seed_idx"] == 1][0]
+        b = [r for r in raw["build_runs"] if r["scheme"] == "greedymini" and r["seed_idx"] == 1][0]
         self.assertAlmostEqual(b["expected_density_factor"], 1.7)
         # a density row of another projection does not match
         other = [dict(d, projection="at1-cg0") if d["scheme"] == "greedymini" else d for d in DENS]
         raw = E.build_tables("L", per_seed("L", "speed"), {}, other)
-        b = [r for r in raw["build_runs"] if r["order"] == "greedymini" and r["seed_idx"] == 1][0]
+        b = [r for r in raw["build_runs"] if r["scheme"] == "greedymini" and r["seed_idx"] == 1][0]
         self.assertIsNone(b["expected_density_factor"])
         # xor-pcg-hash density rows never leak into xor
         raw = E.build_tables("L", per_seed("L", "speed"), {}, DENS)
-        bx = [r for r in raw["build_runs"] if r["order"] == "xor" and r["seed_idx"] == 1][0]
+        bx = [r for r in raw["build_runs"] if r["scheme"] == "xor" and r["seed_idx"] == 1][0]
         self.assertAlmostEqual(bx["expected_density_factor"], 1.5)
 
     def test_no_mock_dataset(self):

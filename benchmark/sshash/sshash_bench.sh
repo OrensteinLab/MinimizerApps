@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sshash benchmark: download datasets, run sshash build/check/bench/query
-# across minimizer orders x seeds, export via `python -m scripts`.
+# across minimizer schemes x seeds, export via `python -m scripts`.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,7 +10,7 @@ source "$HERE/lib/constants.sh"
 source "$HERE/lib/env.sh"
 load_bench_config
 
-source "$HERE/lib/orders.sh"
+source "$HERE/lib/schemes.sh"
 source "$HERE/lib/datasets.sh"
 source "$HERE/lib/run.sh"
 source "$HERE/lib/experiment.sh"
@@ -23,7 +23,7 @@ Usage: $(basename "$0") [command] [options]
 
 Commands (default: run):
   download     Download eulertigs FASTA + query FASTQ from data/datasets.csv
-  run          Run sshash build/check/bench/query across orders x seeds, export
+  run          Run sshash build/check/bench/query across schemes x seeds, export
   export       Export CSV/XLSX only (\`python -m scripts export\`)
   all          download + run + export
   experiment   Run a multi-config sweep from experiments/*.yaml
@@ -32,18 +32,18 @@ Commands (default: run):
 Run options:
   -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human,ncbi-virus,se,hprc)
   -k K                    k-mer length (default: 31)
-  -m M                    Minimizer length, fixed across ALL orders by design
+  -m M                    Minimizer length, fixed across ALL schemes by design
                           (default: 21, giving w=k-m+1=11)
-  -O, --orders LIST       native,xor,xor-pcg-hash,greedymini,mod-minimizer-xor,
+  -S, --schemes LIST      native,xor,xor-pcg-hash,greedymini,mod-minimizer-xor,
                           mod-minimizer-greedymini, or "all" (default: all).
-                          GreedyMini orders run once per variant, a (table,
+                          GreedyMini schemes run once per variant, a (table,
                           projection) pair from config.yaml's greedymini /
-                          mod_minimizer_greedymini sections (sshash -O greedymini
+                          mod_minimizer_greedymini sections (sshash --scheme greedymini
                           --greedy-mini-file TABLE [--gm-projection at1-cg0]; the
                           table's gm_k-mer is extended to the m-mer by the centre
                           extension, which needs m - gm_k even). Each variant has
                           its own result fields gm_k, projection, gm_table, mod_t.
-                          Every order (including native) is run once per seed
+                          Every scheme (including native) is run once per seed
                           -- sshash has no seed-less baseline the way kmc's
                           lex does.
   --gm-tables LIST        Comma-separated GreedyMini table names (e.g.
@@ -52,7 +52,7 @@ Run options:
                           replacing config.yaml's.
   -M, --modality VALUE   canonical (default, single-probe) or regular
                           (two-probe, sshash build --regular). Separate axis
-                          from -O, e.g. -O native -M regular.
+                          from -S, e.g. -S native -M regular.
   -n, --n-seeds N         First N predefined seeds from config.yaml (default: 5, max: ${#BENCH_SEEDS[@]})
   -t, --threads N         sshash build/query -t (default: 8)
   --sshash PATH           sshash binary (default: $REPO_ROOT/build/sshash)
@@ -71,10 +71,10 @@ Download options:
 Examples:
   $0 download -d cod
   $0 run -d cod -n 1
-  $0 run -d cod,kestrel,human,ncbi-virus,se,hprc -O all -n 5 -t 16
-  $0 run -d cod,kestrel -O native -M regular -n 5 -t 16
+  $0 run -d cod,kestrel,human,ncbi-virus,se,hprc -S all -n 5 -t 16
+  $0 run -d cod,kestrel -S native -M regular -n 5 -t 16
   $0 run --dataset-file sshash/data/unitigs_stitched/salmonella_enterica_k31_ust.fa.gz -n 1
-  $0 experiment sweep_orders
+  $0 experiment sweep_schemes
   $0 experiment sweep_m
   $0 experiment list
   $0 export
@@ -87,7 +87,7 @@ parse_options() {
       -d|--datasets) DATASETS="$2"; shift 2 ;;
       -k) K="$2"; shift 2 ;;
       -m) M="$2"; shift 2 ;;
-      -O|--orders) ORDERS="$2"; shift 2 ;;
+      -S|--schemes) SCHEMES="$2"; shift 2 ;;
       --gm-tables) GM_TABLES="$2"; shift 2 ;;
       --gm-projections) GM_PROJECTIONS="$2"; shift 2 ;;
       -M|--modality)

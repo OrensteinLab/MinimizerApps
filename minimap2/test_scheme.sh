@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Sanity/regression tests for the custom minimizer order integration
-# (order.h/order.cpp). See the plan's "Sanity checks / tests" section.
+# (scheme.h/scheme.cpp). See the plan's "Sanity checks / tests" section.
 #
 # greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15) at this
 # script's -k 15 (no extension) and, centre-extended, at -k 19 (section 12),
 # with both AT/CG projections (the `greedymini_at1-cg0` test label = greedymini with --gm-projection at1-cg0). The
 # only mod-minimizer order is mod-minimizer-xor (strand-symmetric, O_t = xor).
 #
-# Usage: ./test_order.sh (run from minimap2/, after `make all sketch_dump`)
+# Usage: ./test_scheme.sh (run from minimap2/, after `make all sketch_dump`)
 set -u
 cd "$(dirname "$0")"
 BIN=./minimap2
@@ -20,26 +20,26 @@ pass=0 fail=0
 ok()   { pass=$((pass+1)); echo "  [PASS] $1"; }
 bad()  { fail=$((fail+1)); echo "  [FAIL] $1"; }
 
-ORDERS_SEEDED="xor xor-pcg-hash"
-ORDERS_MOD="mod-minimizer-xor"
-ALL_TEST_ORDERS="native $ORDERS_SEEDED greedymini greedymini_at1-cg0 $ORDERS_MOD"
+SCHEMES_SEEDED="xor xor-pcg-hash"
+SCHEMES_MOD="mod-minimizer-xor"
+ALL_TEST_SCHEMES="native $SCHEMES_SEEDED greedymini greedymini_at1-cg0 $SCHEMES_MOD"
 SEED=42
 MOD_T=5
 GM_FILE="$(cd .. && pwd)/orders/GreedyMini/w10_k15_canonical.gm"
 
-order_flags() {
+scheme_flags() {
 	case "$1" in
 		native) echo "" ;;
-		greedymini) echo "--minimizer-order greedymini --greedymini-file $GM_FILE" ;;
-		greedymini_at1-cg0) echo "--minimizer-order greedymini --greedymini-file $GM_FILE --gm-projection at1-cg0" ;;
-		mod-minimizer-*) echo "--minimizer-order $1 --order-seed $SEED --mod-t $MOD_T" ;;
-		*) echo "--minimizer-order $1 --order-seed $SEED" ;;
+		greedymini) echo "--scheme greedymini --greedymini-file $GM_FILE" ;;
+		greedymini_at1-cg0) echo "--scheme greedymini --greedymini-file $GM_FILE --gm-projection at1-cg0" ;;
+		mod-minimizer-*) echo "--scheme $1 --order-seed $SEED --mod-t $MOD_T" ;;
+		*) echo "--scheme $1 --order-seed $SEED" ;;
 	esac
 }
 
 echo "== 1. determinism: same order+seed, repeated runs -> identical output =="
-for o in $ALL_TEST_ORDERS; do
-	f=$(order_flags "$o")
+for o in $ALL_TEST_SCHEMES; do
+	f=$(scheme_flags "$o")
 	$BIN -a $f "$REF" "$QRY" > "$TMP/r1_$o.sam" 2>/dev/null
 	$BIN -a $f "$REF" "$QRY" > "$TMP/r2_$o.sam" 2>/dev/null
 	if diff -q "$TMP/r1_$o.sam" "$TMP/r2_$o.sam" >/dev/null; then ok "determinism: $o"; else bad "determinism: $o"; fi
@@ -47,8 +47,8 @@ done
 
 echo "== 2. density: each order shows a plausible, non-degenerate minimizer count =="
 declare -A density
-for o in $ALL_TEST_ORDERS; do
-	f=$(order_flags "$o")
+for o in $ALL_TEST_SCHEMES; do
+	f=$(scheme_flags "$o")
 	n=$($BIN -a $f "$REF" "$QRY" 2>&1 >/dev/null | grep -o 'distinct minimizers: [0-9]*' | grep -o '[0-9]*')
 	density[$o]=$n
 	# a healthy order should select at least 1% and at most 100% of the
@@ -70,8 +70,8 @@ else
 fi
 
 echo "== 3. .mmi round-trip: dump+reload maps identically to a fresh build+map =="
-for o in $ALL_TEST_ORDERS; do
-	f=$(order_flags "$o")
+for o in $ALL_TEST_SCHEMES; do
+	f=$(scheme_flags "$o")
 	$BIN -a $f "$REF" "$QRY" > "$TMP/direct_$o.sam" 2>/dev/null
 	$BIN -d "$TMP/$o.mmi" $f "$REF" >/dev/null 2>&1
 	$BIN -a "$TMP/$o.mmi" "$QRY" > "$TMP/reload_$o.sam" 2>/dev/null
@@ -84,7 +84,7 @@ done
 
 echo "== 4. split (-I) multi-part .mmi round-trip (order metadata written once, reused by later parts) =="
 o=mod-minimizer-xor
-f=$(order_flags "$o")
+f=$(scheme_flags "$o")
 $BIN -a $f "$REF" "$QRY" > "$TMP/split_direct.sam" 2>/dev/null
 $BIN -d "$TMP/split.mmi" -I 5k $f "$REF" >/dev/null 2>&1
 $BIN -a "$TMP/split.mmi" "$QRY" > "$TMP/split_reload.sam" 2>/dev/null
@@ -106,8 +106,8 @@ else
 fi
 
 echo "== 6. -H (HPC) smoke test for each order =="
-for o in $ALL_TEST_ORDERS; do
-	f=$(order_flags "$o")
+for o in $ALL_TEST_SCHEMES; do
+	f=$(scheme_flags "$o")
 	if $BIN -a -H $f "$REF" "$QRY" > "$TMP/hpc_$o.sam" 2>"$TMP/hpc_$o.err"; then
 		ok "-H builds+maps: $o"
 	else
@@ -123,42 +123,42 @@ else
 fi
 
 echo "== 8. CLI validation: bad input is rejected, not silently accepted =="
-if $BIN -a --minimizer-order bogus-order-name "$REF" "$QRY" >/dev/null 2>&1; then
-	bad "unknown --minimizer-order should be rejected"
+if $BIN -a --scheme bogus-scheme-name "$REF" "$QRY" >/dev/null 2>&1; then
+	bad "unknown --scheme should be rejected"
 else
-	ok "unknown --minimizer-order rejected"
+	ok "unknown --scheme rejected"
 fi
-if $BIN -a --minimizer-order greedymini "$REF" "$QRY" >/dev/null 2>&1; then
+if $BIN -a --scheme greedymini "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "greedymini without --greedymini-file should be rejected"
 else
 	ok "greedymini without --greedymini-file rejected"
 fi
-if $BIN -a --minimizer-order mod-minimizer-xor "$REF" "$QRY" >/dev/null 2>&1; then
+if $BIN -a --scheme mod-minimizer-xor "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "mod-minimizer-* without --mod-t should be rejected"
 else
 	ok "mod-minimizer-* without --mod-t rejected"
 fi
-if $BIN -a --minimizer-order xor --gm-projection at1-cg0 "$REF" "$QRY" >/dev/null 2>&1; then
+if $BIN -a --scheme xor --gm-projection at1-cg0 "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "--gm-projection with a non-greedymini order should be rejected"
 else
 	ok "--gm-projection with a non-greedymini order rejected"
 fi
-if $BIN -a $(order_flags greedymini) --gm-projection bogus "$REF" "$QRY" >/dev/null 2>&1; then
+if $BIN -a $(scheme_flags greedymini) --gm-projection bogus "$REF" "$QRY" >/dev/null 2>&1; then
 	bad "unknown --gm-projection value should be rejected"
 else
 	ok "unknown --gm-projection value rejected"
 fi
 for old in xor-hash mod-minimizer-xor-hash mod-minimizer-pcg-xor-hash mod-minimizer-xor-canonical; do
-	if $BIN -a --minimizer-order $old --order-seed 1 --mod-t 5 "$REF" "$QRY" >/dev/null 2>&1; then
+	if $BIN -a --scheme $old --order-seed 1 --mod-t 5 "$REF" "$QRY" >/dev/null 2>&1; then
 		bad "removed/renamed order name '$old' should be rejected"
 	else
 		ok "removed/renamed order name '$old' rejected"
 	fi
 done
 if $BIN -a --order-seed 1 "$REF" "$QRY" >/dev/null 2>&1; then
-	bad "--order-seed without --minimizer-order should be rejected"
+	bad "--order-seed without --scheme should be rejected"
 else
-	ok "--order-seed without --minimizer-order rejected"
+	ok "--order-seed without --scheme rejected"
 fi
 
 echo "== 9. t=5 / k=15,w=10 formula sanity (paper's r=4 formula: t = r + (k-r) mod w) =="
@@ -167,15 +167,15 @@ t=$(( r + (k - r) % w ))
 if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
 
 echo "== 10. mod-minimizer window limits: t == k (mod w) (the centre rule), widest window, ring sized from w+k-t =="
-for o in $ORDERS_MOD; do
-	if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t 1 -k 28 -w 27 "$REF" "$QRY" > "$TMP/w27_$o.sam" 2>"$TMP/w27_$o.err"; then
+for o in $SCHEMES_MOD; do
+	if $BIN -a --scheme "$o" --order-seed "$SEED" --mod-t 1 -k 28 -w 27 "$REF" "$QRY" > "$TMP/w27_$o.sam" 2>"$TMP/w27_$o.err"; then
 		ok "-k 28 -w 27 --mod-t 1 (L = 54) builds+maps: $o"
 	else
 		bad "-k 28 -w 27 --mod-t 1 builds+maps: $o ($(tail -1 "$TMP/w27_$o.err"))"
 	fi
 	for bad_tw in "6 10" "5 50"; do
 		set -- $bad_tw
-		if $BIN -a --minimizer-order "$o" --order-seed "$SEED" --mod-t "$1" -w "$2" "$REF" "$QRY" >/dev/null 2>&1; then
+		if $BIN -a --scheme "$o" --order-seed "$SEED" --mod-t "$1" -w "$2" "$REF" "$QRY" >/dev/null 2>&1; then
 			bad "--mod-t $1 -w $2 (t != k mod w) should be rejected: $o"
 		else
 			ok "--mod-t $1 -w $2 (t != k mod w) rejected: $o"
@@ -195,7 +195,7 @@ fi
 
 echo "== 12. greedymini centre extension: k = gm_k + 2i (k=19 here), both projections =="
 for proj in at0-cg1 at1-cg0; do
-	f="--minimizer-order greedymini --greedymini-file $GM_FILE --gm-projection $proj -k 19"
+	f="--scheme greedymini --greedymini-file $GM_FILE --gm-projection $proj -k 19"
 	$BIN -a $f "$REF" "$QRY" > "$TMP/k19_$proj.sam" 2>/dev/null
 	$BIN -a $f "$REF" "$QRY" > "$TMP/k19b_$proj.sam" 2>/dev/null
 	if [ -s "$TMP/k19_$proj.sam" ] && diff -q "$TMP/k19_$proj.sam" "$TMP/k19b_$proj.sam" >/dev/null; then ok "k=19 determinism: $proj"; else bad "k=19 determinism: $proj"; fi
@@ -205,7 +205,7 @@ for proj in at0-cg1 at1-cg0; do
 	if $BIN -a -H $f "$REF" "$QRY" >/dev/null 2>&1; then ok "k=19 -H builds+maps: $proj"; else bad "k=19 -H builds+maps: $proj"; fi
 done
 for badk in 16 25; do
-	if $BIN -a --minimizer-order greedymini --greedymini-file "$GM_FILE" -k $badk "$REF" "$QRY" >/dev/null 2>&1; then
+	if $BIN -a --scheme greedymini --greedymini-file "$GM_FILE" -k $badk "$REF" "$QRY" >/dev/null 2>&1; then
 		bad "greedymini -k $badk should be rejected (k - gm_k odd, or k > 23)"
 	else
 		ok "greedymini -k $badk rejected"
@@ -220,7 +220,7 @@ fi
 
 echo "== 13. robustness: bad k, unreadable stored orders, overridden options, rank sentinel =="
 for kk in 29 32; do
-	if $BIN -a $(order_flags mod-minimizer-xor) -k $kk "$REF" "$QRY" >/dev/null 2>&1; then
+	if $BIN -a $(scheme_flags mod-minimizer-xor) -k $kk "$REF" "$QRY" >/dev/null 2>&1; then
 		bad "mod-minimizer-xor -k $kk should be rejected (k > 28)"
 	else
 		ok "mod-minimizer-xor -k $kk rejected"
@@ -266,12 +266,12 @@ else
 fi
 head -c $(( $(stat -c %s "$TMP/xor.mmi") - 4 )) "$TMP/xor.mmi" > "$TMP/trunc.mmi"
 if $BIN -a "$TMP/trunc.mmi" "$QRY" >/dev/null 2>&1; then bad "truncated order section should be refused"; else ok "truncated order section refused"; fi
-$BIN -a --minimizer-order xor-pcg-hash --order-seed $SEED "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/override.err"
-if grep -q 'overridden by the order of the prebuilt index (xor)' "$TMP/override.err"; then ok "order options overridden by a prebuilt index: warned"; else bad "no warning when --minimizer-order differs from the prebuilt index"; fi
-$BIN -a $(order_flags xor) "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/same.err"
-if grep -q 'Minimizer order options' "$TMP/same.err"; then bad "warning although the options match the prebuilt index"; else ok "no warning when the options match the prebuilt index"; fi
-$BIN -a $(order_flags greedymini) "$TMP/greedymini.mmi" "$QRY" >/dev/null 2>"$TMP/same_gm.err"
-if grep -q 'Minimizer order options' "$TMP/same_gm.err"; then bad "warning although the greedymini table matches the prebuilt index"; else ok "no warning when the greedymini table matches the prebuilt index"; fi
+$BIN -a --scheme xor-pcg-hash --order-seed $SEED "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/override.err"
+if grep -q 'overridden by the scheme of the prebuilt index (xor)' "$TMP/override.err"; then ok "scheme options overridden by a prebuilt index: warned"; else bad "no warning when --scheme differs from the prebuilt index"; fi
+$BIN -a $(scheme_flags xor) "$TMP/xor.mmi" "$QRY" >/dev/null 2>"$TMP/same.err"
+if grep -q 'Minimizer scheme options' "$TMP/same.err"; then bad "warning although the options match the prebuilt index"; else ok "no warning when the options match the prebuilt index"; fi
+$BIN -a $(scheme_flags greedymini) "$TMP/greedymini.mmi" "$QRY" >/dev/null 2>"$TMP/same_gm.err"
+if grep -q 'Minimizer scheme options' "$TMP/same_gm.err"; then bad "warning although the greedymini table matches the prebuilt index"; else ok "no warning when the greedymini table matches the prebuilt index"; fi
 polya=$(printf '>a\n%0100d\n' 0 | tr 0 A)
 for o in xor xor-pcg-hash; do
 	n=$(echo "$polya" | ./sketch_dump $o 10 15 0xFFFFFFFFFFFFFFFF 0 | grep -c .)
@@ -279,7 +279,7 @@ for o in xor xor-pcg-hash; do
 done
 
 echo "== 14. greedymini --order-seed: the Gamma tie-break toggle =="
-fs="--minimizer-order greedymini --greedymini-file $GM_FILE --order-seed $SEED -k 19"
+fs="--scheme greedymini --greedymini-file $GM_FILE --order-seed $SEED -k 19"
 $BIN -a $fs "$REF" "$QRY" > "$TMP/gms.sam" 2>/dev/null
 $BIN -d "$TMP/gms.mmi" $fs "$REF" >/dev/null 2>&1
 $BIN -a "$TMP/gms.mmi" "$QRY" > "$TMP/gms_r.sam" 2>/dev/null
@@ -288,8 +288,8 @@ grep -v '>' "$REF" | tr -d '\n' > "$TMP/ref.seq"
 n0=$(./sketch_dump greedymini 10 15 0 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
 n1=$(./sketch_dump greedymini 10 15 0x9E3779B97F4A7C15 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
 if [ "$n0" != "$n1" ]; then ok "--order-seed changes the greedymini selection"; else bad "--order-seed did not change the greedymini selection"; fi
-$BIN -a --minimizer-order greedymini --greedymini-file "$GM_FILE" --order-seed 7 "$TMP/gms.mmi" "$QRY" >/dev/null 2>"$TMP/gms_w.err"
-if grep -q 'Minimizer order options' "$TMP/gms_w.err"; then ok "a different greedymini seed than the prebuilt index's: warned"; else bad "no warning for a different greedymini seed"; fi
+$BIN -a --scheme greedymini --greedymini-file "$GM_FILE" --order-seed 7 "$TMP/gms.mmi" "$QRY" >/dev/null 2>"$TMP/gms_w.err"
+if grep -q 'Minimizer scheme options' "$TMP/gms_w.err"; then ok "a different greedymini seed than the prebuilt index's: warned"; else bad "no warning for a different greedymini seed"; fi
 
 echo
 echo "== summary: $pass passed, $fail failed =="

@@ -9,16 +9,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../common/wait_low_load.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/../../common/pin_cpus.sh"
 
 run_one() {
-  local order="$1" seed="${2:-0}" seed_idx="${3:-0}"
+  local scheme="$1" seed="${2:-0}" seed_idx="${3:-0}"
   local preset k t
-  if ! order_is_known "$order"; then
-    echo "error: unknown order '$order' (orders: ${ALL_ORDERS//,/ }; greedymini's projection is PROJECTION=at0-cg1|at1-cg0)" >&2
+  if ! scheme_is_known "$scheme"; then
+    echo "error: unknown scheme '$scheme' (schemes: ${ALL_SCHEMES//,/ }; greedymini's projection is PROJECTION=at0-cg1|at1-cg0)" >&2
     return 1
   fi
   preset=$(dataset_preset)
   k=${K:-$(preset_default_k "$preset")}
   t=${MOD_T:-$(( 4 + (k - 4) % W ))}
-  if [[ "$order" == mod-minimizer-* ]] && { [ "$t" -le 0 ] || [ "$t" -ge "$k" ]; }; then
+  if [[ "$scheme" == mod-minimizer-* ]] && { [ "$t" -le 0 ] || [ "$t" -ge "$k" ]; }; then
     echo "error: mod-minimizer needs 0 < t < k (k=$k w=$W gives t=$t); set MOD_T" >&2
     return 1
   fi
@@ -27,24 +27,24 @@ run_one() {
     cond="${cond}_f${MID_OCC}"
     map_extra=(-f "$MID_OCC")
   fi
-  # <order>[/k<gm_k>_<projection>_t<mod_t>] (order_names.order_dir_name): the
+  # <scheme>[/k<gm_k>_<projection>_t<mod_t>] (scheme_names.scheme_dir_name): the
   # greedymini table k / projection and the mod-minimizer t are part of the
   # directory, so runs that differ in them never collide.
-  local odir gm_k="" proj="" gm_table=""
-  odir=$(order_dir_name "$order" "$t") || return 1
-  if order_needs_gm "$order"; then
-    gm_k=$(order_gm_k) || return 1
-    proj=$(order_projection) || return 1
+  local sdir gm_k="" proj="" gm_table=""
+  sdir=$(scheme_dir_name "$scheme" "$t") || return 1
+  if scheme_needs_gm "$scheme"; then
+    gm_k=$(scheme_gm_k) || return 1
+    proj=$(scheme_projection) || return 1
     gm_table="$GM_TABLE"
   fi
-  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$cond/$odir/$seed_idx"
+  local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$cond/$sdir/$seed_idx"
   local meta_json="$run_dir/meta.json"
 
   # meta.json is written last, only by a run that built, mapped and scored
   # cleanly, so its presence marks a complete run.
   if [ -f "$meta_json" ]; then
     if [ "${FORCE:-0}" != 1 ]; then
-      echo "== [$odir] skip: complete run in $run_dir (FORCE=1 reruns it) ==" >&2
+      echo "== [$sdir] skip: complete run in $run_dir (FORCE=1 reruns it) ==" >&2
       return 0
     fi
     # rerun: drop the old success marker first, so a failure below can't
@@ -62,7 +62,7 @@ run_one() {
     return 1
   fi
 
-  build_order_flags "$order" "$seed" "$t"
+  build_scheme_flags "$scheme" "$seed" "$t"
 
   local mmi="$run_dir/index.mmi"
   local build_time="$run_dir/build_time.txt"
@@ -86,9 +86,9 @@ run_one() {
   wait_low_load 16 0 $((THREADS + 2))
   bench_pin_cpus "$THREADS" "$run_dir/step_build.json"
   printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_build.txt"
-  echo "== [$odir] building index (-x $preset k=$k w=$W ${ORDER_FLAGS[*]:-}) ==" >&2
+  echo "== [$sdir] building index (-x $preset k=$k w=$W ${SCHEME_FLAGS[*]:-}) ==" >&2
   if ! /usr/bin/time -v -o "$build_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
-      "$MINIMAP2_BIN" -d "$mmi" -x "$preset" -k "$k" -w "$W" "${ORDER_FLAGS[@]}" -t "$THREADS" "$genome" 2> "$build_log"; then
+      "$MINIMAP2_BIN" -d "$mmi" -x "$preset" -k "$k" -w "$W" "${SCHEME_FLAGS[@]}" -t "$THREADS" "$genome" 2> "$build_log"; then
     echo "  build FAILED, see $build_log" >&2
     tail -5 "$build_log" >&2
     return 1
@@ -97,7 +97,7 @@ run_one() {
   wait_low_load 16 0 $((THREADS + 2))
   bench_pin_cpus "$THREADS" "$run_dir/step_map.json"
   printf '%s\n' "$BENCH_PIN_LIST" > "$run_dir/cpus_map.txt"
-  echo "== [$odir] mapping ${reads##*/} ==" >&2
+  echo "== [$sdir] mapping ${reads##*/} ==" >&2
   if ! /usr/bin/time -v -o "$map_time" ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} \
       "$MINIMAP2_BIN" -x "$preset" -c "${map_extra[@]}" -t "$THREADS" "$mmi" "$reads" > "$paf" 2> "$map_log"; then
     echo "  map FAILED, see $map_log" >&2
@@ -134,7 +134,7 @@ run_one() {
   # Written to a temp name and renamed, so a half-written meta.json never
   # looks like a complete run.
   if ! "$PYTHON" "$HERE_DIR/lib/write_meta.py" \
-      --order "$order" --gm-k "$gm_k" --projection "$proj" --gm-table "$gm_table" --seed "$seed" --seed-idx "$seed_idx" --k "$k" --w "$W" --mod-t "$t" --dataset "$DATASET" \
+      --scheme "$scheme" --gm-k "$gm_k" --projection "$proj" --gm-table "$gm_table" --seed "$seed" --seed-idx "$seed_idx" --k "$k" --w "$W" --mod-t "$t" --dataset "$DATASET" \
       --mid-occ-cap "${MID_OCC:-}" --mid-occ "${mid_occ:-}" --preset "$preset" --threads "$THREADS" \
       --build-time "$build_time" --map-time "$map_time" \
       --density "${density:-0}" --avg-occurrences "${avg_occ:-0}" --avg-spacing "${avg_spacing:-0}" \

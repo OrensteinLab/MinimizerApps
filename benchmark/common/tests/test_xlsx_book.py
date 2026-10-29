@@ -16,10 +16,10 @@ CHART = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 
 
 def sheet(**kw):
-    rows = [{"dataset": "d", "order": "xor", "t": 1.0, "t_ratio": 1.0, "t_z": 0.5},
-            {"dataset": "d", "order": "greedymini", "t": 2.0, "t_ratio": 2.0},
-            {"dataset": "e", "order": "xor", "t": 1.0, "t_ratio": 1.0, "t_z": -2.5}]
-    s = {"name": "summary", "fields": ["dataset", "order", "t", "t_ratio", "t_z"], "rows": rows,
+    rows = [{"dataset": "d", "scheme": "xor", "t": 1.0, "t_ratio": 1.0, "t_z": 0.5},
+            {"dataset": "d", "scheme": "greedymini", "t": 2.0, "t_ratio": 2.0},
+            {"dataset": "e", "scheme": "xor", "t": 1.0, "t_ratio": 1.0, "t_z": -2.5}]
+    s = {"name": "summary", "fields": ["dataset", "scheme", "t", "t_ratio", "t_z"], "rows": rows,
          "block_fields": ["dataset"], "merge_fields": ["dataset"]}
     s.update(kw)
     return s
@@ -48,8 +48,8 @@ class XlsxBook(unittest.TestCase):
         self.assertLess(sh.index("FFF8696B"), sh.index("FF63BE7B"))
 
     def test_banner_labels_fill_formula(self):
-        rows = [{"dataset": "d", "order": "xor", "t": 1.0, "t_ratio": {"f": "=C3/C3"}, "__t_ratio_value": 1.0},
-                {"dataset": "d", "order": "g", "t": 2.0, "t_ratio": {"f": "=C4/C3"}, "__t_ratio_value": 2.0}]
+        rows = [{"dataset": "d", "scheme": "xor", "t": 1.0, "t_ratio": {"f": "=C3/C3"}, "__t_ratio_value": 1.0},
+                {"dataset": "d", "scheme": "g", "t": 2.0, "t_ratio": {"f": "=C4/C3"}, "__t_ratio_value": 2.0}]
         s = sheet(rows=rows, banner=("x", {"f": "=SUM(C3:C4)"}), header_labels={"t": "time"},
                   ratio_fields={"t_ratio": "lower"},
                   cell_fill=lambda f, r, v: "FFCCFFFF" if f == "t" and v == 2.0 else None,

@@ -11,8 +11,8 @@
 #ifndef _MMER_H
 #define _MMER_H
 #include <cinttypes>
-#include "../../common/minimizer-orders/greedymini_rank.h"
-#include "../../common/minimizer-orders/dna_revcomp.h"
+#include "../../common/minimizer-schemes/greedymini_rank.h"
+#include "../../common/minimizer-schemes/dna_revcomp.h"
 #ifndef MIN
 #define MIN(x,y)	((x) < (y) ? (x) : (y))
 #endif
@@ -132,7 +132,7 @@ public:
 	static void SetGmBinaryLut(const uint32_t* rank_lut, uint32_t tie_seed);
 	static void ClearCustomOrder();
 	// Shared with kraken2's own binary-alphabet GreedyMini key derivation
-	// (common/minimizer-orders/greedymini_rank.h); verified bit-identical to
+	// (common/minimizer-schemes/greedymini_rank.h); verified bit-identical to
 	// this function's previous from-scratch loop over DnaBaseToBinaryBit.
 	static inline uint32_t DnaToBinaryKey(uint32_t dna, uint32_t p)
 	{

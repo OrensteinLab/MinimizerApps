@@ -9,7 +9,7 @@ reset_run_options() {
   BINS=""
   STRICT_MEM=0
   RUN_TAG=""
-  SIGNATURE_ORDER="all"
+  SCHEME="all"
   ORDER_LABEL=""
   CUSTOM_ORDER=""
   N_SEEDS=1
@@ -18,12 +18,12 @@ reset_run_options() {
   FORCE=0
 }
 
-normalize_signature_order() {
-  # canonical order names only (benchmark/common/order_names.py), no aliases
-  SIGNATURE_ORDER="${SIGNATURE_ORDER,,}"
-  case "$SIGNATURE_ORDER" in
+normalize_scheme() {
+  # canonical scheme names only (benchmark/common/scheme_names.py), no aliases
+  SCHEME="${SCHEME,,}"
+  case "$SCHEME" in
     default|lex|xor|xor-pcg-hash|greedymini|all) ;;
-    *) die "unknown signature order '$SIGNATURE_ORDER' (use default, lex, xor, xor-pcg-hash, greedymini or all)" ;;
+    *) die "unknown scheme '$SCHEME' (use default, lex, xor, xor-pcg-hash, greedymini or all)" ;;
   esac
   case "${GM_LUT:-dna}" in dna|binary) ;; *) die "unknown gm_lut '$GM_LUT' (use dna or binary)" ;; esac
   case "${GM_PROJECTION:-at0-cg1}" in at0-cg1|at1-cg0) ;; *) die "unknown projection '$GM_PROJECTION' (use at0-cg1 or at1-cg0)" ;; esac
@@ -42,8 +42,8 @@ run_experiment() {
   for ((i = 0; i < n; i++)); do
     reset_run_options
     eval "${env_lines[$i]}"
-    normalize_signature_order
-    echo "=== [$((i + 1))/$n] datasets=$DATASETS k=$KS t=$THREADS bins=${BINS:-512} mem=${MEM_OVERRIDE:-csv} sm=$STRICT_MEM -O $SIGNATURE_ORDER $(date) ==="
+    normalize_scheme
+    echo "=== [$((i + 1))/$n] datasets=$DATASETS k=$KS t=$THREADS bins=${BINS:-512} mem=${MEM_OVERRIDE:-csv} sm=$STRICT_MEM -S $SCHEME $(date) ==="
     run_schemes
   done
   export_results

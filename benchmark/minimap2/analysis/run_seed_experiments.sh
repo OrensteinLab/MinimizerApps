@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Mechanism + timing experiments for the scheme analysis, on a fixed random
-# read sample per dataset, single thread, seed-0 index of every order:
+# read sample per dataset, single thread, seed-0 index of every scheme:
 #   seeds/<ds>/<cap>/<variant>.csv      one pass with --dbg-seed-occ (seeds, anchors)
 #   timing/<ds>/<cap>/<variant>.r<i>.csv  REPS passes without it (per-read time),
 #                                      variants shuffled within each replicate
-# A variant is an order's run-directory name (order_names.order_dir_name), e.g.
+# A variant is a scheme's run-directory name (scheme_names.scheme_dir_name), e.g.
 # native, xor, greedymini/k15_at1-cg0, mod-minimizer-xor/t9; in file names "/"
 # is written "__". Every variant with a seed-0 index under the dataset's run
 # directory is used (greedymini once per projection).
@@ -52,24 +52,24 @@ fi
 cond=$(cd "$RESULTS/runs/$ds" && ls -d k*_w* | grep -v _f | head -1)
 [ -n "$cond" ] || { echo "error: no runs under $RESULTS/runs/$ds" >&2; exit 1; }
 
-# canonical order first, then the parameter directory
+# schemes in canonical sequence first, then the parameter directory
 VARIANTS=$(cd "$RESULTS/runs/$ds/$cond" && find . -path '*/0/index.mmi' | sed 's#^\./##; s#/0/index.mmi$##' \
-  | awk '{o=$0; sub("/.*","",o); r=(o=="native")?0:(o=="xor")?1:(o=="xor-pcg-hash")?2:(o=="greedymini")?3:(o=="mod-minimizer-xor")?4:5; print r" "$0}' \
+  | awk '{s=$0; sub("/.*","",s); r=(s=="native")?0:(s=="xor")?1:(s=="xor-pcg-hash")?2:(s=="greedymini")?3:(s=="mod-minimizer-xor")?4:5; print r" "$0}' \
   | sort | cut -d' ' -f2)
 [ -n "$VARIANTS" ] || { echo "error: no seed-0 indexes under $RESULTS/runs/$ds/$cond" >&2; exit 1; }
 
 for cap in "$@"; do
   flag=""
   [ "$cap" != default ] && flag="--cap $cap"
-  for o in $VARIANTS; do
-    idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"   # same index for both caps
-    f="$out/seeds/$cap/${o//\//__}.csv"
+  for v in $VARIANTS; do
+    idx="$RESULTS/runs/$ds/$cond/$v/0/index.mmi"   # same index for both caps
+    f="$out/seeds/$cap/${v//\//__}.csv"
     [ -s "$f" ] || { wait_low_load; bench_pin_cpus 1; ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --seeds --preset "$preset" $flag; }
   done
   for r in $(seq 1 "$reps"); do
-    for o in $(printf '%s\n' $VARIANTS | shuf --random-source=<(yes $r)); do
-      idx="$RESULTS/runs/$ds/$cond/$o/0/index.mmi"
-      f="$out/timing/$cap/${o//\//__}.r$r.csv"
+    for v in $(printf '%s\n' $VARIANTS | shuf --random-source=<(yes $r)); do
+      idx="$RESULTS/runs/$ds/$cond/$v/0/index.mmi"
+      f="$out/timing/$cap/${v//\//__}.r$r.csv"
       [ -s "$f" ] || { wait_low_load; bench_pin_cpus 1; ${BENCH_PIN[@]+"${BENCH_PIN[@]}"} "$PY" "$HERE/analysis/seed_stats.py" --minimap2 "$BIN" --index "$idx" --reads "$sample" --out "$f" --preset "$preset" $flag; }
     done
   done

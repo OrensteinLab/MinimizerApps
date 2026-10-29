@@ -388,7 +388,7 @@ int main(int argc, char** argv) {
                 const std::string path = dir + "/" + table;
                 hasher_type h(1234);
                 const uint64_t m = 21;
-                h.configure(custom_order_mode::GREEDYMINI, m, path, proj);
+                h.configure(custom_scheme_mode::GREEDYMINI, m, path, proj);
                 const uint64_t before = failures;
 
                 /* (a) */
@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
                 make_table(tmp, 9, kind, 100 + kind);
                 hasher_type h(777);
                 const uint64_t m = 13;
-                h.configure(custom_order_mode::GREEDYMINI, m, tmp, proj);
+                h.configure(custom_scheme_mode::GREEDYMINI, m, tmp, proj);
                 const uint64_t before = failures;
                 std::atomic<uint64_t> iters{0};
                 std::vector<std::thread> th3;

@@ -15,14 +15,14 @@
 #include "ksw2.h"
 #include "kvec.h"
 #include "khash.h"
-#include "order.h"
+#include "scheme.h"
 
 // "MMI\2" (MM_IDX_MAGIC) is upstream's own format; "MMI\3" additionally
 // carries a trailing custom-order metadata section (see mm_idx_dump/
 // mm_idx_load2 below). An explicit magic-byte bump, not an inferred-from-EOF
 // signal: a binary that doesn't know about "MMI\3" fails mm_idx_load's own
 // magic check immediately and cleanly, and a binary that does know about it
-// degrades a plain "MMI\2" file to MM_ORDER_NATIVE with no ambiguity.
+// degrades a plain "MMI\2" file to MM_SCHEME_NATIVE with no ambiguity.
 #define MM_IDX_MAGIC2 "MMI\3"
 
 #define idx_hash(a) ((a)>>1)
@@ -72,7 +72,7 @@ void mm_idx_destroy(mm_idx_t *mi)
 {
 	uint32_t i;
 	if (mi == 0) return;
-	if (mi->order) mm_order_destroy(mi->order);
+	if (mi->scheme) mm_scheme_destroy(mi->scheme);
 	if (mi->h) kh_destroy(str, (khash_t(str)*)mi->h);
 	if (mi->B) {
 		for (i = 0; i < 1U<<mi->b; ++i) {
@@ -381,8 +381,8 @@ static void *worker_pipeline(void *shared, int step, void *in)
 		for (i = 0; i < s->n_seq; ++i) {
 			mm_bseq1_t *t = &s->seq[i];
 			if (t->l_seq > 0) {
-				if (p->mi->order)
-					mm_sketch_ordered(p->mi->order, 0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
+				if (p->mi->scheme)
+					mm_sketch_scheme(p->mi->scheme, 0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
 				else
 					mm_sketch(0, t->seq, t->l_seq, p->mi->w, p->mi->k, t->rid, p->mi->flag&MM_I_HPC, &s->a);
 			}
@@ -400,7 +400,7 @@ static void *worker_pipeline(void *shared, int step, void *in)
     return 0;
 }
 
-mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini_batch_size, int n_threads, uint64_t batch_size, mm_order_t *order)
+mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini_batch_size, int n_threads, uint64_t batch_size, mm_scheme_t *scheme)
 {
 	pipeline_t pl;
 	if (fp == 0 || mm_bseq_eof(fp)) return 0;
@@ -409,7 +409,7 @@ mm_idx_t *mm_idx_gen(mm_bseq_file_t *fp, int w, int k, int b, int flag, int mini
 	pl.batch_size = batch_size;
 	pl.fp = fp;
 	pl.mi = mm_idx_init(w, k, b, flag);
-	pl.mi->order = order; // NULL = native (upstream behaviour, untouched)
+	pl.mi->scheme = scheme; // NULL = native (upstream behaviour, untouched)
 
 	kt_pipeline(n_threads < 3? n_threads : 3, worker_pipeline, &pl, 3);
 	if (mm_verbose >= 3)
@@ -491,10 +491,10 @@ void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part)
 {
 	uint64_t sum_len = 0;
 	uint32_t x[5], i;
-	int write_order = is_first_part && mi->order != 0;
+	int write_scheme = is_first_part && mi->scheme != 0;
 
 	x[0] = mi->w, x[1] = mi->k, x[2] = mi->b, x[3] = mi->n_seq, x[4] = mi->flag;
-	fwrite(write_order ? MM_IDX_MAGIC2 : MM_IDX_MAGIC, 1, 4, fp);
+	fwrite(write_scheme ? MM_IDX_MAGIC2 : MM_IDX_MAGIC, 1, 4, fp);
 	fwrite(x, 4, 5, fp);
 	for (i = 0; i < mi->n_seq; ++i) {
 		if (mi->seq[i].name) {
@@ -526,7 +526,7 @@ void mm_idx_dump(FILE *fp, const mm_idx_t *mi, int is_first_part)
 	}
 	if (!(mi->flag & MM_I_NO_SEQ))
 		fwrite(mi->S, 4, (sum_len + 7) / 8, fp);
-	if (write_order && mm_order_dump(mi->order, fp) != 0) {
+	if (write_scheme && mm_scheme_dump(mi->scheme, fp) != 0) {
 		fprintf(stderr, "[ERROR] failed to write the minimizer order into the index\n");
 		exit(1);
 	}
@@ -540,10 +540,10 @@ mm_idx_t *mm_idx_load(FILE *fp)
 	uint64_t sum_len = 0;
 	mm_idx_t *mi;
 
-	int has_order;
+	int has_scheme;
 	if (fread(magic, 1, 4, fp) != 4) return 0;
-	if (strncmp(magic, MM_IDX_MAGIC, 4) == 0) has_order = 0;
-	else if (strncmp(magic, MM_IDX_MAGIC2, 4) == 0) has_order = 1;
+	if (strncmp(magic, MM_IDX_MAGIC, 4) == 0) has_scheme = 0;
+	else if (strncmp(magic, MM_IDX_MAGIC2, 4) == 0) has_scheme = 1;
 	else return 0;
 	if (fread(x, 4, 5, fp) != 5) return 0;
 	mi = mm_idx_init(x[0], x[1], x[2], x[4]);
@@ -588,11 +588,11 @@ mm_idx_t *mm_idx_load(FILE *fp)
 		mi->S = (uint32_t*)malloc((sum_len + 7) / 8 * 4);
 		fread(mi->S, 4, (sum_len + 7) / 8, fp);
 	}
-	if (has_order) { // an index whose order cannot be restored is refused, not mapped with the native order
+	if (has_scheme) { // an index whose scheme cannot be restored is refused, not mapped with the native scheme
 		char errbuf[256];
-		mm_order_t *ord = mm_order_load(fp, errbuf, sizeof errbuf);
-		if (ord && mm_order_validate(ord, mi->k, mi->w, errbuf, sizeof errbuf) != 0) {
-			mm_order_destroy(ord);
+		mm_scheme_t *ord = mm_scheme_load(fp, errbuf, sizeof errbuf);
+		if (ord && mm_scheme_validate(ord, mi->k, mi->w, errbuf, sizeof errbuf) != 0) {
+			mm_scheme_destroy(ord);
 			ord = 0;
 		}
 		if (ord == 0) {
@@ -601,7 +601,7 @@ mm_idx_t *mm_idx_load(FILE *fp)
 			mm_idx_destroy(mi);
 			exit(EXIT_FAILURE); // a NULL return would end the read loop quietly with exit status 0
 		}
-		mi->order = ord;
+		mi->scheme = ord;
 	}
 	return mi;
 }
@@ -645,10 +645,10 @@ mm_idx_reader_t *mm_idx_reader_open(const char *fn, const mm_idxopt_t *opt, cons
 		r->idx_size = is_idx;
 	} else r->fp.seq = mm_bseq_open(fn);
 	if (fn_out) r->fp_out = fopen(fn_out, "wb");
-	if (!r->is_idx && r->opt.order_conf.kind != MM_ORDER_NATIVE) {
+	if (!r->is_idx && r->opt.scheme_conf.kind != MM_SCHEME_NATIVE) {
 		char errbuf[256];
-		r->order = mm_order_init(&r->opt.order_conf, errbuf, sizeof errbuf);
-		if (!r->order) {
+		r->scheme = mm_scheme_init(&r->opt.scheme_conf, errbuf, sizeof errbuf);
+		if (!r->scheme) {
 			fprintf(stderr, "[ERROR] failed to initialize custom minimizer order: %s\n", errbuf);
 			mm_idx_reader_close(r);
 			return 0;
@@ -662,7 +662,7 @@ void mm_idx_reader_close(mm_idx_reader_t *r)
 	if (r->is_idx) fclose(r->fp.idx);
 	else mm_bseq_close(r->fp.seq);
 	if (r->fp_out) fclose(r->fp_out);
-	if (r->order) mm_order_destroy(r->order);
+	if (r->scheme) mm_scheme_destroy(r->scheme);
 	free(r);
 }
 
@@ -672,21 +672,21 @@ mm_idx_t *mm_idx_reader_read(mm_idx_reader_t *r, int n_threads)
 	if (r->is_idx) {
 		mi = mm_idx_load(r->fp.idx);
 		if (mi) {
-			if (mi->order) { // this part's own file section carried an order (always part 0)
-				if (r->order) mm_order_destroy(r->order);
-				r->order = mm_order_clone(mi->order);
-			} else if (r->order) { // a later part: reuse part 0's order
-				mi->order = mm_order_clone(r->order);
+			if (mi->scheme) { // this part's own file section carried a scheme (always part 0)
+				if (r->scheme) mm_scheme_destroy(r->scheme);
+				r->scheme = mm_scheme_clone(mi->scheme);
+			} else if (r->scheme) { // a later part: reuse part 0's scheme
+				mi->scheme = mm_scheme_clone(r->scheme);
 			}
 		}
 		if (mi && mm_verbose >= 2 && (mi->k != r->opt.k || mi->w != r->opt.w || (mi->flag&MM_I_HPC) != (r->opt.flag&MM_I_HPC)))
 			fprintf(stderr, "[WARNING]\033[1;31m Indexing parameters (-k, -w or -H) overridden by parameters used in the prebuilt index.\033[0m\n");
-		if (mi && r->n_parts == 0 && mm_verbose >= 2 && r->opt.order_conf.kind != MM_ORDER_NATIVE
-				&& !mm_order_matches_conf(mi->order, &r->opt.order_conf))
-			fprintf(stderr, "[WARNING]\033[1;31m Minimizer order options (--minimizer-order and its flags) overridden by the order of the prebuilt index (%s).\033[0m\n",
-					mm_order_kind_name(mm_order_kind(mi->order)));
+		if (mi && r->n_parts == 0 && mm_verbose >= 2 && r->opt.scheme_conf.kind != MM_SCHEME_NATIVE
+				&& !mm_scheme_matches_conf(mi->scheme, &r->opt.scheme_conf))
+			fprintf(stderr, "[WARNING]\033[1;31m Minimizer scheme options (--scheme and its flags) overridden by the scheme of the prebuilt index (%s).\033[0m\n",
+					mm_scheme_kind_name(mm_scheme_kind(mi->scheme)));
 	} else {
-		mm_order_t *ord = r->order ? mm_order_clone(r->order) : 0;
+		mm_scheme_t *ord = r->scheme ? mm_scheme_clone(r->scheme) : 0;
 		mi = mm_idx_gen(r->fp.seq, r->opt.w, r->opt.k, r->opt.bucket_bits, r->opt.flag, r->opt.mini_batch_size, n_threads, r->opt.batch_size, ord);
 	}
 	if (mi) {

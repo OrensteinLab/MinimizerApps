@@ -4,7 +4,7 @@ reset_run_options() {
   DATASETS="$ALL_DATASETS"
   K=31
   M=11
-  ORDERS="all"
+  SCHEMES="all"
   GM_TABLES=""
   GM_PROJECTIONS=""
   THREADS=8
@@ -26,7 +26,7 @@ run_experiment() {
   for ((i = 0; i < n; i++)); do
     reset_run_options
     eval "${env_lines[$i]}"
-    echo "=== [$((i + 1))/$n] datasets=$DATASETS k=$K m=$M orders=$ORDERS n=$N_SEEDS $(date) ==="
+    echo "=== [$((i + 1))/$n] datasets=$DATASETS k=$K m=$M schemes=$SCHEMES n=$N_SEEDS $(date) ==="
     run_sweep
   done
   export_results

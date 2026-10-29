@@ -35,7 +35,7 @@ def _lex_row(wall: float, seed_idx: int = 0, *, n_bins: int = 512, threads: int 
         "k": 28,
         "input_format": "gzip",
         "config_tag": f"gzip_n{n_bins}_t{threads}_m12",
-        "order": "default",
+        "scheme": "default",
         "threads": threads,
         "n_bins": n_bins,
         "mem_limit_gb": 12,
@@ -63,7 +63,7 @@ def _lex_row(wall: float, seed_idx: int = 0, *, n_bins: int = 512, threads: int 
 def _gm_row(wall: float, seed_idx: int, **kw) -> dict:
     return {
         **_lex_row(wall, seed_idx, **kw),
-        "order": "greedymini",
+        "scheme": "greedymini",
         "gm_k": 9,
         "projection": "at0-cg1",
         "gm_table": "w20_k9_canonical",
@@ -75,11 +75,11 @@ def _gm_row(wall: float, seed_idx: int, **kw) -> dict:
 
 
 def _xor_row(wall: float, seed_idx: int, **kw) -> dict:
-    return {**_lex_row(wall, seed_idx, **kw), "order": "xor", "signature_order": "custom"}
+    return {**_lex_row(wall, seed_idx, **kw), "scheme": "xor", "signature_order": "custom"}
 
 
 def _pcg_row(wall: float, seed_idx: int, **kw) -> dict:
-    return {**_lex_row(wall, seed_idx, **kw), "order": "xor-pcg-hash", "signature_order": "custom"}
+    return {**_lex_row(wall, seed_idx, **kw), "scheme": "xor-pcg-hash", "signature_order": "custom"}
 
 
 def test_repeated_lex_gets_real_mean_and_std():

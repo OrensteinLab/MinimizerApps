@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
-from order_names import BASELINES, make_id  # noqa: E402
+from scheme_names import BASELINES, make_id  # noqa: E402
 
 
 def parse_time_v(path: Path) -> dict:
@@ -77,12 +77,12 @@ def _hms_to_sec(s: str) -> float:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--order", required=True)
+    ap.add_argument("--scheme", required=True)
     ap.add_argument("--gm-k", default="", help="GreedyMini table k (greedymini only)")
     ap.add_argument("--projection", default="", help="greedymini --gm-projection: at0-cg1 | at1-cg0")
     ap.add_argument("--gm-table", default="", help="GreedyMini table stem (greedymini only)")
     ap.add_argument("--seed")
-    ap.add_argument("--seed-idx", type=int, default=0, help="index into config.yaml's shared seed list (0 for the seed-independent order, native)")
+    ap.add_argument("--seed-idx", type=int, default=0, help="index into config.yaml's shared seed list (0 for the seed-independent scheme, native)")
     ap.add_argument("--k", type=int, required=True)
     ap.add_argument("--w", type=int, required=True)
     ap.add_argument("--mod-t", type=int, default=0)
@@ -100,9 +100,9 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args(argv)
 
-    # order + gm_k/projection/gm_table/mod_t are the identity fields of
-    # benchmark/common/order_names.py (non-applicable ones are None)
-    idd = make_id(args.order, args.gm_k or None, args.projection or None, args.gm_table or None,
+    # scheme + gm_k/projection/gm_table/mod_t are the identity fields of
+    # benchmark/common/scheme_names.py (non-applicable ones are None)
+    idd = make_id(args.scheme, args.gm_k or None, args.projection or None, args.gm_table or None,
                   args.mod_t or None, baselines=BASELINES, default_projection=False)
     meta = {
         "dataset": args.dataset,
@@ -127,9 +127,9 @@ def main(argv=None) -> int:
         # "distinct minimizers" collapses every repeated occurrence of the same
         # minimizer key to one count, so it always undercounts total selected
         # positions whenever the genome has any repeat content -- and it
-        # undercounts *more* for an order that's *better* at consistently
+        # undercounts *more* for a scheme that's *better* at consistently
         # re-selecting the same minimizer across a repeat's copies (exactly
-        # the property these custom orders are supposed to have), which can
+        # the property these custom schemes are supposed to have), which can
         # push a distinct-minimizer-based ratio below the proven theoretical
         # minimum of density_factor=1 (every scheme must select at least
         # 1 per w+1-window). Using avg_spacing avoids this entirely.

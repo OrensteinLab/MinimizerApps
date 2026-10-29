@@ -5,7 +5,7 @@
 #define __STDC_LIMIT_MACROS
 #include "kvec.h"
 #include "mmpriv.h"
-#include "order.h"
+#include "scheme.h"
 
 unsigned char seq_nt4_table[256] = {
 	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
@@ -26,9 +26,9 @@ unsigned char seq_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
 
-// Exported (was file-local `static inline`) so order.cpp's ordered sketch
+// Exported (was file-local `static inline`) so scheme.cpp's ordered sketch
 // path can derive the *stored* index key from a selected k-mer the same way
-// regardless of which order picked it -- see order.cpp's design comment.
+// regardless of which order picked it -- see scheme.cpp's design comment.
 uint64_t mm_hash64(uint64_t key, uint64_t mask)
 {
 	key = (~key + (key << 21)) & mask; // key = (key << 21) - key - 1;

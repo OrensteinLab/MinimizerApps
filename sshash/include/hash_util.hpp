@@ -107,7 +107,7 @@ private:
 }  // namespace sshash
 
 /* `hasher_type` (used to hash m-mers of a k-mer to compute its minimizer) is
-   defined in custom_order_hasher.hpp, which reproduces mixer_64's own
+   defined in custom_scheme_hasher.hpp, which reproduces mixer_64's own
    formula for its NATIVE order and additionally supports the shared
    RandomXor/RandomPcg/GreedyMini orders -- see orders/README.md. */
-#include "custom_order_hasher.hpp"
+#include "custom_scheme_hasher.hpp"

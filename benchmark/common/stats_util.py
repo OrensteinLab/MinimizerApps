@@ -1,5 +1,5 @@
 """Scipy-free t-test helpers shared by the benchmarks' statistics (minimap2 analysis/stats.py,
-common/order_tests.py): Student-t tail via the regularized incomplete beta function (Numerical
+common/scheme_tests.py): Student-t tail via the regularized incomplete beta function (Numerical
 Recipes betacf), Welch's t-test and the Holm step-down correction."""
 from __future__ import annotations
 

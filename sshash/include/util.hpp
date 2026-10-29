@@ -7,7 +7,7 @@
 #include <cmath>  // for std::ceil on linux
 
 #include "hash_util.hpp"
-#include "../../common/minimizer-orders/mod_minimizer_rule.h"
+#include "../../common/minimizer-schemes/mod_minimizer_rule.h"
 
 namespace sshash {
 
@@ -165,7 +165,7 @@ struct build_configuration {
 
         , tmp_dirname(constants::default_tmp_dirname)
 
-        , order(custom_order_mode::NATIVE)
+        , scheme(custom_scheme_mode::NATIVE)
         , gm_proj(gm_projection::AT0_CG1)
         , mod_t(0)
         , regular_parsing(false)
@@ -186,10 +186,10 @@ struct build_configuration {
 
     std::string tmp_dirname;
 
-    /* Custom minimizer order (see orders/README.md); NATIVE reproduces
+    /* Custom minimizer scheme (see orders/README.md); NATIVE reproduces
        upstream's own mixer_64-based order unchanged. */
-    custom_order_mode order;
-    std::string greedy_mini_filename;  // required when order == GREEDYMINI
+    custom_scheme_mode scheme;
+    std::string greedy_mini_filename;  // required when scheme == GREEDYMINI
     gm_projection gm_proj;  // DNA->binary Sigma polarity
     uint64_t mod_t;         // t-mer length of the mod-minimizer orders (0 otherwise)
 
@@ -209,9 +209,9 @@ struct build_configuration {
                   << ", verbose = " << (verbose ? "true" : "false")           //
                   << ", bucket_stats = " << (bucket_stats ? "true" : "false") //
                   << ", tmp_dirname = '" << tmp_dirname << "'"                //
-                  << ", order = '" << custom_order_mode_name(order) << "'"              //
-                  << (is_gm_mode(order) ? std::string(", gm_projection = ") + gm_projection_name(gm_proj) : std::string()) //
-                  << (is_mod_mode(order) ? ", mod_t = " + std::to_string(mod_t) : std::string()) //
+                  << ", scheme = '" << custom_scheme_mode_name(scheme) << "'"              //
+                  << (is_gm_mode(scheme) ? std::string(", gm_projection = ") + gm_projection_name(gm_proj) : std::string()) //
+                  << (is_mod_mode(scheme) ? ", mod_t = " + std::to_string(mod_t) : std::string()) //
                   << (regular_parsing ? ", regular_parsing = true" : "") << std::endl;      //
     }
 };
@@ -617,7 +617,7 @@ inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t w
 /*
     Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with the
     centre tie rule of compute_minimizer; shared definition with the minimap2 and kraken2 forks
-    in common/minimizer-orders/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers are ranked
+    in common/minimizer-schemes/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers are ranked
     by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its hash being
     strand invariant); a minimal t-mer at locus x offers the m-mer at offset x mod w,
     w = k - m + 1. The builder requires t == m (mod w), so T-1 == w-1 (mod w) and the mirror
@@ -636,7 +636,7 @@ inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t w
     The definition evaluated directly (O(T) hashes); mod_minimizer_iterator computes the same
     incrementally.
 */
-template <custom_order_mode Mode, typename Kmer>
+template <custom_scheme_mode Mode, typename Kmer>
 minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k,
                                      const uint64_t m, hasher_type const& hasher)  //
 {
@@ -706,14 +706,14 @@ minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, cons
 }
 
 /* The minimizer under the order `Mode`, known at compile time. */
-template <custom_order_mode Mode, typename Kmer>
+template <custom_scheme_mode Mode, typename Kmer>
 inline minimizer_info compute_minimizer_for(Kmer const& kmer, Kmer const& kmer_rc,
                                             const uint64_t k, const uint64_t m,
                                             hasher_type const& hasher)  //
 {
     if constexpr (is_mod_mode(Mode)) {
         return compute_mod_minimizer<Mode, Kmer>(kmer, kmer_rc, k, m, hasher);
-    } else if constexpr (Mode == custom_order_mode::GREEDYMINI) {
+    } else if constexpr (Mode == custom_scheme_mode::GREEDYMINI) {
         return compute_minimizer_ranked<Kmer>(kmer, kmer_rc, k, m, hasher);
     } else {
         return compute_minimizer_all_loci<Kmer>(kmer, kmer_rc, k, m, hasher.plain<Mode>());
@@ -727,7 +727,7 @@ __attribute__((noinline)) minimizer_info compute_minimizer_dispatched(
     Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k, const uint64_t m,
     hasher_type const& hasher)  //
 {
-    return dispatch_order(hasher.mode(), [&](auto mode) {
+    return dispatch_scheme(hasher.mode(), [&](auto mode) {
         return compute_minimizer_for<decltype(mode)::value, Kmer>(kmer, kmer_rc, k, m, hasher);
     });
 }
@@ -738,8 +738,8 @@ template <typename Kmer>
 inline minimizer_info compute_minimizer(Kmer const& kmer, Kmer const& kmer_rc, const uint64_t k,
                                         const uint64_t m, hasher_type const& hasher)  //
 {
-    if (__builtin_expect(hasher.mode() == custom_order_mode::NATIVE, true)) {
-        return compute_minimizer_for<custom_order_mode::NATIVE, Kmer>(kmer, kmer_rc, k, m, hasher);
+    if (__builtin_expect(hasher.mode() == custom_scheme_mode::NATIVE, true)) {
+        return compute_minimizer_for<custom_scheme_mode::NATIVE, Kmer>(kmer, kmer_rc, k, m, hasher);
     }
     return compute_minimizer_dispatched<Kmer>(kmer, kmer_rc, k, m, hasher);
 }

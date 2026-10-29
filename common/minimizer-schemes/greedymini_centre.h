@@ -50,7 +50,7 @@
  *    with rank_or_inf = the table's infinity (0xFFFF) for an infinite centre,
  *    so infinite windows are ordered too and the value is injective on
  *    canonical l-mers (the winning frame's (Sigma, Gamma) determine the DNA).
- *    This is bit for bit sshash's custom_order_hasher hash.
+ *    This is bit for bit sshash's custom_scheme_hasher hash.
  * Rank-first comparison works in both modes: finite < infinite, and the rank
  * alone is rank_of_sigma() / rank_at() (one table load).
  *

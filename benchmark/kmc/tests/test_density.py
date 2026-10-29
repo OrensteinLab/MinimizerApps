@@ -112,7 +112,7 @@ def test_attach_density_refs():
         "k": 28,
         "p": 9,
         "density_factor": 1.79,
-        "order": "greedymini",
+        "scheme": "greedymini",
         "gm_k": 9,
         "projection": "at0-cg1",
         "gm_lut": "dna",
@@ -125,7 +125,7 @@ def test_attach_density_refs():
         "k": 28,
         "p": 9,
         "density_factor": 2.0,
-        "order": "default",
+        "scheme": "default",
         "signature_order": "default",
     }
     attach_density_refs([gm, lex], particular=part)

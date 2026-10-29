@@ -42,7 +42,7 @@ bench_common_options_help() {
   -g GM_FILE    binary w5_k15 table (.gm) for greedymini (or env GM_FILE)
   -M MOD_GM     binary w5_k6 table (.gm) for mod-minimizer-greedymini
                 (or env MOD_GM_FILE)
-  -P PROJ[,PROJ] greedymini DNA->binary projection(s) for both greedymini orders:
+  -P PROJ[,PROJ] greedymini DNA->binary projection(s) for both greedymini schemes:
                 at0-cg1 (A,T -> 0) | at1-cg0 (flipped); comma-separated list =
                 one run variant per projection (default: both, or env
                 GM_PROJECTION). xor, xor-pcg-hash, mod-minimizer-xor run once.
@@ -262,10 +262,10 @@ bench_run_root() {
     bench_run_root_for "${LIB_ID}"
 }
 
-# For one variant ("<order>" or "<order>@<projection>", see bench_expand_variants) sets
-#   SCHEME        the order (label in tables / manifest)
-#   SCHEME_BASE   run directory (benchmark/common/order_names.order_dir_name:
-#                 <order>[/k<gm_k>_<projection>_t<mod_t>])
+# For one variant ("<scheme>" or "<scheme>@<projection>", see bench_expand_variants) sets
+#   SCHEME        the scheme (label in tables / manifest)
+#   SCHEME_BASE   run directory (benchmark/common/scheme_names.scheme_dir_name:
+#                 <scheme>[/k<gm_k>_<projection>_t<mod_t>])
 #   SCHEME_GM_K / SCHEME_PROJECTION / SCHEME_GM_TABLE / SCHEME_MOD_T  id fields
 #   SCHEME_ARGS, SCHEME_NEEDS_GM
 bench_configure_scheme() {
@@ -353,7 +353,7 @@ bench_scheme_gm_needs() {
 
 # Build a .gm from its matching .txt (via the shared serializer) if missing.
 bench_ensure_gm_file() {
-    local gm_path="$1" txt_path tool_dir="${CODEBASE}/../common/minimizer-orders"
+    local gm_path="$1" txt_path tool_dir="${CODEBASE}/../common/minimizer-schemes"
     [[ -n "${gm_path}" && -f "${gm_path}" ]] && return 0
     [[ -n "${gm_path}" ]] || return 1
     txt_path="${gm_path%.gm}.txt"

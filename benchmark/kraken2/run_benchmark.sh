@@ -13,7 +13,7 @@
 #   data/{strain-exclusion,fda-argos,cami}/
 #   runs/{standard,strain_exclusion,standard_p10,standard_p0.5}/
 #     {scheme}/{seed}/{db,results}
-#   scheme = <order>[/k<gm_k>_<projection>_t<mod_t>] (order_names.order_dir_name):
+#   scheme = <scheme>[/k<gm_k>_<projection>_t<mod_t>] (scheme_names.scheme_dir_name):
 #            xor | xor-pcg-hash | greedymini/k15_at0-cg1 | mod-minimizer-xor/t6 |
 #            mod-minimizer-greedymini/k6_at0-cg1_t6
 #
@@ -750,8 +750,8 @@ run_all_scheme_benchmarks() {
     mkdir -p "${RUN_ROOT}"
     # Several invocations may share one run root (e.g. -S xor greedymini first,
     # later -S xor-pcg-hash mod-minimizer-xor mod-minimizer-greedymini): only the
-    # manifest lines of the run dirs (order + params) of THIS invocation are
-    # replaced; the other lines stay, so compare reads all orders of the library.
+    # manifest lines of the run dirs (scheme + params) of THIS invocation are
+    # replaced; the other lines stay, so compare reads all schemes of the library.
     if [[ -s "${RUN_MANIFEST}" ]]; then
         local tmp_manifest="${RUN_MANIFEST}.tmp.$$" sch
         local -a names=()

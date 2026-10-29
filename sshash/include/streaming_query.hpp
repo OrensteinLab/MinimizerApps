@@ -16,13 +16,13 @@ namespace sshash {
     stopped them from being inlined and cost native queries ~15%). `Regular` selects, likewise,
     the "regular parsing" lookup (see util::compute_minimizer_single_strand): a runtime test of it
     in the per-k-mer path alone cost 1-2% of the classical one. The dictionary picks the
-    instantiation from `hasher.mode()` (dispatch_order) and `regular_parsing()`.
+    instantiation from `hasher.mode()` (dispatch_scheme) and `regular_parsing()`.
 */
-template <typename Dict, custom_order_mode Mode = custom_order_mode::NATIVE, bool Regular = false>
+template <typename Dict, custom_scheme_mode Mode = custom_scheme_mode::NATIVE, bool Regular = false>
 struct streaming_query  //
 {
     using kmer_t = typename Dict::kmer_type;
-    using minimizer_iterator_t = order_minimizer_iterator<kmer_t, Mode>;
+    using minimizer_iterator_t = scheme_minimizer_iterator<kmer_t, Mode>;
 
     streaming_query(Dict const* dict)
 

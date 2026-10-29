@@ -43,12 +43,12 @@ Run options:
   --strict-mem            kmc -sm (hard RAM cap; stresses bin/memory path)
   --run-tag TAG           Replace auto config dir name (see Results layout)
   --kmc PATH              kmc binary (default: $REPO_ROOT/bin/kmc)
-  -O, --signature-order S default|lex|xor|xor-pcg-hash|greedymini|all (default: all)
+  -S, --scheme S          default|lex|xor|xor-pcg-hash|greedymini|all (default: all)
                           lex = true canonical lex, no is_allowed denylist
-                          (standalone comparison scheme; not part of -O all)
+                          (standalone comparison scheme; not part of -S all)
   --custom-order PATH     GreedyMini .gm or _dna.gm (overrides per-k default w{k-p+1}_k{p})
-  --order-label LABEL     kmc -ol label for xor|xor-pcg-hash|greedymini (default: the order name;
-                          not used with -O all)
+  --order-label LABEL     kmc -ol label for xor|xor-pcg-hash|greedymini (default: the scheme name;
+                          not used with -S all)
   --projection P          greedymini DNA->binary projection: at0-cg1 (default) | at1-cg0 (kmc -oat1;
                           needs --gm-lut binary). Same as GM_PROJECTION=...
   --gm-lut L              greedymini table LUT backend: dna (default) | binary. Same as GM_LUT=...
@@ -79,13 +79,13 @@ Read-length options (readlen-dataset / readlen-check; see README "Read-length co
                           --rl-target-kmers directly)
   --rl-probe-reads N      Source records sampled to estimate avg read length (default: 200000)
   (readlen-check also takes the Run options above: -k -t --mem --bins --strict-mem -n
-  -O --force; --mem is required since derived datasets aren't in data/datasets.csv)
+  -S --force; --mem is required since derived datasets aren't in data/datasets.csv)
 
 Examples:
   $0 download -d f_vesca
   $0 run -d f_vesca -k 28 -n 1
-  $0 run -d f_vesca -k 28 -O all -n 5 --bins 1536 -t 24 --mem 8 --strict-mem --force
-  $0 run -d f_vesca -k 28 -O lex -n 5 --bins 512 -t 12
+  $0 run -d f_vesca -k 28 -S all -n 5 --bins 1536 -t 24 --mem 8 --strict-mem --force
+  $0 run -d f_vesca -k 28 -S lex -n 5 --bins 512 -t 12
   $0 experiment sweep_config
   $0 experiment sweep_gm_lut_fixed_dataset
   $0 experiment sweep_gm_lut_fixed_config
@@ -108,7 +108,7 @@ parse_options() {
       --strict-mem) STRICT_MEM=1; shift ;;
       --run-tag) RUN_TAG="$2"; shift 2 ;;
       --kmc) KMC="$2"; shift 2 ;;
-      -O|--signature-order) SIGNATURE_ORDER="$2"; shift 2 ;;
+      -S|--scheme) SCHEME="$2"; shift 2 ;;
       --custom-order) CUSTOM_ORDER="$2"; shift 2 ;;
       --order-label) ORDER_LABEL="$2"; shift 2 ;;
       --projection) GM_PROJECTION="$2"; shift 2 ;;
@@ -157,7 +157,7 @@ fi
 parse_options "$@"
 
 if [[ "$CMD" != "experiment" ]]; then
-  normalize_signature_order
+  normalize_scheme
 fi
 
 load_dotenv

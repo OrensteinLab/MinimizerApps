@@ -126,9 +126,10 @@ if(SSHASH_BUILD_EXECUTABLES)
     sshash_static
   )
 
-  add_executable(test_streaming_order test/test_streaming_order.cpp)
-  target_link_libraries(test_streaming_order
+  add_executable(test_streaming_scheme test/test_streaming_scheme.cpp)
+  target_link_libraries(test_streaming_scheme
     sshash_static
+    z
   )
 
   add_executable(test_mod_minimizer test/test_mod_minimizer.cpp)

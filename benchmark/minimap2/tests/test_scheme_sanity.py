@@ -1,14 +1,14 @@
-"""Offline sanity/equivalence tests for the minimap2 order benchmark harness.
-Mirrors benchmark/sshash/tests/test_order_sanity.py's pattern: build under
-every order on a small local dataset, and assert the orders don't silently
+"""Offline sanity/equivalence tests for the minimap2 scheme benchmark harness.
+Mirrors benchmark/sshash/tests/test_scheme_sanity.py's pattern: build under
+every scheme on a small local dataset, and assert the schemes don't silently
 diverge from a shared invariant -- here, that they agree on the *set of
-reads mapped* (an order changes which minimizers get sampled, not whether
+reads mapped* (a scheme changes which minimizers get sampled, not whether
 the underlying alignment problem is solvable), even though their minimizer
 counts and exact identity differ.
 
 greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
 this test's fixed -k 15 -w 10), in both AT/CG projections (--gm-projection
-at0-cg1 / at1-cg0, a parameter of greedymini rather than an order of its own).
+at0-cg1 / at1-cg0, a parameter of greedymini rather than a scheme of its own).
 
 Run with: python3.11 -m pytest benchmark/minimap2/tests -q
 (needs a python3 new enough for these type hints -- see lib/constants.sh's
@@ -29,8 +29,8 @@ MINIMAP2_BIN = REPO_ROOT / "minimap2" / "minimap2"
 DATA_DIR = HERE / "_test_data"
 
 GM_FILE = REPO_ROOT / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
-# (order, greedymini projection): a variant label is "<order>" or "<order>_<projection>"
-ORDERS = ["native", "xor", "xor-pcg-hash", "greedymini_at0-cg1", "greedymini_at1-cg0", "mod-minimizer-xor"]
+# (scheme, greedymini projection): a variant label is "<scheme>" or "<scheme>_<projection>"
+SCHEMES = ["native", "xor", "xor-pcg-hash", "greedymini_at0-cg1", "greedymini_at1-cg0", "mod-minimizer-xor"]
 
 
 @pytest.fixture(scope="module")
@@ -45,22 +45,22 @@ def dataset(tmp_path_factory):
     return out
 
 
-def _order_flags(label: str) -> list[str]:
-    order, _, projection = label.partition("_")
-    if order == "native":
+def _scheme_flags(label: str) -> list[str]:
+    scheme, _, projection = label.partition("_")
+    if scheme == "native":
         return []
-    if order == "greedymini":
-        return ["--minimizer-order", "greedymini", "--greedymini-file", str(GM_FILE), "--gm-projection", projection]
-    flags = ["--minimizer-order", order, "--order-seed", "42"]
-    if order.startswith("mod-minimizer-"):
+    if scheme == "greedymini":
+        return ["--scheme", "greedymini", "--greedymini-file", str(GM_FILE), "--gm-projection", projection]
+    flags = ["--scheme", scheme, "--order-seed", "42"]
+    if scheme.startswith("mod-minimizer-"):
         flags += ["--mod-t", "5"]
     return flags
 
 
-def _build_and_map(dataset: Path, tmp_path: Path, order: str) -> tuple[dict, list[str]]:
-    mmi = tmp_path / f"{order}.mmi"
+def _build_and_map(dataset: Path, tmp_path: Path, scheme: str) -> tuple[dict, list[str]]:
+    mmi = tmp_path / f"{scheme}.mmi"
     build = subprocess.run(
-        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", "10", *_order_flags(order), str(dataset / "genome.fa")],
+        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", "10", *_scheme_flags(scheme), str(dataset / "genome.fa")],
         capture_output=True, text=True,
     )
     assert build.returncode == 0, build.stderr
@@ -78,36 +78,36 @@ def _build_and_map(dataset: Path, tmp_path: Path, order: str) -> tuple[dict, lis
 
 
 @pytest.mark.skipif(not MINIMAP2_BIN.is_file(), reason="minimap2 not built (run `make -C minimap2 all` first)")
-def test_all_orders_build_and_map(dataset, tmp_path):
+def test_all_schemes_build_and_map(dataset, tmp_path):
     results = {}
-    for order in ORDERS:
-        info, mapped = _build_and_map(dataset, tmp_path, order)
-        results[order] = (info, mapped)
-        assert info["density"] and info["density"] > 0, f"{order}: no minimizers sampled"
+    for scheme in SCHEMES:
+        info, mapped = _build_and_map(dataset, tmp_path, scheme)
+        results[scheme] = (info, mapped)
+        assert info["density"] and info["density"] > 0, f"{scheme}: no minimizers sampled"
 
 
 @pytest.mark.skipif(not MINIMAP2_BIN.is_file(), reason="minimap2 not built (run `make -C minimap2 all` first)")
-def test_mapped_read_set_agrees_across_orders(dataset, tmp_path):
+def test_mapped_read_set_agrees_across_schemes(dataset, tmp_path):
     mapped_sets = {}
-    for order in ORDERS:
-        _info, mapped = _build_and_map(dataset, tmp_path, order)
-        mapped_sets[order] = set(mapped)
+    for scheme in SCHEMES:
+        _info, mapped = _build_and_map(dataset, tmp_path, scheme)
+        mapped_sets[scheme] = set(mapped)
     reference = mapped_sets["native"]
-    for order, mapped in mapped_sets.items():
+    for scheme, mapped in mapped_sets.items():
         # A handful of reads landing right at the repeat boundary may map
-        # under one order and not another -- allow a small slack rather
+        # under one scheme and not another -- allow a small slack rather
         # than requiring byte-identical read sets.
         diff = reference.symmetric_difference(mapped)
         assert len(diff) <= max(2, int(0.05 * len(reference))), (
-            f"{order} disagrees with native on which reads mapped: {sorted(diff)[:10]}"
+            f"{scheme} disagrees with native on which reads mapped: {sorted(diff)[:10]}"
         )
 
 
 @pytest.mark.skipif(not MINIMAP2_BIN.is_file(), reason="minimap2 not built (run `make -C minimap2 all` first)")
-def test_non_native_orders_are_denser_or_sparser_but_never_degenerate(dataset, tmp_path):
+def test_non_native_schemes_are_denser_or_sparser_but_never_degenerate(dataset, tmp_path):
     n_kmers = 50000  # genome_len passed to make_dataset.py above
-    for order in ORDERS:
-        info, _mapped = _build_and_map(dataset, tmp_path, order)
+    for scheme in SCHEMES:
+        info, _mapped = _build_and_map(dataset, tmp_path, scheme)
         assert 0.01 * n_kmers < info["density"] < n_kmers, (
-            f"{order}: density {info['density']} looks degenerate for a {n_kmers}bp genome"
+            f"{scheme}: density {info['density']} looks degenerate for a {n_kmers}bp genome"
         )

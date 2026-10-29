@@ -36,9 +36,9 @@ setup(
 		sources = ['python/mappy.pyx', 'align.c', 'bseq.c', 'lchain.c', 'seed.c', 'format.c', 'hit.c', 'index.c', 'pe.c', 'jump.c', 'options.c',
 				   'ksw2_extd2_sse.c', 'ksw2_exts2_sse.c', 'ksw2_extz2_sse.c', 'ksw2_ll_sse.c',
 				   'kalloc.c', 'kthread.c', 'map.c', 'misc.c', 'sdust.c', 'sketch.c', 'esterr.c', 'splitidx.c',
-				   'order.cpp'], # custom minimizer orders (lab fork); C++, hence stdc++ below
+				   'scheme.cpp'], # custom minimizer schemes (lab fork); C++, hence stdc++ below
 		depends = ['minimap.h', 'bseq.h', 'kalloc.h', 'kdq.h', 'khash.h', 'kseq.h', 'ksort.h',
-				   'ksw2.h', 'kthread.h', 'kvec.h', 'mmpriv.h', 'sdust.h', 'order.h',
+				   'ksw2.h', 'kthread.h', 'kvec.h', 'mmpriv.h', 'sdust.h', 'scheme.h',
 				   'python/cmappy.h', 'python/cmappy.pxd'],
 		extra_compile_args = extra_compile_args,
 		include_dirs = include_dirs,
