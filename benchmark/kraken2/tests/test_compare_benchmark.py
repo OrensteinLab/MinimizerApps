@@ -62,7 +62,7 @@ class Compare(unittest.TestCase):
         self.assertEqual((m["build_pinned_cpus"], m["classify_pinned_cpus"]), ("0-5,64-69", "0,64"))
         self.assertFalse([k for k in m if "std" in k or k in ("n_classify", "class_walls")])
         # a PROF-less run has no profile
-        self.assertIsNone(m["nextmin_s"])
+        self.assertIsNone(m["scan_s"])
         # missing file: nothing, no crash
         m = C.collect_run_metrics(run, 1e-6, {1: run}, "nodata", 0)
         self.assertIsNone(m["class_s"])

@@ -47,6 +47,7 @@ from scripts.common import die, load_dotenv
 from scripts.config import data_dir
 from correlation import correlation_rows
 import density_effect
+import significance
 from xlsx_book import DATA_START_ROW as XLSX_DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv
 from scripts.density import (
@@ -1215,12 +1216,61 @@ def _xlsx_field_categories(raw_name: str, fields: Sequence[str]) -> list[str] | 
         return ["order reference"] * len(fields)
     if raw_name == "datasets":
         return ["dataset reference"] * len(fields)
+    if raw_name == "signature_cost":
+        return ["signature cost"] * len(fields)
     return None
 
 
 
 
 _WIDE_TEXT_FIELDS = {"meaning": 70, "notes": 80, "description": 80, "column": 34, "sheet": 20}
+
+
+SIGNATURE_VARIANTS = {"1": "default", "2": "GreedyMini (DNA table)", "3": "GreedyMini (binary table)"}
+SIGNATURE_FIELDS = (
+    "dataset", "variant", "n_seeds",
+    "signature_ns_per_base_mean", "signature_ns_per_base_std", "signature_ns_per_base_ratio",
+    "window_ns_per_base_mean", "window_ns_per_base_std", "window_ns_per_base_ratio",
+    "superwindows_per_kb",
+)
+_SIGNATURE_ROW = re.compile(
+    r"^(\d[a-z]?)\s.*?\s([\d.]+)\s+[\d.]+\s+[\d.]+\s+\|\s+([\d.]+)\s+[\d.]+\s+[\d.]+\s+\|\s+([\d.]+)\s*$")
+
+
+def load_signature_cost(results_root: Path) -> list[dict]:
+    """signature_cost sheet from <results>/profile/signature_<dataset>_<seed>.txt (experiments/profile_run.sh):
+    the TIMING table of tools/bench_signature_impls (median ns/base of the signature alone and with the
+    window minimum, superwindows per kb), kmc's own variants only, mean / std over seeds, ratio to default."""
+    per: dict[tuple[str, str], list[tuple[float, float, float]]] = {}
+    for f in sorted((results_root / "profile").glob("signature_*_0x*.txt")):
+        ds = f.stem[len("signature_"):].rsplit("_", 1)[0]
+        timing = False
+        for line in f.read_text(errors="replace").splitlines():
+            if line.startswith("TIMING"):
+                timing = True
+                continue
+            m = _SIGNATURE_ROW.match(line) if timing else None
+            if m and m.group(1) in SIGNATURE_VARIANTS:
+                per.setdefault((ds, SIGNATURE_VARIANTS[m.group(1)]), []).append(
+                    (float(m.group(2)), float(m.group(3)), float(m.group(4))))
+    rows = []
+    for (ds, variant), vals in per.items():
+        sig, win, skm = zip(*vals)
+        rows.append({
+            "dataset": ds, "variant": variant, "n_seeds": len(vals),
+            "signature_ns_per_base_mean": round(statistics.mean(sig), 4),
+            "signature_ns_per_base_std": round(statistics.stdev(sig), 4) if len(sig) > 1 else None,
+            "window_ns_per_base_mean": round(statistics.mean(win), 4),
+            "window_ns_per_base_std": round(statistics.stdev(win), 4) if len(win) > 1 else None,
+            "superwindows_per_kb": round(statistics.mean(skm), 3),
+        })
+    base = {r["dataset"]: r for r in rows if r["variant"] == "default"}
+    for r in rows:
+        b = base.get(r["dataset"])
+        for k in ("signature_ns_per_base", "window_ns_per_base"):
+            r[k + "_ratio"] = round(r[k + "_mean"] / b[k + "_mean"], 4) if b and b[k + "_mean"] else None
+    order = list(SIGNATURE_VARIANTS.values())
+    return sorted(rows, key=lambda r: (r["dataset"], order.index(r["variant"])))
 
 
 def make_sheet(
@@ -1408,6 +1458,16 @@ _ORDER_SHEET_MEANING: dict[str, tuple[str, str]] = {
         "that differ in any of them are different variants and are never pooled"),
 }
 _COLUMN_MEANING: dict[str, tuple[str, str]] = {
+    # signature_cost sheet (experiments/profile_run.sh, tools/bench_signature_impls)
+    "variant": ("order and table whose signature is computed: KMC3's default order, or the GreedyMini order through the DNA-alphabet table (4^k entries) or the binary table (projection extracted at run time)", "signature_cost sheet"),
+    "n_seeds": ("seeds of the full run measured (each seed selects the GreedyMini DNA table and the binary table's tie-break)", "signature_cost sheet"),
+    "signature_ns_per_base_mean": ("nanoseconds per base to compute the signature of the k-mer ending there (kmc's CMmer insert), median of the REPS runs of a seed, mean over seeds", "signature_cost sheet; one core, the first N_BASES bases of the dataset's reads"),
+    "signature_ns_per_base_std": ("sample std of signature_ns_per_base over seeds", "signature_cost sheet"),
+    "signature_ns_per_base_ratio": ("signature_ns_per_base_mean / that of the default order", "signature_cost sheet; < 1 = cheaper than the default"),
+    "window_ns_per_base_mean": ("nanoseconds per base to compute the signature and the minimum over each window of w signatures (the work of stage 1 per base, without I/O and bin writes), mean over seeds", "signature_cost sheet"),
+    "window_ns_per_base_std": ("sample std of window_ns_per_base over seeds", "signature_cost sheet"),
+    "window_ns_per_base_ratio": ("window_ns_per_base_mean / that of the default order", "signature_cost sheet; < 1 = cheaper than the default"),
+    "superwindows_per_kb": ("changes of the window minimum per 1000 bases (= superwindows), mean over seeds", "signature_cost sheet; a check that the variant selects as in the runs"),
     "dataset": ("dataset id", ""),
     "k": ("minimizer (signature) length (kmc -p)", "unified parameter names shared with the other apps; the CLI flags and run-dir names (k28_p9) keep kmc's own"),
     "w": ("window in k-mers, w = L - k + 1", ""),
@@ -1874,6 +1934,9 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     write_csv(out_root / "kmc3_orders.csv", orders_xlsx, orders_field_order(orders_datasets), unified=True)
     if vs_paper:
         write_csv(out_root / "kmc3_vs_paper.csv", vs_paper, vs_paper_field_order())
+    signature_cost = load_signature_cost(results_root)
+    if signature_cost:
+        write_csv(out_root / "kmc3_signature_cost.csv", signature_cost, SIGNATURE_FIELDS)
     for stale in ("kmc3_stages.csv", "kmc3_order_compare.csv", "kmc3_detail.csv", "kmc3_vs_lex.csv"):
         stale_path = out_root / stale
         if stale_path.is_file():
@@ -1898,9 +1961,12 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         sheets.append(make_sheet("gm_lut", gm_lut_xlsx, gm_lut_fields))
     sheets.append(make_sheet("runs", runs_xlsx, runs_fields))
     sheets.append(make_sheet("vs_paper", vs_paper, vs_paper_field_order()))
+    if signature_cost:
+        sheets.append(make_sheet("signature_cost", signature_cost, SIGNATURE_FIELDS))
     xlsx_path = xlsx_root / "kmc3_results.xlsx"
     legend = overview_rows({sh["name"]: sh["fields"] for sh in sheets})
     sheets += density_effect.sheets("kmc", results_root)  # explained by its own banner, not in the legend
+    sheets += significance.sheets("kmc", results_root)  # likewise
     sheets.insert(0, make_sheet("overview", legend, overview_field_order()))
     names = write_book(xlsx_path, sheets)
     print(f"wrote {xlsx_path} ({len(names)} sheets)")

@@ -282,8 +282,9 @@ runs/
 | `sshash_orders.csv` | one per order variant (k, w, L) | description, CLI, expected + particular density_factor | `orders` |
 | `sshash_summary.csv` | one per dataset x order variant | mean/std across seeds, ratio vs native | `summary` |
 | `sshash_space_breakdown.csv` | one per dataset x order variant | bits/k-mer by component, saving vs native, share of the saving | `space_breakdown` |
+| `significance_sshash.csv` | one per metric x dataset x scheme | paired test of the change from native (`benchmark/common/significance.py`, see `benchmark/README.md`) | `significance` |
 | `density_effect_sshash.csv` | one per metric x (all, dataset) | Pearson r of the metric and the density factor, both as ratios to native's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
-| `sshash_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram`, `density_effect`, `density_effect_points` (benchmark/common/xlsx_book.py) | — |
+| `sshash_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `runs`, `buckets`, `space_breakdown`, `bucket_histogram`, `super_kmer_histogram`, `density_effect`, `density_effect_points`, `significance` (benchmark/common/xlsx_book.py) | — |
 
 Re-export only: `benchmark/sshash/sshash_bench.sh export` (no network needed once local run
 data exists).
@@ -322,7 +323,7 @@ per-step `build_step{1..7}_s` (from `build --verbose`'s own microsecond timings)
 | `datasets` | one row per dataset: k, w, L, measured n_kmers |
 | `summary` | mean/std per dataset x order across seeds, plus `{metric}_ratio` = this variant's mean / the same-modality native's mean (native = 1); green (better) → red (worse) color scale on the ratio-scale metrics. Two rows right under the table hold, for every `{metric}_ratio` column, its Excel `CORREL` with the density ratio and with the distinct-minimizer ratio (`num_buckets_ratio`) over the dataset x order rows. |
 | `space_breakdown` | one row per dataset x order: where the bits/k-mer go (strings, offsets, MPHF, tags, light array L, skew index f_i+V_i and H), each component's saving over native and its share of the total saving, and the saving split into what is sized by the distinct minimizers (MPHF + tags) and what by the occurrences (L + skew index) |
-| `runs` | one row per run (every metric + telemetry, unfiltered) |
+| `runs` | one row per run (every metric + telemetry, unfiltered); after `experiments/profile_run.sh` also the streaming-query profile `query_prof_full_lookups`, `query_prof_positions_per_full_lookup`, `query_prof_verify_calls`, `query_prof_positions_per_verify` (the two ratios also on `summary`) |
 
 ## Measurement protocol
 

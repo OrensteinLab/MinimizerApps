@@ -36,7 +36,7 @@ datasets, summary, runs); kraken2-specific sheets keep their names.
   summary         library x dataset x minimum_hit_groups x order: classify-phase
                   measures (wall = DB load + processing) + accuracy
   runs            the per-seed rows behind `summary`
-  profile         NextMinimizer / phase profile (only for ENABLE_MINIMIZER_PROF builds)
+  profile         classify phase profile (experiments/profile_run.sh; ENABLE_MINIMIZER_PROF builds)
   vs_reference    paired agreement with xor, library x dataset x mhg x order
   accuracy_<dataset> (strain_exclusion, fda_argos, cami) accuracy per
                   slice (mhg / group / SRR), mean / std over seeds
@@ -79,6 +79,7 @@ for _p in (HERE, _COMMON):
 import order_names  # noqa: E402
 import step_record  # noqa: E402
 import density_effect  # noqa: E402
+import significance  # noqa: E402
 import orders_sheet  # noqa: E402
 import units  # noqa: E402
 from bench_const import REF_SCHEME, SCHEME_ORDER  # noqa: E402
@@ -329,6 +330,8 @@ BUILD_METRICS = [
     ("build_wall_s", CAT_BUILD, "k2 build wall time (s)", "lower", "build_s"),
     ("build_cpu_s", CAT_BUILD, "k2 build CPU seconds (user + system, summed over all threads; GNU time -v). Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both", "lower", "build_cpu_s"),
     ("build_max_rss_gb", CAT_BUILD, "k2 build peak RSS in decimal GB (GNU time KiB x 1024 / 10^9)", "lower", "build_gb"),
+    ("build_estimate_s", CAT_BUILD, "k2 build: seconds estimating the hash-table capacity (estimate_capacity), from the time stamps of the build's own log", "lower", "build_estimate_s"),
+    ("build_db_s", CAT_BUILD, "k2 build: seconds in build_db -- computing the selected k-mers of every library sequence, inserting them into the hash table, writing the database -- from its log's 'Starting database build' to 'Finished building database'", "lower", "build_db_s"),
     ("build_major_pagefaults", CAT_BUILD, "major (I/O) page faults of the k2 build (GNU time -v); with build_read_gb the disk I/O the build needed -- ~0 = served from the page cache, so timings with different values are not directly comparable. Every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in build_pinned_cpus. Neutral", None, "build_major_pf"),
     ("build_read_gb", CAT_BUILD, "file-system reads of the k2 build in decimal GB (GNU time 'File system inputs', 512-byte blocks). Neutral", None, "build_read_gb"),
 ]
@@ -365,21 +368,20 @@ CLASSIFY_METRICS = [
 RUN_ONLY = [
     ("n_reads", CAT_CLASSIFY, "reads (read pairs) in the query set", "n_reads"),
 ]
-# profile sheet: NextMinimizer / phase instrumentation (classify built with
-# ENABLE_MINIMIZER_PROF=1)
+# profile sheet: phase instrumentation (classify built with ENABLE_MINIMIZER_PROF=1;
+# experiments/profile_run.sh)
 PROFILE_METRICS = [
-    ("nextminimizer_s", CAT_PROFILE, "time in NextMinimizer / Rank (s)", "lower", "nextmin_s"),
-    ("nextminimizer_ns_per_call", CAT_PROFILE, "NextMinimizer cost in ns per call", "lower", "nextmin_ns"),
-    ("nextminimizer_pct_of_classify", CAT_PROFILE, "NextMinimizer time as % of classify wall", "lower", "nextmin_frac"),
     ("lookups_per_mbp", CAT_PROFILE, "hash-table lookups per Mbp of reads", "lower", "lookups_pm"),
-    ("lookup_pct_of_classify", CAT_PROFILE, "lookup time as % of classify time (per-thread sums)", "lower", "lookup_frac"),
+    ("lookup_pct_of_selected", CAT_PROFILE, "% of the selected k-mers of the reads that need a hash-table lookup: lookups / (lookups + consecutive repeats); a count share, not a time share", "lower", "lookup_frac"),
     ("scan_s", CAT_PROFILE, "scan phase (minimizer + tokens), sum of per-thread seconds", "lower", "scan_s"),
     ("lookup_s", CAT_PROFILE, "lookup phase (GetBatch), sum of per-thread seconds", "lower", "lookup_s"),
     ("resolve_s", CAT_PROFILE, "resolve phase (token replay + ResolveTree), sum of per-thread seconds", "lower", "resolve_s"),
-    ("nextminimizer_calls_per_mbp", CAT_PROFILE, "NextMinimizer calls per Mbp of reads. Neutral: a workload count", None, "nextmin_cpm"),
+    ("scan_pct_of_phases", CAT_PROFILE, "scan phase as % of scan + lookup + resolve: the share of the processing spent computing the selected k-mers", "lower", "scan_pct"),
+    ("ns_per_lookup", CAT_PROFILE, "lookup phase / lookups (ns per hash-table lookup)", "lower", "ns_per_lookup"),
+    ("lookup_miss_pct", CAT_PROFILE, "% of hash-table lookups that found no taxon (a miss probes until an empty cell)", None, "miss_pct"),
     ("dup_key_hits_per_mbp", CAT_PROFILE, "consecutive identical minimizers per Mbp of reads, resolved without a hash lookup (TOK_REPEAT). Neutral: a workload count", None, "repeats_pm"),
-    ("uhs_pct", CAT_PROFILE, "% of Rank() calls on the finite-rank (UHS) path; GreedyMini orders only. Neutral: a path split, not a quality", None, "uhs_frac"),
-    ("non_uhs_pct", CAT_PROFILE, "% of Rank() calls on the infinity early-out path. Neutral", None, "non_uhs_frac"),
+    ("uhs_pct", CAT_PROFILE, "% of GreedyMini ranks that are finite (k-mer in the UHS): the ranker loads the table rank first and computes the full value (tie-break fields) only when two finite ranks are equal; GreedyMini orders only. Neutral: a path split, not a quality", None, "uhs_frac"),
+    ("non_uhs_pct", CAT_PROFILE, "% of GreedyMini ranks that are infinite (k-mer outside the UHS): all infinite ranks tie, no value is computed (the lazy early-out). Neutral", None, "non_uhs_frac"),
 ]
 # paired agreement with xor of the same seed (vs_reference sheet only; no ratio)
 VSREF_METRICS = [
@@ -1271,7 +1273,7 @@ SHEET_DOC = OrderedDict([
     ("build_runs", "the per-seed rows behind `build` (same split as summary / runs in the sshash / kmc apps)"),
     ("summary", "library x dataset x minimum_hit_groups x order, classify phase only: mean / std over seeds and `_ratio` to xor (same dataset and minimum_hit_groups) of classify wall / DB-load / processing time, RSS, speed, classified % and the headline accuracy of the dataset"),
     ("runs", "one row per seed x library x dataset x minimum_hit_groups x order: the raw numbers of the single classify run behind `summary` (the replicates are the seeds: one run per seed, dataset and minimum_hit_groups)"),
-    ("profile", "NextMinimizer / phase profile, only present when the run used a classify built with ENABLE_MINIMIZER_PROF=1 (nextminimizer_timing_<dataset>_mhg<m>.txt exist): library x dataset x minimum_hit_groups x order, mean / std over seeds and `_ratio` to xor"),
+    ("profile", "classify phase profile (experiments/profile_run.sh), only present when a classify built with ENABLE_MINIMIZER_PROF=1 ran (classify_profile_<dataset>_mhg<m>.txt exist): library x dataset x minimum_hit_groups x order, mean / std over seeds and `_ratio` to xor"),
     ("vs_reference", "paired agreement with xor of the same seed, dataset and minimum_hit_groups (MAPE, concordance, Jaccard, newly classified / unclassified): library x dataset x minimum_hit_groups x order, mean / std over seeds"),
     ("accuracy_strain_exclusion", "strain-exclusion accuracy per slice (minimum_hit_groups x group x rank; same columns as accuracy_cami up to the cami-only ex_* columns): one row per order, mean / std over seeds and `_ratio` to xor of the same slice (TP / VP / FP / FN counts as means)"),
     ("accuracy_fda_argos", "FDA-ARGOS accuracy per slice (minimum_hit_groups x scope: unweighted mean / pooled / each SRR experiment): genus concordance, one row per order, mean / std over seeds and `_ratio` to xor"),
@@ -1286,9 +1288,9 @@ COMMON_DOC = [
     ("runs/build_runs", CAT_ID, "run_id", "<library>/<run dir of the order>/<seed_idx>; run dir = order_names.order_dir_name, e.g. greedymini/k15_at0-cg1"),
     ("runs/build_runs", CAT_ID, "seed_idx / seed", "seed index and its 64-bit toggle mask in hex (`k2 --toggle-mask`): XOR tie-break / random-order seed of every scheme"),
     ("build/summary/profile/vs_reference", CAT_ID, "n_repeats", "number of runs (repeats) aggregated into the row's mean / std (the replicates are the seeds: each seed contributes one classify run per dataset and minimum_hit_groups)"),
-    ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb decimal gigabytes (1 GB = 10^9 bytes, never GiB), _pct percent, _ns_per_call, _per_mbp, _fraction 0-1); `summary`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
-    ("build/summary/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, NextMinimizer, discordant) or higher is better (speed, sensitivity, PPV, F1, concordant). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
-    ("build/summary/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload counts nextminimizer_calls_per_mbp / dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
+    ("naming", "naming", "units", "same convention as the sshash export: the raw value carries its unit as a suffix (_s seconds, _gb decimal gigabytes (1 GB = 10^9 bytes, never GiB), _pct percent, _per_mbp, _fraction 0-1); `summary`-type sheets add <metric>_mean, <metric>_std (sample std over seeds, rounded to >= 4 significant digits) and <metric>_ratio"),
+    ("build/summary/profile", "ratio", "<metric>_ratio", "this order's mean / the xor mean of the same library (and dataset and minimum_hit_groups); reference = 1; blank when the reference mean is 0 or missing. Only for metrics with a direction: lower is better (times, RSS, index size, density factors, lookups, discordant) or higher is better (speed, sensitivity, PPV, F1, concordant). Colour scale: green = better than xor, white = 1, red = worse (colours reversed for higher-is-better columns)"),
+    ("build/summary/profile", "ratio", "neutral columns (no ratio, no colour)", "classified_pct (more classified is not better by itself), genus_ancestor_fraction and genus_unclassified_fraction (neither right nor wrong), *_excluded_fraction (reads without a reference: a property of library x query set), profile workload count dup_key_hits_per_mbp and the path split uhs_pct / non_uhs_pct"),
     ("summary/runs", "classify", "classify_wall_s / classify_load_s / classify_run_s", "one classify run per cell: wall = database load + processing. classify_load_s = wall - processing; processing = the `processed in` seconds of the classify summary. Compare processing time between orders; classify_load_s reflects the host's page cache and the index size, and is noisy for a single run (judge it over the seeds)"),
     ("build/build_runs/summary/runs", "column order", "column groups", "as in the SSHash summary sheet: id / params (dataset-related columns first, then the order columns order, gm_k, projection, gm_table, mod_t, then the app parameter minimum_hit_groups (summary / runs / profile / vs_reference / accuracy_*), then n_repeats or seed_idx / seed), then density (expected_density_factor, density_factor), minimizers (distinct_minimizers), space (index_size_gb, build / build_runs only), build (build_wall_s, build_max_rss_gb; build / build_runs only), then on summary / runs the classify measures and the accuracy groups, and at the end of runs / build_runs the telemetry band (pinned CPU lists; the I/O page-fault and read-volume columns stay in their build / classify groups and, like the pinned lists, exist on runs / build_runs only, not aggregated). The density and minimizer columns come first because they are what the correlation rows below the data use"),
     ("build/summary", "correlation", "correlation with density / correlation with distinct minimizers (rows under the data)", "two rows right under the data, as in the SSHash summary sheet: in every `*_ratio` column a live formula IFERROR(CORREL(<reference ratio column>, <this ratio column>), \"\") with absolute ranges over all data rows (cached value stored next to it). Reference columns: density_factor_ratio (the density factor measured on the benchmark library; the SSHash sheet uses its density_factor_ratio) and distinct_minimizers_ratio. Ratios are against xor within the same block, so correlating over all rows is meaningful. `build` has one row per order, so its correlations rest on n = 5 points (the n is in the row label); in `summary` the density and distinct-minimizer values repeat for every dataset / minimum_hit_groups block of the same order, so the effective number of independent points is the number of orders (5), not the number of rows. The values (and the number of pairs used) are also in kraken2_correlations.csv (columns sheet, row_label, column, value, n); the sheet CSVs themselves hold data only"),
@@ -1664,8 +1666,10 @@ def write_outputs(tables, csv_dir, xlsx_path):
                 print("removed stale table {}".format(f))
             except OSError:
                 pass
+    results_root = os.path.dirname(os.path.abspath(csv_dir))
     return write_book(xlsx_path, build_sheet_specs(tables)
-                      + density_effect.sheets("kraken2", os.path.dirname(os.path.abspath(csv_dir))))
+                      + density_effect.sheets("kraken2", results_root)
+                      + significance.sheets("kraken2", results_root))
 
 
 # ---------------------------------------------------------------------------

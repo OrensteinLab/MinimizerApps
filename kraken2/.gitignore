@@ -21,3 +21,6 @@ src/scan_dump
 # NFS leftover stubs
 .nfs*
 src/.minimizer_prof_mode
+
+# Profiling build of classify (benchmark/kraken2/experiments/profile_run.sh)
+src-prof/

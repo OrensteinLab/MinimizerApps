@@ -128,14 +128,13 @@ struct ClassificationStats {
   uint64_t total_classified;
 #ifdef KRAKEN2_MINIMIZER_PROF
   // Per-thread times are summed (can exceed wall with OpenMP).
-  uint64_t nextmin_ns;     // NextMinimizer() only (within scan)
-  uint64_t nextmin_calls;  // non-null NextMinimizer returns
   uint64_t scan_ns;        // phase 1: scan + token stream
   uint64_t lookup_ns;      // phase 2: GetBatch hash lookups
   uint64_t resolve_ns;     // phase 3: token replay + ResolveTree
   uint64_t tok_lookup;     // TOK_LOOKUP count (= distinct lookups)
   uint64_t tok_repeat;     // TOK_REPEAT count (same minimizer as previous)
   uint64_t tok_skip;       // TOK_SKIP (clear-hash filtered)
+  uint64_t lookup_miss;    // TOK_LOOKUP that found no taxon
   uint64_t uhs;            // GM Rank: finite pack (toggle/tb path used)
   uint64_t non_uhs;        // GM Rank: ∞ early-out (toggle unused)
 #endif
@@ -535,16 +534,10 @@ void ReportStats(struct timeval time1, struct timeval time2,
 
 #ifdef KRAKEN2_MINIMIZER_PROF
 void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
-  const double nextmin_s = stats.nextmin_ns / 1e9;
   const double scan_s = stats.scan_ns / 1e9;
   const double lookup_s = stats.lookup_ns / 1e9;
   const double resolve_s = stats.resolve_ns / 1e9;
-  const double ns_per_call =
-      stats.nextmin_calls ? (double)stats.nextmin_ns / (double)stats.nextmin_calls
-                          : 0.0;
   const double mbp = stats.total_bases / 1.0e6;
-  const double calls_per_mbp =
-      mbp > 0 ? (double)stats.nextmin_calls / mbp : 0.0;
   const double lookups_per_mbp =
       mbp > 0 ? (double)stats.tok_lookup / mbp : 0.0;
   const double repeats_per_mbp =
@@ -552,26 +545,14 @@ void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
   const uint64_t dens_denom = stats.tok_lookup + stats.tok_repeat;
   const double lookup_frac =
       dens_denom ? 100.0 * (double)stats.tok_lookup / (double)dens_denom : 0.0;
+  const double miss_frac =
+      stats.tok_lookup ? 100.0 * (double)stats.lookup_miss / (double)stats.tok_lookup : 0.0;
   const uint64_t uhs_denom = stats.uhs + stats.non_uhs;
   const double uhs_frac =
       uhs_denom ? 100.0 * (double)stats.uhs / (double)uhs_denom : 0.0;
   const double non_uhs_frac =
       uhs_denom ? 100.0 * (double)stats.non_uhs / (double)uhs_denom : 0.0;
 
-  fprintf(stderr,
-          "NEXTMIN_TIMING nextmin_s=%.9f calls=%llu ns_per_call=%.3f "
-          "calls_per_Mbp=%.3f bases=%llu sequences=%llu "
-          "uhs=%llu non_uhs=%llu uhs_frac_pct=%.3f non_uhs_frac_pct=%.3f\n",
-          nextmin_s,
-          (unsigned long long)stats.nextmin_calls,
-          ns_per_call,
-          calls_per_mbp,
-          (unsigned long long)stats.total_bases,
-          (unsigned long long)stats.total_sequences,
-          (unsigned long long)stats.uhs,
-          (unsigned long long)stats.non_uhs,
-          uhs_frac,
-          non_uhs_frac);
   fprintf(stderr,
           "PHASE_TIMING scan_s=%.9f lookup_s=%.9f resolve_s=%.9f "
           "lookups=%llu repeats=%llu skips=%llu "
@@ -581,6 +562,9 @@ void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
           (unsigned long long)stats.tok_repeat,
           (unsigned long long)stats.tok_skip,
           lookups_per_mbp, repeats_per_mbp, lookup_frac);
+  fprintf(stderr, "LOOKUP_MISS lookups=%llu misses=%llu miss_frac_pct=%.3f\n",
+          (unsigned long long)stats.tok_lookup, (unsigned long long)stats.lookup_miss,
+          miss_frac);
 
   const char *path = getenv("KRAKEN2_MINIMIZER_PROF");
   if (path == nullptr || path[0] == '\0')
@@ -591,10 +575,6 @@ void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
     return;
   }
   fprintf(fp,
-          "nextmin_s=%.9f\n"
-          "calls=%llu\n"
-          "ns_per_call=%.3f\n"
-          "calls_per_Mbp=%.3f\n"
           "scan_s=%.9f\n"
           "lookup_s=%.9f\n"
           "resolve_s=%.9f\n"
@@ -604,16 +584,14 @@ void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
           "lookups_per_Mbp=%.3f\n"
           "repeats_per_Mbp=%.3f\n"
           "lookup_frac_pct=%.3f\n"
+          "lookup_misses=%llu\n"
+          "lookup_miss_pct=%.3f\n"
           "uhs=%llu\n"
           "non_uhs=%llu\n"
           "uhs_frac_pct=%.3f\n"
           "non_uhs_frac_pct=%.3f\n"
           "bases=%llu\n"
           "sequences=%llu\n",
-          nextmin_s,
-          (unsigned long long)stats.nextmin_calls,
-          ns_per_call,
-          calls_per_mbp,
           scan_s,
           lookup_s,
           resolve_s,
@@ -623,6 +601,8 @@ void ReportClassifyPhaseTiming(const ClassificationStats &stats) {
           lookups_per_mbp,
           repeats_per_mbp,
           lookup_frac,
+          (unsigned long long)stats.lookup_miss,
+          miss_frac,
           (unsigned long long)stats.uhs,
           (unsigned long long)stats.non_uhs,
           uhs_frac,
@@ -684,14 +664,13 @@ void ProcessFiles(const char *filename1, const char *filename2,
       thread_stats.total_bases = 0;
       thread_stats.total_classified = 0;
 #ifdef KRAKEN2_MINIMIZER_PROF
-      thread_stats.nextmin_ns = 0;
-      thread_stats.nextmin_calls = 0;
       thread_stats.scan_ns = 0;
       thread_stats.lookup_ns = 0;
       thread_stats.resolve_ns = 0;
       thread_stats.tok_lookup = 0;
       thread_stats.tok_repeat = 0;
       thread_stats.tok_skip = 0;
+      thread_stats.lookup_miss = 0;
       thread_stats.uhs = 0;
       thread_stats.non_uhs = 0;
 #endif
@@ -801,14 +780,13 @@ void ProcessFiles(const char *filename1, const char *filename2,
         stats.total_sequences += thread_stats.total_sequences;
         stats.total_classified += thread_stats.total_classified;
 #ifdef KRAKEN2_MINIMIZER_PROF
-        stats.nextmin_ns += thread_stats.nextmin_ns;
-        stats.nextmin_calls += thread_stats.nextmin_calls;
         stats.scan_ns += thread_stats.scan_ns;
         stats.lookup_ns += thread_stats.lookup_ns;
         stats.resolve_ns += thread_stats.resolve_ns;
         stats.tok_lookup += thread_stats.tok_lookup;
         stats.tok_repeat += thread_stats.tok_repeat;
         stats.tok_skip += thread_stats.tok_skip;
+        stats.lookup_miss += thread_stats.lookup_miss;
         stats.uhs += thread_stats.uhs;
         stats.non_uhs += thread_stats.non_uhs;
 #endif
@@ -1011,20 +989,9 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
       }
       uint64_t last_minimizer = UINT64_MAX;
       while (true) {
-#ifdef KRAKEN2_MINIMIZER_PROF
-        const auto t0 = std::chrono::steady_clock::now();
-#endif
         minimizer_ptr = scanner.NextMinimizer();
-#ifdef KRAKEN2_MINIMIZER_PROF
-        const auto t1 = std::chrono::steady_clock::now();
-        stats.nextmin_ns += (uint64_t)std::chrono::duration_cast<
-            std::chrono::nanoseconds>(t1 - t0).count();
-#endif
         if (minimizer_ptr == nullptr)
           break;
-#ifdef KRAKEN2_MINIMIZER_PROF
-        stats.nextmin_calls++;
-#endif
         if (scanner.is_ambiguous()) {
           tok_stream.push_back({TOK_AMBIG, 0});
         }
@@ -1084,6 +1051,9 @@ taxid_t ClassifySequence(Sequence &dna, Sequence &dna2, ostringstream &koss,
   const auto lookup_t1 = std::chrono::steady_clock::now();
   stats.lookup_ns += (uint64_t)std::chrono::duration_cast<
       std::chrono::nanoseconds>(lookup_t1 - lookup_t0).count();
+  for (size_t i = 0; i < lookup_keys.size(); i++)
+    if (lookup_vals[i] == 0)
+      stats.lookup_miss++;
 #endif
 
   // Phase 3: replay token stream, reproducing the original behavior exactly.

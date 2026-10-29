@@ -16,7 +16,8 @@ TESTS = test_scheme_rankers test_mod_minimizer
 # NextMinimizer RDTSC phase timing in mmscanner.cc.
 BENCH_CPPFLAGS = -DKRAKEN2_MINIMIZER_BENCHMARK
 
-# NextMinimizer / phase timing in classify (env KRAKEN2_MINIMIZER_PROF path).
+# Phase timing and lookup counts in classify (env KRAKEN2_MINIMIZER_PROF path;
+# benchmark/kraken2/experiments/profile_run.sh).
 # Stamp tracks ENABLE_MINIMIZER_PROF so toggling the flag rebuilds classify.
 PROF_STAMP = .minimizer_prof_mode
 ifeq ($(ENABLE_MINIMIZER_PROF),1)

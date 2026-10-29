@@ -46,6 +46,15 @@ int query(int argc, char** argv) {
     query_stats.add("num_extensions", report.num_extensions);
     query_stats.add("num_skipped_singleton_lookups", report.num_skipped_singleton_lookups);
     query_stats.add("num_bucket_cache_hits", report.num_bucket_cache_hits);
+#ifdef SSHASH_PROFILE
+    {
+        using spss_t = typename std::remove_reference_t<decltype(dict)>::spss_type;
+        query_stats.add("prof_full_lookups", spss_t::prof_full_lookups);
+        query_stats.add("prof_decoded_positions", spss_t::prof_decoded_positions);
+        query_stats.add("prof_verify_calls", spss_t::prof_verify_calls);
+        query_stats.add("prof_verified_positions", spss_t::prof_verified_positions);
+    }
+#endif
     query_stats.add("elapsed_millisec", uint64_t(t.elapsed()));
 
     std::cout << "==== query report:\n";

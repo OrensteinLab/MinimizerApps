@@ -75,6 +75,7 @@ import order_names as on
 import orders_sheet as osh
 import step_record
 import density_effect
+import significance
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 from xlsx_book import DATA_START_ROW, write_book
 from xlsx_util import col_letter, write_csv as _shared_write_csv, xml_escape
@@ -361,6 +362,12 @@ def bucket_distribution_metrics(
     return out
 
 
+def _ratio(d: dict, num: str, den: str) -> float | None:
+    """d[num] / d[den] (profiling counters of query_profile.log), None if missing or zero."""
+    a, b = _num(d.get(num), int), _num(d.get(den), int)
+    return round(a / b, 4) if a is not None and b else None
+
+
 def _extension_pct(query_json: dict) -> float | None:
     """Share of positive k-mers of the streamed reads answered by extension
     along the stored string (sshash query's num_extensions) rather than a
@@ -484,6 +491,11 @@ RUN_FIELDS = (
     "query_extension_pct",
     "query_n_skipped_singleton_lookups",
     "query_n_bucket_cache_hits",
+    # profile (experiments/profile_run.sh: a separate query with -DSSHASH_PROFILE=On, query_profile.log)
+    "query_prof_full_lookups",
+    "query_prof_positions_per_full_lookup",
+    "query_prof_verify_calls",
+    "query_prof_positions_per_verify",
     "query_pos_match",
     "query_neg_match",
     # bench (sshash's own internal micro-benchmark, see "what is bench" note
@@ -544,6 +556,7 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
     build_json = parse_json_blob(run_dir / "build.log")
     bench_json = parse_json_blob(run_dir / "bench.log")
     query_json = parse_json_blob(run_dir / "query.log")
+    prof_json = parse_json_blob(run_dir / "query_profile.log") if (run_dir / "query_profile.log").is_file() else {}
     equiv_json = {}
     equiv_path = run_dir / "equivalence.json"
     if equiv_path.is_file():
@@ -694,6 +707,10 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
             query_json.get("num_skipped_singleton_lookups"), int
         ),
         "query_n_bucket_cache_hits": _num(query_json.get("num_bucket_cache_hits"), int),
+        "query_prof_full_lookups": _num(prof_json.get("prof_full_lookups"), int),
+        "query_prof_positions_per_full_lookup": _ratio(prof_json, "prof_decoded_positions", "prof_full_lookups"),
+        "query_prof_verify_calls": _num(prof_json.get("prof_verify_calls"), int),
+        "query_prof_positions_per_verify": _ratio(prof_json, "prof_verified_positions", "prof_verify_calls"),
         "query_pos_match": _bool_env(
             meta.get("query_pos_match") or (equiv_json.get("pos") or {}).get("match")
         ),
@@ -798,6 +815,8 @@ SUMMARY_METRICS = (
     "query_load_s",
     "query_run_s",
     "query_extension_pct",
+    "query_prof_positions_per_full_lookup",
+    "query_prof_positions_per_verify",
     # bench (sshash's own internal micro-benchmark)
     "bench_positive_ns",
     "bench_negative_ns",
@@ -989,6 +1008,8 @@ _METRIC_CATEGORY = {
     "query_n_searches": "query", "query_n_extensions": "query", "query_extension_pct": "query",
     "query_n_skipped_singleton_lookups": "query", "query_n_bucket_cache_hits": "query",
     "query_pos_match": "query", "query_neg_match": "query",
+    "query_prof_full_lookups": "query", "query_prof_positions_per_full_lookup": "query",
+    "query_prof_verify_calls": "query", "query_prof_positions_per_verify": "query",
     # telemetry
     "sshash_version": "telemetry", "host": "telemetry", "build_exit_code": "telemetry",
     "check_exit_code": "telemetry", "bench_exit_code": "telemetry", "query_exit_code": "telemetry",
@@ -1285,7 +1306,9 @@ def overview_rows() -> list[dict]:
         row("runs", "host / sshash_version", "machine the run was made on and the sshash build (git version) that ran it"),
         row("runs", "build_exit_code / check_exit_code / bench_exit_code / query_exit_code", "exit status of that step (0 = ok)"),
         row("runs", "query_n_kmers / query_n_positive_kmers / query_n_negative_kmers", "k-mers sshash queried in the FASTQ run, and how many were found / not found"),
-        row("runs", "query_n_searches / query_n_extensions / query_extension_pct", "sshash query's own counters: full lookups, and lookups answered by extending the previous hit (the streaming shortcut); query_extension_pct = extensions as a share of all k-mers"),
+        row("runs", "query_n_searches / query_n_extensions / query_extension_pct", "sshash query's own counters: lookups that found the k-mer and started a new match (positive seeds only; negative k-mers are counted in query_n_negative_kmers), and positive k-mers answered by extending the previous match along the stored string; query_extension_pct = extensions / (searches + extensions)"),
+        row("runs", "query_prof_full_lookups / query_prof_positions_per_full_lookup", "profiling build only (experiments/profile_run.sh, query_profile.log; blank otherwise): streaming-query lookups that decode the bucket of the selected k-mer (not answered by the bucket cache or the singleton skip), and the positions decoded per such lookup = the bucket size it scans"),
+        row("runs", "query_prof_verify_calls / query_prof_positions_per_verify", "profiling build only: lookups that verify candidate positions against the stored strings (full lookups whose selected k-mer is found, and bucket-cache hits), and the positions verified per such lookup"),
         row("runs", "query_n_skipped_singleton_lookups / query_n_bucket_cache_hits", "sshash query's counters: lookups that skipped the offsets access (singleton bucket) and lookups served from its bucket cache"),
         row("runs", "bench_iterator_ns", "sshash bench: average nanoseconds per k-mer of iterating over the whole index (runs only; positive/negative/access are also in the summary)"),
         row("runs", "mphf_bits_per_kmer / strings_offsets_bits_per_kmer / strings_bits_per_kmer / begin_buckets_bits_per_kmer", "bits per k-mer of the index component, from the build log's SPACE BREAKDOWN (see the space_breakdown sheet): the MPHF, the offsets into the strings, the strings (2 bits/base), and begin_buckets_of_size"),
@@ -1720,6 +1743,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
 
     sheets = build_sheets(rows, summary, orders, buckets, space, bucket_hist, super_kmer_hist)
     sheets += density_effect.sheets("sshash", csvs_dir.parent)
+    sheets += significance.sheets("sshash", csvs_dir.parent)
     names = write_book(xlsx_dir / "sshash_results.xlsx", sheets)
     print(f"wrote {xlsx_dir / 'sshash_results.xlsx'} ({len(names)} sheets)")
 

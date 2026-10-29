@@ -172,6 +172,43 @@ Each app's export adds the sheets `density_effect` and `density_effect_points` t
   `order_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
   not make the run comparable. A result set without a fixed block has no `density_effect` sheets.
 
+## Whether each scheme changes each metric (`common/significance.py`)
+
+Each app's export adds the sheet `significance` to its workbook and writes
+`<results dir>/csvs/significance_<app>.csv` (by hand: `python common/significance.py APP=RESULTS_DIR ...`), for
+the metrics of the paper's figures (build and processing times, KMC3 stages, peak memory, index size,
+temporary disk, bits per k-mer).
+- **Pairing.** As in `density_effect`: every run is paired with the default scheme's run of the same setting
+  and seed (the same round), and gives d = ln(metric / default's).
+- **Test.** Per (setting, metric, scheme), over the seeds: ratio = exp(mean d), the geometric mean of the
+  ratios, with its 95% CI; a paired t-test of mean d = 0 (p); Holm-adjusted over the schemes of the same
+  setting and metric (p_holm); TOST equivalence at +-5% (the 90% CI of the ratio in [1/1.05, 1.05]).
+- **Verdict.** lower / higher when p_holm < 0.05, else equivalent (TOST) or inconclusive.
+- Not tested: kraken2 at minimum hit groups 0 and the sshash 13-mer GreedyMini tables (not in the paper).
+  Unlike `order_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
+
+## Profiling (`<app>/experiments/profile_run.sh`)
+
+To explain the runtime, each app has a profiling script for a finished full run. It first mirrors the
+result set `SOURCE_RESULTS` (default `results`) into `RESULTS_NAME` (default `results-prof`) with
+`common/mirror_results.py` -- files of 8 MiB or more hard-linked (databases, indexes: only read), smaller ones
+copied (logs, caches, tables an export rewrites) -- so the source result set is never modified. It builds an
+instrumented binary in a separate directory (the timed binaries are not touched), runs it on the full run's
+databases or indexes for the five seeds under the measurement protocol, writes the profiles into the mirror,
+and re-exports the mirror, which adds the profile columns and the `significance` sheet. The instrumentation
+compiles to nothing in the default builds.
+
+| app | flag | what it measures | file per run | columns |
+|---|---|---|---|---|
+| kraken2 | `make ENABLE_MINIMIZER_PROF=1` (classify) | time of the three phases of classifying a read pair (selected k-mers into a token stream, hash-table lookups, resolving the hits), lookups, lookups that miss, GreedyMini ranks on the finite (UHS) and infinite path | `results/classify_profile_<ds>_mhg<m>.txt` | `profile` sheet: `scan_s`, `lookup_s`, `resolve_s`, `scan_pct_of_phases`, `lookups_per_mbp`, `ns_per_lookup`, `lookup_miss_pct`, `uhs_pct` |
+| sshash | `cmake -DSSHASH_PROFILE=On` | streaming query: lookups that decode a bucket and the positions they decode, lookups that verify positions and the positions they verify (index rebuilt from the run's recorded command, temporary) | `query_profile.log` | `query_prof_*` |
+| minimap2 | `CFLAGS+=-DMM_PHASE_PROF` | one-thread mapping of the first 3000 reads (fixed threshold): time of computing the selected k-mers, collecting their hits, chaining, aligning | `map_profile.log` | `map_prof_*_pct` |
+| kmc | `tools/bench_signature_impls` | kmc's signature code with the default order and the GreedyMini order (DNA-alphabet and binary table), with the window minimum, per base, one core | `<results>/profile/signature_<ds>_<seed>.txt` | `signature_cost` sheet |
+
+Two build phases come from the timed runs' own logs, without profiling: kraken2's `build_estimate_s` /
+`build_db_s` (its log's time stamps) and minimap2's `build_collect_s` / `build_collect_pct` (its "collected
+minimizers" stamp).
+
 ## Shared code (`common/`)
 
 | File | Purpose |
@@ -181,6 +218,8 @@ Each app's export adds the sheets `density_effect` and `density_effect_points` t
 | `pin_cpus.sh`, `pin_cpus.py` | CPU pinning: one NUMA node, one thread per core, spare cores |
 | `order_tests.py`, `stats_util.py` | significance tests of order differences; scipy-free t / Welch / Holm |
 | `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
+| `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Holm, TOST (the `significance` sheet) |
+| `mirror_results.py` | mirror a result set (large files hard-linked, small ones copied) for the profiling scripts |
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |

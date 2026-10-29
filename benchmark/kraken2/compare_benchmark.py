@@ -17,11 +17,11 @@ Every (scheme, seed, dataset) is classified exactly once per
 There are no repeats: the replicates are the seeds. Per-seed classify rows
 are summarised as mean±std over seeds (n = number of seeds).
 
-NextMinimizer / phase instrumentation (classify built with
-ENABLE_MINIMIZER_PROF=1 -> -DKRAKEN2_MINIMIZER_PROF) writes, via env
-KRAKEN2_MINIMIZER_PROF, nextminimizer_timing_<dataset>_mhg<m>.txt
-(key=value: nextmin_s, scan_s, lookup_s, resolve_s, lookups, repeats,
-lookups_per_Mbp, lookup_frac_pct, uhs, non_uhs, ...). Absent for non-PROF
+Phase instrumentation (classify built with ENABLE_MINIMIZER_PROF=1 ->
+-DKRAKEN2_MINIMIZER_PROF; experiments/profile_run.sh) writes, via env
+KRAKEN2_MINIMIZER_PROF, classify_profile_<dataset>_mhg<m>.txt
+(key=value: scan_s, lookup_s, resolve_s, lookups, repeats, lookups_per_Mbp,
+lookup_frac_pct, lookup_misses, lookup_miss_pct, uhs, non_uhs, ...). Absent for non-PROF
 builds: the profile output is then skipped.
 
 Paired metrics (MAPE, concordance, ClassConc, Jaccard, NewClass/NewUnclass)
@@ -70,6 +70,39 @@ DATASET_ORDER = {
 DOMAIN_ORDER = {"all": 0, "prokaryote": 1, "virus": 2, "viral": 2}
 RANK_ORDER = {"genus": 0, "species": 1}
 SCOPE_ORDER = {"experiment": 0, "unweighted_mean": 1, "pooled": 2}
+
+
+_LOG_TS = re.compile(r"^\[(?:INFO|DEBUG) - (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),(\d{3})\]: (.*)$")
+
+
+def parse_build_phases(path):
+    """Phases of the k2 build from the time stamps of its own log (build_performance.txt): estimating the
+    hash-table capacity (estimate_capacity), then build_db (computing the selected k-mers of every library
+    sequence, inserting them into the hash table, writing the database). Seconds; a phase whose stamps are
+    missing is left out."""
+    import datetime
+    stamps = {}
+    try:
+        with open(path, errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return {}
+    for line in text.replace("[DEBUG", "\n[DEBUG").replace("[INFO", "\n[INFO").splitlines():
+        m = _LOG_TS.match(line.strip())
+        if not m:
+            continue
+        t = datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S").timestamp() + int(m.group(2)) / 1000
+        msg = m.group(3)
+        for key, prefix in (("estimate", "Running: "), ("build", "Starting database build"),
+                            ("done", "Finished building database")):
+            if msg.startswith(prefix) and (key != "estimate" or "estimate_capacity" in msg):
+                stamps.setdefault(key, t)
+    out = {}
+    if "estimate" in stamps and "build" in stamps:
+        out["build_estimate_s"] = round(stamps["build"] - stamps["estimate"], 3)
+    if "build" in stamps and "done" in stamps:
+        out["build_db_s"] = round(stamps["done"] - stamps["build"], 3)
+    return out
 
 
 def parse_time_file(path):
@@ -160,18 +193,14 @@ def parse_classify_counts(path):
     return n_reads, n_class
 
 
-def parse_nextmin_timing_file(path):
-    """Parse nextminimizer_timing_XX.txt (key=value) or stderr timing lines."""
+def parse_profile_file(path):
+    """Parse classify_profile_XX.txt (key=value) or the PHASE_TIMING stderr line."""
     if not os.path.isfile(path):
         return None
     data = {}
     with open(path) as f:
         text = f.read()
     keys = (
-        "nextmin_s",
-        "calls",
-        "ns_per_call",
-        "calls_per_Mbp",
         "scan_s",
         "lookup_s",
         "resolve_s",
@@ -181,6 +210,8 @@ def parse_nextmin_timing_file(path):
         "lookups_per_Mbp",
         "repeats_per_Mbp",
         "lookup_frac_pct",
+        "lookup_misses",
+        "lookup_miss_pct",
         "uhs",
         "non_uhs",
         "uhs_frac_pct",
@@ -195,26 +226,7 @@ def parse_nextmin_timing_file(path):
                 data[key] = float(m.group(1))
             except ValueError:
                 pass
-    # Fallback: stderr lines embedded in classification_performance_*.txt
-    if "nextmin_s" not in data:
-        m = re.search(
-            r"NEXTMIN_TIMING\s+nextmin_s=([0-9.eE+-]+)\s+calls=(\d+)\s+"
-            r"ns_per_call=([0-9.eE+-]+)\s+calls_per_Mbp=([0-9.eE+-]+)"
-            r"(?:\s+bases=\d+\s+sequences=\d+)?"
-            r"(?:\s+uhs=(\d+)\s+non_uhs=(\d+)\s+"
-            r"uhs_frac_pct=([0-9.eE+-]+)\s+non_uhs_frac_pct=([0-9.eE+-]+))?",
-            text,
-        )
-        if m:
-            data["nextmin_s"] = float(m.group(1))
-            data["calls"] = float(m.group(2))
-            data["ns_per_call"] = float(m.group(3))
-            data["calls_per_Mbp"] = float(m.group(4))
-            if m.group(5) is not None:
-                data["uhs"] = float(m.group(5))
-                data["non_uhs"] = float(m.group(6))
-                data["uhs_frac_pct"] = float(m.group(7))
-                data["non_uhs_frac_pct"] = float(m.group(8))
+    # Fallback: the stderr line embedded in classification_performance_*.txt
     if "scan_s" not in data:
         m = re.search(
             r"PHASE_TIMING\s+scan_s=([0-9.eE+-]+)\s+lookup_s=([0-9.eE+-]+)\s+"
@@ -233,7 +245,7 @@ def parse_nextmin_timing_file(path):
             data["lookups_per_Mbp"] = float(m.group(7))
             data["repeats_per_Mbp"] = float(m.group(8))
             data["lookup_frac_pct"] = float(m.group(9))
-    if "nextmin_s" not in data and "scan_s" not in data:
+    if "scan_s" not in data:
         return None
     return data
 
@@ -544,9 +556,9 @@ def perf_path(outdir, dataset, mhg):
     return os.path.join(outdir, "classification_performance_{}_mhg{}.txt".format(dataset, mhg))
 
 
-def nextmin_path(outdir, dataset, mhg):
-    """nextminimizer_timing_<ds>_mhg<m>.txt (PROF builds only), else None."""
-    p = os.path.join(outdir, "nextminimizer_timing_{}_mhg{}.txt".format(dataset, mhg))
+def profile_path(outdir, dataset, mhg):
+    """classify_profile_<ds>_mhg<m>.txt (ENABLE_MINIMIZER_PROF=1 builds only), else None."""
+    p = os.path.join(outdir, "classify_profile_{}_mhg{}.txt".format(dataset, mhg))
     return p if os.path.isfile(p) else None
 
 
@@ -563,7 +575,7 @@ def resolve_build_performance_path(outdir):
 
 def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
     """Metrics of ONE classify run (seed x dataset x minimum-hit-groups): wall,
-    DB-load and processing time, RSS, classified %, optional NextMinimizer/phase
+    DB-load and processing time, RSS, classified %, optional phase
     profile and the paired agreement with the reference scheme."""
     out = run["outdir"]
     bw, br = parse_time_file(resolve_build_performance_path(out))
@@ -591,10 +603,13 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         speed = (n_reads / 1e6) / (dur / 60.0)
     cls_pct = 100.0 * n_class / n_reads if (n_reads and n_class is not None) else None
 
-    nm = parse_nextmin_timing_file(nextmin_path(out, dataset, mhg) or cf) or {}
-    nextmin_frac = None
-    if nm.get("nextmin_s") is not None and class_s:
-        nextmin_frac = 100.0 * nm["nextmin_s"] / class_s
+    nm = parse_profile_file(profile_path(out, dataset, mhg) or cf) or {}
+    scan_pct = ns_per_lookup = None
+    phases = [nm.get(k) for k in ("scan_s", "lookup_s", "resolve_s")]
+    if all(v is not None for v in phases) and sum(phases) > 0:
+        scan_pct = 100.0 * phases[0] / sum(phases)
+    if nm.get("lookup_s") is not None and nm.get("lookups"):
+        ns_per_lookup = 1e9 * nm["lookup_s"] / nm["lookups"]
 
     mape_g = mape_s = l1_g = conc = None
     class_conc = jaccard = newly_cls = newly_uncls = None
@@ -625,6 +640,7 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "build_s": bw,
         "build_gb": br,
         "build_cpu_s": b_cpu,
+        **parse_build_phases(resolve_build_performance_path(out)),
         "class_cpu_s": c_cpu,
         "build_major_pf": b_major,
         "build_read_gb": b_read_gb,
@@ -639,11 +655,6 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "class_gb": class_gb,
         "mrd_min": speed,
         "cls_pct": cls_pct,
-        "nextmin_s": nm.get("nextmin_s"),
-        "nextmin_ns": nm.get("ns_per_call"),
-        "nextmin_calls": nm.get("calls"),
-        "nextmin_cpm": nm.get("calls_per_Mbp"),
-        "nextmin_frac": nextmin_frac,
         "uhs": nm.get("uhs"),
         "non_uhs": nm.get("non_uhs"),
         "uhs_frac": nm.get("uhs_frac_pct"),
@@ -656,6 +667,9 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "lookups_pm": nm.get("lookups_per_Mbp"),
         "repeats_pm": nm.get("repeats_per_Mbp"),
         "lookup_frac": nm.get("lookup_frac_pct"),
+        "miss_pct": nm.get("lookup_miss_pct"),
+        "scan_pct": scan_pct,
+        "ns_per_lookup": ns_per_lookup,
         "mape_g": mape_g,
         "mape_s": mape_s,
         "l1_g": l1_g,
@@ -1336,62 +1350,27 @@ def main():
                 )
             )
 
-    # NextMinimizer timing (rank calculation), when instrumentation files present
-    has_nextmin = any(m.get("nextmin_s") is not None for ms in metrics_by_scheme.values() for m in ms)
     has_phase = any(m.get("scan_s") is not None for ms in metrics_by_scheme.values() for m in ms)
+    # GreedyMini rank path: the ranker loads the table rank first and computes the full value (tie-break
+    # fields) only when two finite ranks are equal; infinite ranks (k-mers outside the UHS) skip it
     has_uhs = any(m.get("uhs") is not None for ms in metrics_by_scheme.values() for m in ms)
-    if has_nextmin:
+    if has_uhs:
         emit("")
         emit(
-            "1c. NextMinimizer TIMING  (rank calc, one classify run per row; "
-            "uhs = toggle/tb path used, non_uhs = ∞ early-out)"
+            "1c. GREEDYMINI RANK PATH  (one classify run per row; UHS = finite table rank, "
+            "non-UHS = infinite rank, no tie-break value computed)"
         )
-        if has_uhs:
-            emit(
-                "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12} {:>12} {:>12} {:>8}".format(
-                    "Run", "NextMin(s)", "ns/call", "calls", "calls/Mbp",
-                    "% of wall", "UHS", "non-UHS", "UHS%",
-                    rw=run_w,
-                )
-            )
-            emit("-" * (run_w + 98))
-            for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-                for r, m in zip(by_scheme[scheme], metrics_by_scheme[scheme]):
-                    emit(
-                        "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12} {:>12} {:>12} {:>8}".format(
-                            r["context"],
-                            fmt(m["nextmin_s"], 3),
-                            fmt(m["nextmin_ns"], 2),
-                            fmt(m["nextmin_calls"], 0),
-                            fmt(m["nextmin_cpm"], 1),
-                            fmt(m["nextmin_frac"], 1),
-                            fmt(m["uhs"], 0),
-                            fmt(m["non_uhs"], 0),
-                            fmt(m["uhs_frac"], 2),
-                            rw=run_w,
-                        )
+        emit("{:<{rw}} {:>14} {:>14} {:>8}".format("Run", "UHS", "non-UHS", "UHS%", rw=run_w))
+        emit("-" * (run_w + 40))
+        for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
+            for r, m in zip(by_scheme[scheme], metrics_by_scheme[scheme]):
+                if m.get("uhs") is None:
+                    continue
+                emit(
+                    "{:<{rw}} {:>14} {:>14} {:>8}".format(
+                        r["context"], fmt(m["uhs"], 0), fmt(m["non_uhs"], 0), fmt(m["uhs_frac"], 2), rw=run_w,
                     )
-        else:
-            emit(
-                "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12}".format(
-                    "Run", "NextMin(s)", "ns/call", "calls", "calls/Mbp", "% of wall",
-                    rw=run_w,
                 )
-            )
-            emit("-" * (run_w + 64))
-            for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-                for r, m in zip(by_scheme[scheme], metrics_by_scheme[scheme]):
-                    emit(
-                        "{:<{rw}} {:>12} {:>12} {:>14} {:>12} {:>12}".format(
-                            r["context"],
-                            fmt(m["nextmin_s"], 3),
-                            fmt(m["nextmin_ns"], 2),
-                            fmt(m["nextmin_calls"], 0),
-                            fmt(m["nextmin_cpm"], 1),
-                            fmt(m["nextmin_frac"], 1),
-                            rw=run_w,
-                        )
-                    )
 
     if has_phase:
         emit("")
@@ -1466,81 +1445,22 @@ def main():
         )
     emit("  * = reference scheme ({})".format(ref_name or "none"))
 
-    if has_nextmin:
+    if has_uhs:
         emit("")
-        emit("2b. NextMinimizer SCHEME SUMMARY  (mean±std over seeds)")
-        if has_uhs:
-            emit(
-                "{:<{sw}} {:>12} {:>12} {:>14} {:>12} {:>12} {:>12} {:>12} {:>8}".format(
-                    "Scheme", "NextMin(s)", "ns/call", "calls", "calls/Mbp",
-                    "% of wall", "UHS", "non-UHS", "UHS%",
-                    sw=scheme_w,
-                )
-            )
-            emit("-" * (scheme_w + 98))
-        else:
-            emit(
-                "{:<{sw}} {:>12} {:>12} {:>14} {:>12} {:>12}".format(
-                    "Scheme", "NextMin(s)", "ns/call", "calls", "calls/Mbp", "% of wall",
-                    sw=scheme_w,
-                )
-            )
-            emit("-" * (scheme_w + 64))
+        emit("2b. GREEDYMINI RANK PATH SCHEME SUMMARY  (mean±std over seeds)")
+        emit("{:<{sw}} {:>14} {:>14} {:>8}".format("Scheme", "UHS", "non-UHS", "UHS%", sw=scheme_w))
+        emit("-" * (scheme_w + 40))
         for scheme in sorted(metrics_by_scheme.keys(), key=_scheme_sort_key):
-            ms = metrics_by_scheme[scheme]
-            mark = " *" if _scheme_base(scheme) == _scheme_base(ref_name or "") else ""
-
-            def ms_of(key):
-                return mean_std([m[key] for m in ms])
-
-            nm_s, nm_ss = ms_of("nextmin_s")
-            nm_n, nm_ns = ms_of("nextmin_ns")
-            nm_c, nm_cs = ms_of("nextmin_calls")
-            nm_p, nm_ps = ms_of("nextmin_cpm")
-            nm_f, nm_fs = ms_of("nextmin_frac")
-            if has_uhs:
-                uh, uhs = ms_of("uhs")
-                nu, nus = ms_of("non_uhs")
-                uf, ufs = ms_of("uhs_frac")
-                emit(
-                    "{:<{sw}} {:>12} {:>12} {:>14} {:>12} {:>12} {:>12} {:>12} {:>8}{}".format(
-                        scheme,
-                        fmt_ms(nm_s, nm_ss, nd=3),
-                        fmt_ms(nm_n, nm_ns, nd=2),
-                        fmt_ms(nm_c, nm_cs, nd=0),
-                        fmt_ms(nm_p, nm_ps, nd=1),
-                        fmt_ms(nm_f, nm_fs, nd=1),
-                        fmt_ms(uh, uhs, nd=0),
-                        fmt_ms(nu, nus, nd=0),
-                        fmt_ms(uf, ufs, nd=2),
-                        mark,
-                        sw=scheme_w,
-                    )
-                )
-            else:
-                emit(
-                    "{:<{sw}} {:>12} {:>12} {:>14} {:>12} {:>12}{}".format(
-                        scheme,
-                        fmt_ms(nm_s, nm_ss, nd=3),
-                        fmt_ms(nm_n, nm_ns, nd=2),
-                        fmt_ms(nm_c, nm_cs, nd=0),
-                        fmt_ms(nm_p, nm_ps, nd=1),
-                        fmt_ms(nm_f, nm_fs, nd=1),
-                        mark,
-                        sw=scheme_w,
-                    )
-                )
-        emit(
-            "  Note: nextmin_s is wall NextMinimizer() time with classify --threads 1."
-        )
-        emit(
-            "  ns/call = ranking cost per window; calls/Mbp ≈ windows/Mbp (similar across schemes)."
-        )
-        if has_uhs:
+            ms = [m for m in metrics_by_scheme[scheme] if m.get("uhs") is not None]
+            if not ms:
+                continue
+            (uh, uhs), (nu, nus), (uf, ufs) = (mean_std([m[k] for m in ms]) for k in ("uhs", "non_uhs", "uhs_frac"))
             emit(
-                "  UHS = Rank() used toggle/tb pack; non-UHS = ∞ early-out; "
-                "UHS% = 100*uhs/(uhs+non_uhs). (GM schemes only.)"
+                "{:<{sw}} {:>14} {:>14} {:>8}".format(
+                    scheme, fmt_ms(uh, uhs, nd=0), fmt_ms(nu, nus, nd=0), fmt_ms(uf, ufs, nd=2), sw=scheme_w,
+                )
             )
+        emit("  UHS% = 100*uhs/(uhs+non_uhs): share of ranks that take the finite (table) path. GreedyMini schemes only.")
 
     if has_phase:
         emit("")
@@ -1589,7 +1509,7 @@ def main():
             "  Lower lookups/Mbp ⇒ lower minimizer density at the hash-lookup stage."
         )
         emit(
-            "  If GM has higher scan/nextmin but lower lookup_s, density is helping query."
+            "  If GM has a higher scan_s but a lower lookup_s, density is helping query."
         )
 
     emit("")
@@ -1656,8 +1576,6 @@ def main():
         metrics_by_scheme.keys(), key=_scheme_sort_key
     )
     wilcoxon_metrics = [("Wall(s)", "class_s"), ("Proc(s)", "class_proc_s")]
-    if has_nextmin:
-        wilcoxon_metrics.append(("ns/call", "nextmin_ns"))
     if has_phase:
         wilcoxon_metrics.append(("lookups/Mbp", "lookups_pm"))
 
@@ -1799,11 +1717,11 @@ def main():
     emit(
         "  • Wilcoxon (section 4) pairs schemes by seed_idx on the per-seed classify wall."
     )
-    if has_nextmin:
+    if has_phase:
         emit(
-            "  • NextMinimizer / phase timing requires classify built with "
+            "  • Phase timing requires classify built with "
             "ENABLE_MINIMIZER_PROF=1 (-DKRAKEN2_MINIMIZER_PROF); files: "
-            "nextminimizer_timing_<dataset>_mhg<N>.txt via env KRAKEN2_MINIMIZER_PROF."
+            "classify_profile_<dataset>_mhg<N>.txt via env KRAKEN2_MINIMIZER_PROF."
         )
         emit(
             "  • Phases: scan (minimizer+tokens), lookup (GetBatch), "
