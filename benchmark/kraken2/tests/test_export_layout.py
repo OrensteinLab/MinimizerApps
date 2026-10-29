@@ -351,6 +351,12 @@ class ExportLayout(unittest.TestCase):
         self.assertIsNone(cami.get("genus_concordant_fraction_mean"))
         argos = [r for r in summ if r["dataset"] == "fda-argos" and r["order"] == "xor-pcg-hash"][0]
         self.assertAlmostEqual(argos["genus_concordant_fraction_mean"], 0.87)
+        gone = ("class_s", "class_gb", "mrd_min", "cls_pct", "mape_g", "nextmin_", "fac_", "build_s", "build_gb")
+        for name, (fields, _rows) in tables.items():
+            if name == "overview":
+                continue
+            for fld in fields:
+                self.assertFalse(fld.startswith(gone), (name, fld))
 
     def test_sorting_and_ratio_reference_per_dataset_mhg(self):
         run_root, (xlsx, tdir, tables) = self.lib()

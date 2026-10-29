@@ -41,7 +41,7 @@ TOST_MARGIN = 1.05
 SPEC = {
     "kraken2": [
         ("kraken2_build_runs.csv", ("library",), "xor", ["build_wall_s", "index_size_gb", "build_max_rss_gb"]),
-        ("kraken2_runs.csv", ("dataset", "minimum_hit_groups"), "xor", ["classify_run_s", "classify_max_rss_gb"]),
+        ("kraken2_runs.csv", ("dataset", "minimum_hit_groups", "library"), "xor", ["classify_run_s", "classify_max_rss_gb"]),
     ],
     "minimap2": [
         ("minimap2_runs.csv", ("dataset", "mid_occ_threshold", "k"), "native",

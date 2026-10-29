@@ -218,6 +218,8 @@ minimizers" stamp).
 | `pin_cpus.sh`, `pin_cpus.py` | CPU pinning: one NUMA node, one thread per core, spare cores |
 | `order_tests.py`, `stats_util.py` | significance tests of order differences; scipy-free t / Welch / Holm |
 | `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
+| `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Holm, TOST (the `significance` sheet) |
+| `mirror_results.py` | mirror a result set (large files hard-linked, small ones copied) for the profiling scripts |
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |

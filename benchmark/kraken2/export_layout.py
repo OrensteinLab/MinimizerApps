@@ -372,7 +372,7 @@ RUN_ONLY = [
 # experiments/profile_run.sh)
 PROFILE_METRICS = [
     ("lookups_per_mbp", CAT_PROFILE, "hash-table lookups per Mbp of reads", "lower", "lookups_pm"),
-    ("lookup_pct_of_classify", CAT_PROFILE, "% of the selected k-mers of the reads that need a hash-table lookup: lookups / (lookups + consecutive repeats); a count share, not a time share", "lower", "lookup_frac"),
+    ("lookup_pct_of_selected", CAT_PROFILE, "% of the selected k-mers of the reads that need a hash-table lookup: lookups / (lookups + consecutive repeats); a count share, not a time share", "lower", "lookup_frac"),
     ("scan_s", CAT_PROFILE, "scan phase (minimizer + tokens), sum of per-thread seconds", "lower", "scan_s"),
     ("lookup_s", CAT_PROFILE, "lookup phase (GetBatch), sum of per-thread seconds", "lower", "lookup_s"),
     ("resolve_s", CAT_PROFILE, "resolve phase (token replay + ResolveTree), sum of per-thread seconds", "lower", "resolve_s"),

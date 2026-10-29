@@ -300,8 +300,10 @@ runs/
 | `kmc3_summary.csv` | one per run (per seed) | Raw headline metrics | — |
 | `kmc3_vs_paper.csv` | one per lex run | vs `data/paper_kmc3.csv` (`count_wall_s_ratio` = ours ÷ paper) | `vs_paper` |
 | `kmc3_density_expected_orders.csv` | one per scheme | theoretical expected density, any order (see `python -m scripts expected-density` below) | `orders` |
+| `kmc3_signature_cost.csv` | one per dataset x signature variant | `experiments/profile_run.sh`: ns per base of the signature and of the window minimum, mean / std over seeds, ratio to the default order | `signature_cost` |
+| `significance_kmc.csv` | one per metric x setting x scheme | paired test of the change from the default scheme (`benchmark/common/significance.py`, see `benchmark/README.md`) | `significance` |
 | `density_effect_kmc.csv` | one per metric x (all, setting = `dataset/n_bins/threads/mem_limit_gb`) | Pearson r of the metric and the density factor, both as ratios to the default scheme's run of the same seed (`benchmark/common/density_effect.py`) | `density_effect` (points: `density_effect_points`) |
-| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper`, `density_effect`, `density_effect_points` | — |
+| `kmc3_results.xlsx` | — | `overview`, `orders`, `datasets`, `summary`, `readlen_check`, `gm_lut`, `runs`, `vs_paper`, `signature_cost` (after `experiments/profile_run.sh`), `density_effect`, `density_effect_points`, `significance` | — |
 
 Re-export only: `benchmark/kmc3_bench.sh export` (or `python3 -m scripts export --results-dir … --paper-platform xeon_hdd|xeon_ssd`).
 
@@ -334,6 +336,7 @@ Both CSVs carry every dataset unfiltered, including read-length-check derived on
 | `gm_lut` | GreedyMini DNA-vs-binary LUT sweep, aggregated like `summary` |
 | `runs` | one row per seed (metrics + telemetry) — every dataset, unfiltered; rows grouped in the same dataset → bins → threads → mem → strict_mem → scheme order as `summary` (seed_idx orders repeats within a scheme block), and its "id / params" columns share `summary`'s field order as far as per-run vs per-config granularity allows |
 | `vs_paper` | default (lex) runs vs published KMC3 numbers |
+| `signature_cost` | only after `experiments/profile_run.sh`: cost per base of KMC3's signature with the default order and the GreedyMini order (DNA and binary table), alone and with the window minimum, and superwindows per kb; mean / std over seeds, ratio to the default |
 
 ### XLSX `summary` sheet (aggregated)
 
