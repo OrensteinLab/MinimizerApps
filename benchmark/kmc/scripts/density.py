@@ -54,7 +54,7 @@ def density_factor(n_selected: int, n_kmers: int, w: int) -> float | None:
 
 def _read_raw_gm(path: Path) -> list[int]:
     """Read the classic [u64 len][len x u64] .gm format (see
-    common/minimizer-orders/greedymini_rank.h's load_gm_file_raw)."""
+    common/minimizer-schemes/greedymini_rank.h's load_gm_file_raw)."""
     data = path.read_bytes()
     (n,) = struct.unpack_from("<Q", data, 0)
     return list(struct.unpack_from(f"<{n}Q", data, 8))
@@ -496,13 +496,13 @@ def expected_csv_path(results: Path) -> Path:
     return results / "kmc3_density_expected.csv"
 
 
-# Rows with a blank `order` are the legacy per-dataset GreedyMini DNA-vs-binary
-# diagnostic (keyed by dataset/k/p). Rows with `order` (+ `projection` for
+# Rows with a blank `scheme` are the legacy per-dataset GreedyMini DNA-vs-binary
+# diagnostic (keyed by dataset/k/p). Rows with `scheme` (+ `projection` for
 # greedymini) are per-variant density-only scans (`scripts density
-# particular-orders`) that fill the orders sheet's particular-density cells for
+# particular-schemes`) that fill the schemes sheet's particular-density cells for
 # (variant, dataset) pairs with no kmc run.
 PARTICULAR_FIELDS = (
-    "order",
+    "scheme",
     "projection",
     "dataset",
     "k",
@@ -555,7 +555,7 @@ def load_particular_rows(path: Path) -> list[dict]:
 def particular_index(rows: list[dict]) -> dict[tuple, dict]:
     out: dict[tuple, dict] = {}
     for r in rows:
-        if r.get("order"):  # per-variant row, see particular_variant_index
+        if r.get("scheme"):  # per-variant row, see particular_variant_index
             continue
         try:
             key = (r["dataset"], int(r["L"]), int(r["k"]))  # (dataset, k-mer length L, minimizer length k)
@@ -566,13 +566,13 @@ def particular_index(rows: list[dict]) -> dict[tuple, dict]:
 
 
 def particular_variant_index(rows: list[dict]) -> dict[tuple, dict]:
-    """Per-variant scan rows keyed (order, projection, dataset, L, k)."""
+    """Per-variant scan rows keyed (scheme, projection, dataset, L, k)."""
     out: dict[tuple, dict] = {}
     for r in rows:
-        if not r.get("order"):
+        if not r.get("scheme"):
             continue
         try:
-            key = (r["order"], r.get("projection") or "", r["dataset"], int(r["L"]), int(r["k"]))
+            key = (r["scheme"], r.get("projection") or "", r["dataset"], int(r["L"]), int(r["k"]))
         except (KeyError, TypeError, ValueError):
             continue
         out[key] = r
@@ -741,43 +741,43 @@ def cmd_particular(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     out = Path(args.output) if args.output else particular_csv_path(results)
-    # keep the per-variant scan rows (particular-orders) -- only the legacy rows are rebuilt here
-    keep = [r for r in load_particular_rows(out) if r.get("order")]
+    # keep the per-variant scan rows (particular-schemes) -- only the legacy rows are rebuilt here
+    keep = [r for r in load_particular_rows(out) if r.get("scheme")]
     _write_csv(out, out_rows + keep, PARTICULAR_FIELDS)
     return 0
 
 
-def cmd_particular_orders(args: argparse.Namespace) -> int:
-    """Density-only scan (no kmc run) of one order variant on each dataset;
-    upserts rows keyed (order, projection, dataset, k, p) into
+def cmd_particular_schemes(args: argparse.Namespace) -> int:
+    """Density-only scan (no kmc run) of one scheme variant on each dataset;
+    upserts rows keyed (scheme, projection, dataset, k, p) into
     kmc3_density_particular.csv, leaving every other row untouched."""
     from scripts.expected_density import PROJECTION_AT0, build_dna_keys
 
     data_root, results = _bench_roots()
     p = args.p
     w = minimizer_window(args.k, p)
-    projection = (args.projection or PROJECTION_AT0) if args.order == "greedymini" else ""
+    projection = (args.projection or PROJECTION_AT0) if args.scheme == "greedymini" else ""
     from scripts.config import seeds as bench_seeds
 
     tie_seed = args.tie_seed if args.tie_seed is not None else bench_seeds()[0]
-    keys = build_dna_keys(args.order, args.k, p, seed=None if args.order in ("default", "lex") else tie_seed, projection=projection or PROJECTION_AT0,
+    keys = build_dna_keys(args.scheme, args.k, p, seed=None if args.scheme in ("default", "lex") else tie_seed, projection=projection or PROJECTION_AT0,
                           gm_dir=Path(args.gm_dir) if args.gm_dir else None)
     out = Path(args.output) if args.output else particular_csv_path(results)
     rows = load_particular_rows(out)
     index = {}
     for i, r in enumerate(rows):
-        index[(r.get("order") or "", r.get("projection") or "", r.get("dataset"), r.get("L"), r.get("k"))] = i
+        index[(r.get("scheme") or "", r.get("projection") or "", r.get("dataset"), r.get("L"), r.get("k"))] = i
     for ds in [d.strip() for d in args.datasets.split(",") if d.strip()]:
         files = dataset_fastq_files(data_root, ds)
         if not files:
             die(f"no FASTQ for {ds} under {data_root}")
         print(f"scanning {ds} ({len(files)} files, max_kmers={args.max_kmers}) "
-              f"order={args.order} {projection}", file=sys.stderr)
+              f"scheme={args.scheme} {projection}", file=sys.stderr)
         acc = scan_fastq(files, p=p, w=w, dna_keys=keys, max_kmers=args.max_kmers)
-        row = {"order": args.order, "projection": projection, "dataset": ds, **acc, "k": p, "w": w, "L": args.k}
+        row = {"scheme": args.scheme, "projection": projection, "dataset": ds, **acc, "k": p, "w": w, "L": args.k}
         print(f"{ds}: dna_df={acc['density_factor_dna']} gc={acc['gc_fraction']} kmers={acc['n_kmers']}",
               file=sys.stderr)
-        key = (args.order, projection, ds, str(args.k), str(p))
+        key = (args.scheme, projection, ds, str(args.k), str(p))
         if key in index:
             rows[index[key]] = row
         else:
@@ -810,24 +810,24 @@ def main(argv: list[str] | None = None) -> int:
     p_part.add_argument("--gm-dir", type=str, default=None)
     p_part.add_argument("-o", "--output", type=str, default=None)
 
-    p_ord = sub.add_parser(
-        "particular-orders",
-        help="density-only scan of one order variant (no kmc run); upserts into kmc3_density_particular.csv",
+    p_sch = sub.add_parser(
+        "particular-schemes",
+        help="density-only scan of one scheme variant (no kmc run); upserts into kmc3_density_particular.csv",
     )
-    p_ord.add_argument("--order", required=True, choices=("default", "lex", "xor", "xor-pcg-hash", "greedymini"))
-    p_ord.add_argument("--projection", default=None, help="greedymini only: at0-cg1 (default) | at1-cg0")
-    p_ord.add_argument("--k", type=int, default=28)
-    p_ord.add_argument("-p", type=int, default=9)
-    p_ord.add_argument("--datasets", required=True)
-    p_ord.add_argument("--max-kmers", type=int, default=12_000_000)
-    p_ord.add_argument("--tie-seed", type=lambda x: int(x, 0), default=None,
+    p_sch.add_argument("--scheme", required=True, choices=("default", "lex", "xor", "xor-pcg-hash", "greedymini"))
+    p_sch.add_argument("--projection", default=None, help="greedymini only: at0-cg1 (default) | at1-cg0")
+    p_sch.add_argument("--k", type=int, default=28)
+    p_sch.add_argument("-p", type=int, default=9)
+    p_sch.add_argument("--datasets", required=True)
+    p_sch.add_argument("--max-kmers", type=int, default=12_000_000)
+    p_sch.add_argument("--tie-seed", type=lambda x: int(x, 0), default=None,
                        help="xor/xor-pcg-hash/greedymini tie-break seed (default: config seeds[0])")
-    p_ord.add_argument("--gm-dir", type=str, default=None)
-    p_ord.add_argument("-o", "--output", type=str, default=None)
+    p_sch.add_argument("--gm-dir", type=str, default=None)
+    p_sch.add_argument("-o", "--output", type=str, default=None)
 
     args = ap.parse_args(argv)
-    if args.cmd == "particular-orders":
-        return cmd_particular_orders(args)
+    if args.cmd == "particular-schemes":
+        return cmd_particular_schemes(args)
     if args.cmd == "expected":
         return cmd_expected(args)
     if args.cmd == "particular":

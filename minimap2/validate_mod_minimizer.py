@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Brute-force cross-validation of sketch_mod_minimizer() (order.cpp), the
+"""Brute-force cross-validation of sketch_mod_minimizer() (scheme.cpp), the
 strand-symmetric mod-minimizer-xor sketch.
 
 brute_force() applies the definition window by window (no deques, no
@@ -8,7 +8,7 @@ ordinal `win`, the T = w+k-t t-mers are ranked as canonical t-mer XOR seed
 (t == k mod w); every minimal t-mer x offers the offset x mod w, the one
 closest to the centre (w-1)/2 wins, and between two equally close ones the
 left if the window <= its reverse complement lexicographically, the right
-otherwise (the centre rule, common/minimizer-orders/mod_minimizer_rule.h).
+otherwise (the centre rule, common/minimizer-schemes/mod_minimizer_rule.h).
 
 On (w, k, t, seed) configs the compiled code, via the sketch_dump test driver
 (`make sketch_dump`), must emit exactly the brute force's loci, including
@@ -144,7 +144,7 @@ def run_case(rng: random.Random, w: int, k: int, t: int, seed: int, seq_len: int
         got = run_binary(s_, w, k, t, seed)
         if exp != got:
             i = next((i for i, (a, b) in enumerate(zip(exp, got)) if a != b), min(len(exp), len(got)))
-            return (f"compiled order.cpp vs brute force differ at emission {i} (with_n={with_n}, "
+            return (f"compiled scheme.cpp vs brute force differ at emission {i} (with_n={with_n}, "
                     f"exp_len={len(exp)} got_len={len(got)})")
     # a sequence and its reverse complement select mirrored loci
     n = len(plain[0])

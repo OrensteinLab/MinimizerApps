@@ -14,7 +14,7 @@ class CorrelationTest(unittest.TestCase):
         self.assertIsNone(pearson([1, 1, 1], [1, 2, 3]))    # constant series
 
     def test_rows(self):
-        fields = ["order", "d_ratio", "x_ratio", "y"]
+        fields = ["scheme", "d_ratio", "x_ratio", "y"]
         rows = [{"d_ratio": 1.0, "x_ratio": 1.0}, {"d_ratio": 2.0, "x_ratio": 2.0},
                 {"d_ratio": 3.0, "x_ratio": 3.5}, {"d_ratio": None, "x_ratio": 9.0}]
         out = correlation_rows(fields, rows, (("correlation with density", "d_ratio"),

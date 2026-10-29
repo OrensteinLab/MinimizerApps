@@ -1,25 +1,40 @@
 # MinimizerApps
 
-Canonical sketching schemes with low-density orders (`xor`, `xor-pcg-hash`,
-the canonical GreedyMini, and the canonical mod-minimizer on an `xor` or a
-GreedyMini order) integrated into four high-throughput sequencing methods, and
-the harnesses that benchmark them end to end:
+High-throughput sequencing methods such as Kraken2 (taxonomic classification),
+Minimap2 (read mapping), KMC3 (k-mer counting) and SSHash (k-mer indexing)
+sample k-mers with minimizers or mod-minimizers to reduce their runtime and
+memory usage. These sketching schemes depend on a k-mer order. Low-density
+orders such as GreedyMini produce smaller sketches, yet almost all methods rely
+on pseudo-random orders. Moreover, sketching schemes and their orders are
+defined on single-stranded sequences, while these methods run on double-stranded
+data and need canonical schemes.
 
-- **Kraken2**: taxonomic classification.
-- **KMC3**: k-mer counting.
-- **SSHash**: k-mer indexing.
-- **Minimap2**: read mapping.
+This repository closes both gaps. It provides canonical variants of GreedyMini
+and of the mod-minimizer, integrates them into the four methods, and benchmarks
+the methods end to end. The canonical variants give smaller sketches than
+pseudo-random minimizers. As a result, they reduce the runtime of every
+evaluated method, and reduce memory and disk usage in proportion with the
+sketch size. In Kraken2 and Minimap2, whose output depends on the sampled
+k-mers, accuracy changes only negligibly.
+
+The schemes in each method:
+
+- **pseudo-random minimizers:** `xor` and `xor-pcg-hash`, beside each method's
+  own default;
+- **canonical GreedyMini:** `greedymini`;
+- **canonical mod-minimizer:** on an `xor` order (`mod-minimizer-xor`) or on a
+  GreedyMini order (`mod-minimizer-greedymini`).
 
 Each method is a fork whose upstream-tracked source stays apart from the shared
-order code and the benchmark harnesses.
+scheme code and the benchmark harnesses.
 
 ## Layout
 
 | Path | What it is | Docs |
 |---|---|---|
-| `kraken2/`, `kmc/`, `sshash/`, `minimap2/` | The four forks, each with only the changes needed to plug in the orders | [`kraken2`](kraken2/README.md), [`kmc`](kmc/README.md), [`sshash`](sshash/README.md), [`minimap2`](minimap2/README.fork.md) |
-| `orders/` | The order tables (`.txt` rank lists; the `.gm` tables are built from them), the order names and options, and the CLI flags of each method | [`orders/README.md`](orders/README.md) |
-| `common/minimizer-orders/` | The order code shared by all four methods: the GreedyMini tables, the PCG scramble and the mod-minimizer rule with its tie handling | [`common/minimizer-orders/README.md`](common/minimizer-orders/README.md) |
+| `kraken2/`, `kmc/`, `sshash/`, `minimap2/` | The four forks, each with only the changes needed to plug in the schemes | [`kraken2`](kraken2/README.md), [`kmc`](kmc/README.md), [`sshash`](sshash/README.md), [`minimap2`](minimap2/README.fork.md) |
+| `orders/` | The GreedyMini order tables (`.txt` rank lists; the `.gm` tables are built from them), the scheme names and options, and the CLI flags of each method | [`orders/README.md`](orders/README.md) |
+| `common/minimizer-schemes/` | The scheme code shared by all four methods: the GreedyMini tables, the PCG scramble and the mod-minimizer rule with its tie handling | [`common/minimizer-schemes/README.md`](common/minimizer-schemes/README.md) |
 | `benchmark/` | The shared measurement protocol, the full run of all four methods (`full_run_all.sh`), the exporters and the analyses | [`benchmark/README.md`](benchmark/README.md) |
 | `benchmark/<method>/` | Each method's harness: data, setup (`.env`), sweeps, outputs | [`kraken2`](benchmark/kraken2/README.md), [`kmc`](benchmark/kmc/README.md), [`sshash`](benchmark/sshash/README.md), [`minimap2`](benchmark/minimap2/README.md) |
 | `UPSTREAMS.md` | How each fork tracks and re-pulls its upstream | [`UPSTREAMS.md`](UPSTREAMS.md) |
@@ -31,7 +46,7 @@ make -C kraken2 all && make -C kraken2 test
 make -C kmc all
 make -C sshash all && make -C sshash test
 make -C minimap2 all && make -C minimap2 test
-make -C common/minimizer-orders all test
+make -C common/minimizer-schemes all test
 ```
 
 Then see each method's README for its own options, and each harness README for
@@ -39,8 +54,8 @@ its data and how to run it.
 
 ## Where to read about
 
-- **The orders, their names and each method's flags:** [`orders/README.md`](orders/README.md).
-- **How the orders and the mod-minimizer are implemented, and how each method breaks ties:** [`common/minimizer-orders/README.md`](common/minimizer-orders/README.md).
+- **The schemes, their names and each method's flags:** [`orders/README.md`](orders/README.md).
+- **How the orders and the mod-minimizer are implemented, and how each method breaks ties:** [`common/minimizer-schemes/README.md`](common/minimizer-schemes/README.md).
 - **The measurement protocol, the full benchmark run and the workbook columns:** [`benchmark/README.md`](benchmark/README.md).
-- **The analyses:** also in [`benchmark/README.md`](benchmark/README.md): significance tests of order differences, how closely each metric follows the density, and the run-to-run stability of two result sets.
+- **The analyses:** also in [`benchmark/README.md`](benchmark/README.md): significance tests of scheme differences, how closely each metric follows the density, the profiling runs, and the run-to-run stability of two result sets.
 - **Running one method's benchmark, its datasets and its outputs:** `benchmark/<method>/README.md`.

@@ -44,12 +44,12 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
 
             kmer_iterator<Kmer, bits::bit_vector::builder> kmer_it(strings_builder, k);
             hasher_type hasher(build_config.seed);
-            hasher.configure(build_config.order, m, build_config.greedy_mini_filename,
+            hasher.configure(build_config.scheme, m, build_config.greedy_mini_filename,
                              build_config.gm_proj, build_config.mod_t);
 
-            /* the body is instantiated per order (see dispatch_order) */
+            /* the body is instantiated per order (see dispatch_scheme) */
             auto compute = [&](auto mode) {
-                order_minimizer_iterator<Kmer, decltype(mode)::value> minimizer_it(k, m, hasher);
+                scheme_minimizer_iterator<Kmer, decltype(mode)::value> minimizer_it(k, m, hasher);
 
                 for (uint64_t i = index_begin; i < index_end; ++i)  //
                 {
@@ -108,7 +108,7 @@ void dictionary_builder<Kmer, Offsets>::compute_minimizer_tuples()  //
                     save(prev_mini_info, num_kmers_in_super_kmer);
                 }
             };
-            dispatch_order(hasher.mode(), compute);
+            dispatch_scheme(hasher.mode(), compute);
 
             /* flush leftover */
             if (!buffer.empty()) minimizers.sort_and_flush(buffer);

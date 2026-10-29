@@ -1,14 +1,14 @@
 import os, sys, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-import orders_sheet as os_  # noqa: E402
+import schemes_sheet as os_  # noqa: E402
 
 
 class T(unittest.TestCase):
     def test_fields(self):
-        f = os_.orders_fields(["a", "b"])
-        self.assertEqual(f[:4], ("order", "k", "w", "L"))
+        f = os_.schemes_fields(["a", "b"])
+        self.assertEqual(f[:4], ("scheme", "k", "w", "L"))
         self.assertNotIn("gm_lut", f)
-        self.assertIn("gm_lut", os_.orders_fields(["a"], with_gm_lut=True))
+        self.assertIn("gm_lut", os_.schemes_fields(["a"], with_gm_lut=True))
         self.assertEqual(f[-2:], ("b_particular_density_factor_mean", "b_particular_density_factor_std"))
 
     def test_klw(self):

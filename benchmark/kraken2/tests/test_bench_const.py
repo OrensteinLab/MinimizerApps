@@ -1,5 +1,5 @@
 """Scheme identity helpers shared by the shell harness (bench_const.py) and the
-density table merge (density_csv.py): canonical orders only, params as fields.
+density table merge (density_csv.py): canonical schemes only, params as fields.
 
     python3 -m unittest discover -s benchmark/kraken2/tests
 """
@@ -20,12 +20,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(K2), "common"))
 
 import bench_const as B  # noqa: E402
 import density_csv as D  # noqa: E402
-import order_names  # noqa: E402
+import scheme_names  # noqa: E402
 
 
 class BenchConst(unittest.TestCase):
     def test_scheme_order_is_canonical(self):
-        self.assertEqual(sorted(B.SCHEME_ORDER, key=B.SCHEME_ORDER.get), list(order_names.CANONICAL))
+        self.assertEqual(sorted(B.SCHEME_ORDER, key=B.SCHEME_ORDER.get), list(scheme_names.CANONICAL))
         self.assertEqual(B.scheme_rank("greedymini (k15_at1-cg0)"), B.SCHEME_ORDER["greedymini"])
         self.assertEqual(B.scheme_rank("greedymini [cami, mhg0]"), B.SCHEME_ORDER["greedymini"])
         self.assertEqual(B.scheme_rank("nonsense"), 99)
@@ -35,7 +35,7 @@ class BenchConst(unittest.TestCase):
 
     def test_scheme_id_and_run_dir(self):
         i = B.scheme_id("greedymini", "/x/w5_k15_canonical.gm", "at1-cg0")
-        self.assertEqual((i["order"], i["gm_k"], i["projection"], i["gm_table"], i["mod_t"]),
+        self.assertEqual((i["scheme"], i["gm_k"], i["projection"], i["gm_table"], i["mod_t"]),
                          ("greedymini", 15, "at1-cg0", "w5_k15_canonical", None))
         self.assertEqual(B.scheme_run_dir(i), "greedymini/k15_at1-cg0")
         i = B.scheme_id("mod-minimizer-greedymini", "w5_k6_canonical.gm", None)
@@ -101,7 +101,7 @@ class DensityCsv(unittest.TestCase):
             rows = list(csv.DictReader(f))
         self.assertEqual({r["scheme"]: r["mod_tie_rule"] for r in rows},
                          {"xor": "", "mod-minimizer-xor": D.MOD_TIE_RULE})
-        # a row of the old rule (no stamp) is missing; a plain order is not
+        # a row of the old rule (no stamp) is missing; a plain (non-mod) scheme is not
         for r in rows:
             r["mod_tie_rule"] = ""
         with open(out, "w") as f:

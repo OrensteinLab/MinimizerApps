@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import order_names  # benchmark/common (see scripts/__init__.py)
+import scheme_names  # benchmark/common (see scripts/__init__.py)
 
 
 def main(_argv: list[str] | None = None) -> int:
@@ -19,9 +19,9 @@ def main(_argv: list[str] | None = None) -> int:
     seed_s = os.environ.get("META_SEED", "").strip()
     gm_k_s = os.environ.get("META_GM_K", "").strip()
     mod_t_s = os.environ.get("META_MOD_T", "").strip()
-    # identity fields (benchmark/common/order_names.py): validated, canonical order name
-    ident = order_names.make_id(
-        os.environ["META_ORDER"],
+    # identity fields (benchmark/common/scheme_names.py): validated, canonical scheme name
+    ident = scheme_names.make_id(
+        os.environ["META_SCHEME"],
         int(gm_k_s) if gm_k_s else None,
         os.environ.get("META_PROJECTION", "").strip() or None,
         os.environ.get("META_GM_TABLE", "").strip() or None,

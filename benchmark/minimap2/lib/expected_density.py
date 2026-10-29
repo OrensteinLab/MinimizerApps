@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Theoretical expected density_factor for every minimap2 order (native,
+"""Theoretical expected density_factor for every minimap2 scheme (native,
 xor, xor-pcg-hash, greedymini in each projection, mod-minimizer-xor), via
 Monte Carlo simulation on an i.i.d.
 uniform-random DNA stream -- not measured on any real dataset. Thin adapter over
 benchmark/common/expected_density_driver.py (loop, mean/std, cache, CLI):
-this file only has minimap2's variants, order hash functions (minimap2/order.cpp:
+this file only has minimap2's variants, order hash functions (minimap2/scheme.cpp:
 mm_hash64 'native', the GreedyMini centre hash, mod-minimizer-xor) and HPC
 compression, on benchmark/common/density.py's shared primitives.
 
@@ -13,7 +13,7 @@ predefined seeds (see config.yaml), not a single value; native has no seed
 at all in minimap2 (mm_hash64 takes none), so it's computed once and
 repeated n_seeds times as a formality for a uniform table shape.
 
-Feeds the `orders` xlsx sheet's expected_density_factor_mean/std columns
+Feeds the `schemes` xlsx sheet's expected_density_factor_mean/std columns
 (see lib/export.py); cached to minimap2_density_expected_k<k>_w<w>_t<mod_t>_<hpc|nohpc>.csv since
 it's independent of any actual benchmark run (a pure function of k/w/t/HPC,
 the GreedyMini table, the seed list and the Monte Carlo sizes) and each
@@ -38,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 import expected_density_driver as shared  # noqa: E402
-from order_names import gm_fields, projection_from_flag  # noqa: E402
+from scheme_names import gm_fields, projection_from_flag  # noqa: E402
 from density import (  # noqa: E402
     canonical_mmer,
     gm_k_from_table,
@@ -55,17 +55,17 @@ DEFAULT_SEED = shared.DEFAULT_SEED
 # density_factor of one draw is rounded to 6 decimals (shared default), mean/std to 4
 ROUNDING = shared.Rounding(sample=6, avg=4, std=4, single_std=0.0)
 
-# (order, projection) variants: greedymini once per projection, the others
+# (scheme, projection) variants: greedymini once per projection, the others
 # have no projection (None).
 VARIANTS = [
     ("native", None), ("xor", None), ("xor-pcg-hash", None),
     ("greedymini", "at0-cg1"), ("greedymini", "at1-cg0"),
     ("mod-minimizer-xor", None),
 ]
-MOD_ORDERS = frozenset({"mod-minimizer-xor"})
+MOD_SCHEMES = frozenset({"mod-minimizer-xor"})
 
-# Which base order each order uses as its hash/rank function --
-# mod-minimizer-xor ranks t-mers by xor, as order.cpp's sketch_mod_minimizer.
+# Which base order each scheme uses as its hash/rank function --
+# mod-minimizer-xor ranks t-mers by xor, as scheme.cpp's sketch_mod_minimizer.
 _BASE_ORDER = {
     "native": "native",
     "xor": "xor",
@@ -98,7 +98,7 @@ def mm_hash64(key: int, mask: int) -> int:
 
 
 def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, flip: bool = False) -> int:
-    """order.cpp's RankState<MM_ORDER_GREEDYMINI>: the shared GreedyMini centre extension
+    """scheme.cpp's RankState<MM_SCHEME_GREEDYMINI>: the shared GreedyMini centre extension
     of the gm_k table to length l (l = gm_k + 2i), injective packing --
     benchmark/common/density.py greedymini_centre_hash, checked against the
     compiled order by minimap2/validate_greedymini.py. `seed` = --order-seed,
@@ -133,7 +133,7 @@ def hpc_compress(dna_stream: list[int]) -> list[int]:
 
 
 def expected_density_factor(
-    order: str,
+    scheme: str,
     k: int,
     w: int,
     *,
@@ -148,10 +148,10 @@ def expected_density_factor(
     dna_stream = shared.random_dna(n_bases, rng_seed)
     if is_hpc:
         dna_stream = hpc_compress(dna_stream)
-    base_order = _BASE_ORDER[order]
+    base_order = _BASE_ORDER[scheme]
     flip = projection_from_flag(projection) == "at1-cg0" if base_order == "greedymini" else False
 
-    if order in MOD_ORDERS:
+    if scheme in MOD_SCHEMES:
         # strand-symmetric mod-sampling: distinct selected positions (not a
         # forward scheme, so no super-k-mer boundary count)
         assert t is not None
@@ -163,7 +163,7 @@ def expected_density_factor(
     return shared.window_density(keys, w, ROUNDING)
 
 
-def compute_all_orders(
+def compute_all_schemes(
     k: int,
     w: int,
     seeds: list[int],
@@ -178,11 +178,11 @@ def compute_all_orders(
     gm_info = gm_fields(table=gm_file.name, projection=None) if gm_file else {"gm_k": None, "gm_table": None}
 
     def row_id(v):
-        order, projection = v
-        needs_gm = _BASE_ORDER[order] == "greedymini"
+        scheme, projection = v
+        needs_gm = _BASE_ORDER[scheme] == "greedymini"
         return {
-            "order": order, "gm_k": gm_info["gm_k"] if needs_gm else None, "projection": projection,
-            "gm_table": gm_info["gm_table"] if needs_gm else None, "mod_t": mod_t if order in MOD_ORDERS else None,
+            "scheme": scheme, "gm_k": gm_info["gm_k"] if needs_gm else None, "projection": projection,
+            "gm_table": gm_info["gm_table"] if needs_gm else None, "mod_t": mod_t if scheme in MOD_SCHEMES else None,
             "k": k, "w": w, "L": k + w - 1,
         }
 
@@ -196,15 +196,15 @@ def compute_all_orders(
         seeds_of=lambda v: seeds,
         prepare=prepare,
         sample=lambda v, ranks, seed: expected_density_factor(
-            v[0], k, w, seed=seed, t=mod_t if v[0] in MOD_ORDERS else None,
-            n_bases=mod_n_bases if v[0] in MOD_ORDERS else n_bases, gm_ranks=ranks, is_hpc=is_hpc,
+            v[0], k, w, seed=seed, t=mod_t if v[0] in MOD_SCHEMES else None,
+            n_bases=mod_n_bases if v[0] in MOD_SCHEMES else n_bases, gm_ranks=ranks, is_hpc=is_hpc,
             projection=v[1]),
         row_id=row_id,
         rounding=ROUNDING,
     )
 
 
-EXPECTED_ORDERS_FIELDS = ("order", "gm_k", "projection", "gm_table", "mod_t", "k", "w", "L", *shared.STAT_FIELDS, "cache_key")
+EXPECTED_SCHEMES_FIELDS = ("scheme", "gm_k", "projection", "gm_table", "mod_t", "k", "w", "L", *shared.STAT_FIELDS, "cache_key")
 
 
 def expected_cache_key(
@@ -239,24 +239,24 @@ def expected_cache_key(
     return hashlib.sha256(json.dumps(ident, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def expected_orders_csv_path(results: Path, k: int, w: int, t: int, is_hpc: bool) -> Path:
+def expected_schemes_csv_path(results: Path, k: int, w: int, t: int, is_hpc: bool) -> Path:
     return results / "csvs" / f"minimap2_density_expected_k{k}_w{w}_t{t}_{'hpc' if is_hpc else 'nohpc'}.csv"
 
 
 def variant_key(row: dict) -> tuple[str, str]:
-    """(order, projection or '') -- the key of one expected-density row."""
-    return (row["order"], row.get("projection") or "")
+    """(scheme, projection or '') -- the key of one expected-density row."""
+    return (row["scheme"], row.get("projection") or "")
 
 
 def _row_key(row: dict) -> tuple[str, str] | None:
-    return variant_key(row) if row.get("order") else None
+    return variant_key(row) if row.get("scheme") else None
 
 
-def load_expected_orders(results: Path, k: int, w: int, t: int, is_hpc: bool) -> dict[tuple[str, str], dict]:
-    return shared.read_csv_rows(expected_orders_csv_path(results, k, w, t, is_hpc), _row_key)
+def load_expected_schemes(results: Path, k: int, w: int, t: int, is_hpc: bool) -> dict[tuple[str, str], dict]:
+    return shared.read_csv_rows(expected_schemes_csv_path(results, k, w, t, is_hpc), _row_key)
 
 
-def ensure_expected_orders(
+def ensure_expected_schemes(
     results: Path,
     k: int,
     w: int,
@@ -269,20 +269,20 @@ def ensure_expected_orders(
     mod_t: int = 5,
     is_hpc: bool = True,
 ) -> dict[tuple[str, str], dict]:
-    """Keyed by (order, projection or ''). is_hpc must match the dataset's preset (lib/constants.sh:
+    """Keyed by (scheme, projection or ''). is_hpc must match the dataset's preset (lib/constants.sh:
     dataset_preset; map-pb enables -H/HPC k-mers, map-ont does not) for
     'particular' (measured) and 'expected' (this function) density_factor
     to be a fair comparison: map-pb datasets use the HPC value, map-ont ones
     the non-HPC one; each is cached in its own file."""
     key = expected_cache_key(seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases)
     return shared.ensure_cache(
-        expected_orders_csv_path(results, k, w, mod_t, is_hpc),
-        EXPECTED_ORDERS_FIELDS,
+        expected_schemes_csv_path(results, k, w, mod_t, is_hpc),
+        EXPECTED_SCHEMES_FIELDS,
         VARIANTS,
         key_of_variant=lambda v: (v[0], v[1] or ""),
         key_of_row=_row_key,
-        load=lambda: load_expected_orders(results, k, w, mod_t, is_hpc),
-        compute=lambda _todo: compute_all_orders(k, w, seeds, gm_file=gm_file, n_bases=n_bases,
+        load=lambda: load_expected_schemes(results, k, w, mod_t, is_hpc),
+        compute=lambda _todo: compute_all_schemes(k, w, seeds, gm_file=gm_file, n_bases=n_bases,
                                                  mod_n_bases=mod_n_bases, mod_t=mod_t, is_hpc=is_hpc),
         accept=lambda cached: all(r.get("cache_key") == key for r in cached.values()),
         stamp={"cache_key": key},
@@ -293,9 +293,9 @@ def ensure_expected_orders(
 def main(argv: list[str] | None = None) -> int:
     ap = shared.base_parser(
         None,
-        "Theoretical expected density_factor per minimap2 order (Monte Carlo "
+        "Theoretical expected density_factor per minimap2 scheme (Monte Carlo "
         "on i.i.d. random DNA; mean/std over the benchmark's predefined seeds). Feeds the "
-        "`orders` xlsx sheet's expected_density_factor_mean/std columns.",
+        "`schemes` xlsx sheet's expected_density_factor_mean/std columns.",
         default_results=None,
         default_n_bases=DEFAULT_N_BASES,
     )
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     seeds = [int(s, 16) if s.lower().startswith("0x") else int(s) for s in args.seeds.split(",")]
-    rows = ensure_expected_orders(
+    rows = ensure_expected_schemes(
         Path(args.results_dir), args.k, args.w, seeds,
         gm_file=Path(args.gm_file) if args.gm_file else None,
         force=args.force, n_bases=args.n_bases, mod_n_bases=args.mod_n_bases,

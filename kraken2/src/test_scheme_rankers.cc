@@ -3,7 +3,7 @@
  */
 
 #include "greedymini_rank.h"
-#include "../../common/minimizer-orders/greedymini_centre.h"
+#include "../../common/minimizer-schemes/greedymini_centre.h"
 #include "minimizer_rankers.h"
 #include "dna_kmer.h"
 #include "kraken2_data.h"

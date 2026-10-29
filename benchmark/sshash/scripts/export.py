@@ -6,22 +6,22 @@ Reads ``<results>/runs`` and writes the tables to ``<results>/csvs`` and the wor
 ``$SSHASH_BENCH_ROOT/results``):
 
 - ``sshash_runs.csv``       -- one row per run (metrics + telemetry)
-- ``sshash_orders.csv``     -- the ``orders`` sheet (one row per order variant, k/w/L)
-- ``sshash_summary.csv``    -- one row per dataset x order (mean/std across seeds)
-- ``sshash_density_expected_orders.csv`` -- cached expected-density Monte Carlo
+- ``sshash_schemes.csv``    -- the ``schemes`` sheet (one row per scheme variant, k/w/L)
+- ``sshash_summary.csv``    -- one row per dataset x scheme (mean/std across seeds)
+- ``sshash_density_expected_schemes.csv`` -- cached expected-density Monte Carlo
   results (independent of any run; see scripts/expected_density.py)
 - ``sshash_buckets.csv``    -- bucket/binning stats (mean/std across seeds) per
-  dataset x order: bucket count, average/max bucket size, skew-index share,
+  dataset x scheme: bucket count, average/max bucket size, skew-index share,
   and the bucket-related space breakdown (see scripts/export.py:parse_bucket_stats)
-- ``sshash_results.xlsx``   -- ``overview``, ``orders``, ``datasets``, ``summary``,
+- ``sshash_results.xlsx``   -- ``overview``, ``schemes``, ``datasets``, ``summary``,
   ``runs``, ``buckets``, ``space_breakdown``, ``bucket_histogram``,
   ``super_kmer_histogram`` (written by benchmark/common/xlsx_book.py). The
-  ``orders`` sheet carries each order variant's description/CLI plus its density --
+  ``schemes`` sheet carries each scheme variant's description/CLI plus its density --
   particular (measured, per dataset x variant) and expected (theoretical, per
   variant) -- side by side.
 
-An order variant is identified by the five fields ``order, gm_k, projection,
-gm_table, mod_t`` (benchmark/common/order_names.py): ``order`` is the canonical name
+A scheme variant is identified by the five fields ``scheme, gm_k, projection,
+gm_table, mod_t`` (benchmark/common/scheme_names.py): ``scheme`` is the canonical name
 (native | xor | xor-pcg-hash | greedymini | mod-minimizer-xor |
 mod-minimizer-greedymini), the others say which GreedyMini table / projection /
 mod-minimizer t-mer length it ran with. Every grouping key below includes all five.
@@ -35,7 +35,7 @@ density_factor is the reported metric. A uniformly random order's
 density_factor -> 2 as w grows; GreedyMini targets a lower value by
 construction.
 
-Buckets/binning: a lower-density order has fewer distinct minimizers, hence
+Buckets/binning: a lower-density scheme has fewer distinct minimizers, hence
 fewer buckets (``n_buckets``) -- but that means a larger *average* bucket
 (``avg_bucket_size = n_kmers / n_buckets``) and often a bigger share of
 k-mers in sshash's skew index (``kmers_in_skew_index_pct``, its structure for
@@ -46,7 +46,7 @@ even when it still saves per-bucket space (``control_codewords``/
 Exits with an error (hard-fail gate, mirroring kmc's validate_custom_vs_lex)
 if:
 
-- ``n_kmers`` differs across any order/seed run of the same dataset, or
+- ``n_kmers`` differs across any scheme/seed run of the same dataset, or
 - any run's ``query_pos_match`` / ``query_neg_match`` fixed-set check is
   false (see scripts/equivalence.py), or
 - any run's ``check_ok`` (``sshash check`` -> "EVERYTHING OK!") is false.
@@ -68,11 +68,11 @@ from pathlib import Path
 from scripts.common import bench_paths, die, load_dotenv
 from scripts.config import seeds as bench_seeds
 from scripts.density import density_factor as _density_factor
-from scripts.expected_density import ensure_expected_orders
+from scripts.expected_density import ensure_expected_schemes
 from scripts.config import gm_table_file
-from scripts.orders import BASELINES, ORDERS, order_dir_name, variant_key
-import order_names as on
-import orders_sheet as osh
+from scripts.schemes import BASELINES, SCHEMES, scheme_dir_name, variant_key
+import scheme_names as sn
+import schemes_sheet as ssh
 import step_record
 import density_effect
 import significance
@@ -153,7 +153,7 @@ def parse_bucket_stats(path: Path) -> dict:
     (src/builder/build_sparse_and_skew_index.cpp): how many buckets there
     are, how large the biggest is, and what share of buckets/k-mers land in
     the "skew index" (the structure for large/heavy buckets) -- explains why
-    a lower-density order isn't automatically faster to query: fewer buckets
+    a lower-density scheme isn't automatically faster to query: fewer buckets
     can mean each one is bigger on average, and lookups in big (skew-index)
     buckets cost more."""
     out: dict = {
@@ -217,7 +217,7 @@ def parse_bucket_stats(path: Path) -> dict:
     m = re.search(r"control_codewords: ([\d.eE+-]+) \[bits/kmer\]", text)
     if m:
         out["control_codewords_bits_per_kmer"] = float(m.group(1))
-    # rest of the SPACE BREAKDOWN (dictionary::print_info): the order-independent strings and
+    # rest of the SPACE BREAKDOWN (dictionary::print_info): the scheme-independent strings and
     # offsets, the MPHF over the minimizers, and the (negligible) bucket-size start array
     for key, label in (
         ("mphf_bits_per_kmer", "mphf"),
@@ -231,7 +231,7 @@ def parse_bucket_stats(path: Path) -> dict:
     return out
 
 
-HISTOGRAM_ID_FIELDS = ("dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "seed_idx")
+HISTOGRAM_ID_FIELDS = ("dataset", "k", "w", "L", *sn.ID_FIELDS, "modality", "seed_idx")
 BUCKET_HISTOGRAM_FIELDS = [
     *HISTOGRAM_ID_FIELDS, "bucket_type", "log2_bucket_size", "bucket_size_range",
     "n_buckets", "n_kmers_in_buckets",
@@ -417,7 +417,7 @@ RUN_FIELDS = (
     "k",
     "w",
     "L",
-    "order",
+    "scheme",
     "gm_k",
     "projection",
     "gm_table",
@@ -621,7 +621,7 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
 
     modality = meta.get("modality") or "canonical"
     try:
-        ident = on.parse_id({f: meta.get(f) for f in on.ID_FIELDS}, baselines=BASELINES)
+        ident = sn.parse_id({f: meta.get(f) for f in sn.ID_FIELDS}, baselines=BASELINES)
     except ValueError as e:
         die(f"{meta_path}: {e}")
 
@@ -741,17 +741,17 @@ def load_run_row(run_dir: Path, runs_root: Path) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def order_label(r: dict) -> str:
-    """Readable id of an order variant (its run-directory segment)."""
-    return order_dir_name(r.get("order") or "", r.get("gm_k"), r.get("projection"), r.get("mod_t"))
+def scheme_label(r: dict) -> str:
+    """Readable id of a scheme variant (its run-directory segment)."""
+    return scheme_dir_name(r.get("scheme") or "", r.get("gm_k"), r.get("projection"), r.get("mod_t"))
 
 
-def validate_orders_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
-    """Every order/seed run of the same dataset must report the same
+def validate_schemes_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
+    """Every scheme/seed run of the same dataset must report the same
     ``n_kmers`` and pass its check/query-answer gates. Returns
     (n_comparisons, errors); callers die() hard on any error (see
     task spec: this is the sshash analogue of kmc's validate_custom_vs_lex,
-    generalized since sshash has no seed-less baseline -- every order,
+    generalized since sshash has no seed-less baseline -- every scheme,
     including native, is just another group member here)."""
     errors: list[str] = []
     n_cmp = 0
@@ -764,11 +764,11 @@ def validate_orders_equivalence(rows: list[dict]) -> tuple[int, list[str]]:
         n_cmp += len(group)
         if len(counts) > 1:
             detail = ", ".join(
-                f"{order_label(r)}"
+                f"{scheme_label(r)}"
                 f"/seed{r.get('seed_idx')}={r.get('n_kmers')}"
                 for r in group
             )
-            errors.append(f"{dataset}: n_kmers differs across orders/seeds: {detail}")
+            errors.append(f"{dataset}: n_kmers differs across schemes/seeds: {detail}")
         for r in group:
             if r.get("check_ok") is False:
                 errors.append(f"{dataset} {r.get('run_id')}: sshash check did not report EVERYTHING OK!")
@@ -826,7 +826,7 @@ SUMMARY_METRICS = (
 
 def _round_std(x: float | None) -> float | None:
     """Round a standard deviation to at least 4 decimals and at least 4
-    significant digits, so a tiny std (a GreedyMini order's 1e-5 spread over
+    significant digits, so a tiny std (a GreedyMini scheme's 1e-5 spread over
     seeds) is not flattened to 0.0."""
     if x is None:
         return None
@@ -855,11 +855,11 @@ def summary_group_key(r: dict) -> tuple:
 
 
 def variant_sort_key(r: dict) -> tuple:
-    """Canonical order rank, then the variant's gm_k / projection / table / t."""
+    """Canonical scheme rank, then the variant's gm_k / projection / table / t."""
     try:
-        rank = ORDERS.index(r.get("order") or "")
+        rank = SCHEMES.index(r.get("scheme") or "")
     except ValueError:
-        rank = len(ORDERS)
+        rank = len(SCHEMES)
     return (rank, r.get("gm_k") or 0, r.get("projection") or "", r.get("gm_table") or "",
             r.get("mod_t") or 0)
 
@@ -886,7 +886,7 @@ def summary_rows(rows: list[dict]) -> list[dict]:
             "k": head["k"],
             "w": head.get("w"),
             "L": head.get("L"),
-            **{f: head.get(f) for f in on.ID_FIELDS},
+            **{f: head.get(f) for f in sn.ID_FIELDS},
             "modality": head["modality"],
             "n_repeats": len({p.get("seed_idx") for p in parts}),
             "n_kmers": head.get("n_kmers"),
@@ -901,15 +901,15 @@ def summary_rows(rows: list[dict]) -> list[dict]:
 
 
 def attach_native_ratios(rows: list[dict], baseline: str = "native") -> None:
-    """`{metric}_ratio` = this variant's mean / the same-modality `baseline` order's
-    mean for the same dataset (baseline = 1). Isolates each order's own effect from
+    """`{metric}_ratio` = this variant's mean / the same-modality `baseline` scheme's
+    mean for the same dataset (baseline = 1). Isolates each scheme's own effect from
     the canonical-vs-regular parsing-mode difference. The baseline ("native") can run
     under either modality, so it is looked up per (dataset, modality); it falls back
     to the canonical baseline if no regular-modality one was run."""
     base_by_key: dict[tuple, dict] = {}
     canonical_native_by_dataset: dict[str, dict] = {}
     for r in rows:
-        if r.get("order") == baseline:
+        if r.get("scheme") == baseline:
             base_by_key[(r["dataset"], r.get("modality"))] = r
             if r.get("modality") == "canonical":
                 canonical_native_by_dataset[r["dataset"]] = r
@@ -948,7 +948,7 @@ SUMMARY_KEEP_BUCKET_METRICS: frozenset = frozenset()
 
 
 def summary_field_order() -> list[str]:
-    fields = ["dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
+    fields = ["dataset", "k", "w", "L", *sn.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
     for metric in SUMMARY_METRICS:
         if _METRIC_CATEGORY.get(metric) == "buckets" and metric not in SUMMARY_KEEP_BUCKET_METRICS:
             continue  # shown in the buckets sheet (bucket_field_order), not repeated here
@@ -967,11 +967,11 @@ def summary_field_order() -> list[str]:
 # whole benchmark; dataset obviously repeats) -- merged vertically instead of
 # printing the same value on every row.
 XLSX_MERGE_FIELDS = ("dataset", "k", "w", "L", "modality")
-# the columns that name an order variant (order, gm_k, projection, gm_table, mod_t)
-XLSX_VARIANT_FIELDS = on.ID_FIELDS
+# the columns that name a scheme variant (scheme, gm_k, projection, gm_table, mod_t)
+XLSX_VARIANT_FIELDS = sn.ID_FIELDS
 
 _ID_FIELDS = frozenset({
-    "run_id", "dataset", "k", "w", "L", *on.ID_FIELDS, "modality", "threads", "seed", "seed_idx",
+    "run_id", "dataset", "k", "w", "L", *sn.ID_FIELDS, "modality", "threads", "seed", "seed_idx",
     "n_repeats", "n_kmers",
 })
 _METRIC_CATEGORY = {
@@ -1030,9 +1030,9 @@ def _field_category(field: str) -> str:
     return _METRIC_CATEGORY.get(base, "")
 
 
-def _orders_field_category(field: str) -> str:
-    if field in (*on.ID_FIELDS, "description", "cli", "k", "w", "L"):
-        return "order"
+def _schemes_field_category(field: str) -> str:
+    if field in (*sn.ID_FIELDS, "description", "cli", "k", "w", "L"):
+        return "scheme"
     if field.startswith("expected_density_factor"):
         return "expected (theoretical)"
     marker = "_particular_density_factor_"
@@ -1068,7 +1068,7 @@ BUCKET_COLORED_RATIOS = frozenset({
 
 
 def _bucket_field_category(field: str) -> str:
-    if field in ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"):
+    if field in ("dataset", *sn.ID_FIELDS, "modality", "n_repeats", "n_kmers"):
         return "id / params"
     base = field
     for suffix in ("_mean", "_std", "_ratio"):
@@ -1091,8 +1091,8 @@ def sheet_categories(raw_name: str, fields: Sequence[str]) -> list[str] | None:
         return [_field_category(f) for f in fields]
     if raw_name == "runs":
         return ["space" if f == "n_kmers" else _field_category(f) for f in fields]
-    if raw_name == "orders":
-        return [_orders_field_category(f) for f in fields]
+    if raw_name == "schemes":
+        return [_schemes_field_category(f) for f in fields]
     if raw_name == "overview":
         return ["reference"] * len(fields)
     if raw_name == "datasets":
@@ -1117,7 +1117,7 @@ def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
 # Two rows right under the summary table: for every `{metric}_ratio` column, its
 # Pearson correlation (Excel's built-in CORREL, so it stays live and traceable)
 # with the density ratio and with the distinct-minimizer ratio, over the dataset
-# x order rows. The ratios (this order / native, same dataset) are
+# x scheme rows. The ratios (this scheme / native, same dataset) are
 # dimensionless, so rows of different datasets are comparable.
 CORRELATION_DRIVERS = (
     ("correlation with density", "density_factor_ratio"),
@@ -1168,7 +1168,7 @@ CHART_GRID_COL0 = len(BUCKET_HISTOGRAM_FIELDS) + 1  # first chart column: right 
 CHART_PITCH = (9, 16)                # grid pitch in (columns, rows) -- room for one chart
 CHART_SIZE_EMU = (5_400_000, 2_880_000)
 CHART_DATASET_ORDER = ("cod", "kestrel", "human", "ncbi-virus", "se", "hprc")
-# bar colours per canonical order; variants of one order (tables / projections) cycle through its list
+# bar colours per canonical scheme; variants of one scheme (tables / projections) cycle through its list
 CHART_COLORS = {
     "native": ["7F7F7F"], "xor": ["ED7D31"], "xor-pcg-hash": ["FFC000"],
     "greedymini": ["70AD47", "4472C4", "A9D18E", "8FAADC"],
@@ -1177,7 +1177,7 @@ CHART_COLORS = {
 
 
 def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
-    """One chart per (dataset, order variant): number of buckets per log2 bucket-size
+    """One chart per (dataset, scheme variant): number of buckets per log2 bucket-size
     bin (columns on a log axis, the last bin is the aggregated '>4096') for the
     first seed, in a grid -- datasets down, variants across -- to the right of the
     raw table (rows of `bucket_hist` start at DATA_START_ROW)."""
@@ -1198,12 +1198,12 @@ def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
     datasets = [d for d in CHART_DATASET_ORDER if any(k[0] == d for k in blocks)]
     datasets += sorted({k[0] for k in blocks} - set(datasets))
     ordered = sorted(variants.values(), key=variant_sort_key)
-    seen_per_order: dict[str, int] = {}
+    seen_per_scheme: dict[str, int] = {}
     colors: dict[tuple, str] = {}
     for v in ordered:
-        palette = CHART_COLORS.get(v["order"], ["4472C4"])
-        n = seen_per_order.get(v["order"], 0)
-        seen_per_order[v["order"]] = n + 1
+        palette = CHART_COLORS.get(v["scheme"], ["4472C4"])
+        n = seen_per_scheme.get(v["scheme"], 0)
+        seen_per_scheme[v["scheme"]] = n + 1
         colors[variant_key(v)] = palette[n % len(palette)]
     charts = []
     for i, ds in enumerate(datasets):
@@ -1213,7 +1213,7 @@ def bucket_histogram_charts(bucket_hist: list[dict]) -> list[dict]:
                 continue
             r0, r1 = DATA_START_ROW + rows[0], DATA_START_ROW + rows[-1]
             charts.append({
-                "title": f"{ds} / {order_label(v)} (seed {first_seed[(ds, variant_key(v))]})",
+                "title": f"{ds} / {scheme_label(v)} (seed {first_seed[(ds, variant_key(v))]})",
                 "cat": f"${sizes_col}${r0}:${sizes_col}${r1}",
                 "val": f"${count_col}${r0}:${count_col}${r1}",
                 "col": CHART_GRID_COL0 + j * CHART_PITCH[0],
@@ -1285,23 +1285,23 @@ def overview_rows() -> list[dict]:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
     return [
-        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every order; see README 'Choice of m'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
-        row("all", "order", "canonical minimizer order name: native (sshash's own baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor | mod-minimizer-greedymini (strand-symmetric mod-minimizer). Never carries parameters: a variant is the five columns order, gm_k, projection, gm_table, mod_t"),
-        row("all", "gm_k", "GreedyMini table k (the table's gm_k-mer is extended to the m-mer around its centre for greedymini, which needs m - gm_k even; for mod-minimizer-greedymini it is the t-mer table); blank for the other orders"),
-        row("all", "projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. GreedyMini orders only; blank otherwise. Choices: config.yaml's greedymini / mod_minimizer_greedymini projections (or sshash_bench.sh --gm-projections)"),
-        row("all", "gm_table", "stem of the GreedyMini table file under orders/GreedyMini (e.g. w11_k15_canonical); GreedyMini orders only. Choices: config.yaml's tables (or --gm-tables)"),
-        row("all", "mod_t", "t-mer length of the mod-minimizer orders (--mod-t): 4 + (m - 4) mod w for mod-minimizer-xor, the table's gm_k for mod-minimizer-greedymini; blank otherwise"),
-        row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from order; the app parameter, listed after the order columns (then threads in runs) and before the seed columns."),
-        row("all", "n_kmers", "distinct k-mers in the built index; must be identical across every order/seed for a dataset (equivalence gate)"),
+        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every scheme; see README 'Choice of m'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
+        row("all", "scheme", "canonical minimizer scheme name: native (sshash's own baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor | mod-minimizer-greedymini (strand-symmetric mod-minimizer). Never carries parameters: a variant is the five columns scheme, gm_k, projection, gm_table, mod_t"),
+        row("all", "gm_k", "GreedyMini table k (the table's gm_k-mer is extended to the m-mer around its centre for greedymini, which needs m - gm_k even; for mod-minimizer-greedymini it is the t-mer table); blank for the other schemes"),
+        row("all", "projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. GreedyMini schemes only; blank otherwise. Choices: config.yaml's greedymini / mod_minimizer_greedymini projections (or sshash_bench.sh --gm-projections)"),
+        row("all", "gm_table", "stem of the GreedyMini table file under orders/GreedyMini (e.g. w11_k15_canonical); GreedyMini schemes only. Choices: config.yaml's tables (or --gm-tables)"),
+        row("all", "mod_t", "t-mer length of the mod-minimizer schemes (--mod-t): 4 + (m - 4) mod w for mod-minimizer-xor, the table's gm_k for mod-minimizer-greedymini; blank otherwise"),
+        row("all", "modality", "canonical (single-probe, default) or regular (two-probe -- sshash_bench.sh -M/--modality, sshash build --regular). Separate axis from scheme; the app parameter, listed after the scheme columns (then threads in runs) and before the seed columns."),
+        row("all", "n_kmers", "distinct k-mers in the built index; must be identical across every scheme/seed for a dataset (equivalence gate)"),
         row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats only measure timing noise"),
-        row("summary/runs", "build_cpu_s / query_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / query step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare orders on both -- a difference in wall time without one in CPU time is load or I/O, not the order"),
+        row("summary/runs", "build_cpu_s / query_cpu_s", "CPU seconds (user + system, summed over all threads; /usr/bin/time -v) of the build / query step. Wall time = CPU time / cores actually running, so wall time rises with contention or waiting while CPU time mostly does not: compare schemes on both -- a difference in wall time without one in CPU time is load or I/O, not the scheme"),
         row("runs", "build_pinned_cpus / bench_pinned_cpus / query_pinned_cpus", "Every timed step is pinned to one NUMA node, one thread per physical core plus spare cores (build: $THREADS + 2; bench and query, single-threaded: 1 + 1), with its memory bound to that node (benchmark/common/pin_cpus.sh, bench_step.py); the CPU list is in {step}_pinned_cpus (run dir cpus.txt / cpus_bench.txt / cpus_query.txt; empty when the file is absent)"),
         *[row("runs", "{build,bench,query}_" + f, d + " (run dir step_build.json / step_bench.json / step_query.json; blank for runs without a record)") for f, d in step_record.DOC.items()],
         row("summary/runs", "query_run_s", "the timed query phase in seconds, as sshash reports it itself (elapsed_millisec / 1000); query_wall_s = query_load_s + query_run_s"),
         row("runs", "harness_wall_s", "wall seconds of the whole harness run of this configuration (build + check + bench + query; meta.json python_wall_s), not a benchmark metric"),
         row("runs", "build_wall_s / build_steps_total_s / build_step1_s .. build_step7_s", "build_wall_s = wall seconds of the whole sshash build process (/usr/bin/time -v); build_steps_total_s = sshash's own total_build_time_in_microsec / 1e6; build_step1_s .. build_step7_s = sshash's per-step build times in seconds (1 encode strings, 2 minimizer tuples, 3 merge tuples, 4 build MPHF, 5 replace minimizers by MPHF hashes, 6 merge minimizer tuples, 7 sparse and skew index)"),
-        row("runs", "run_id", "run directory of this row relative to the runs root (dataset/order variant/seed)"),
-        row("runs", "threads / seed / seed_idx", "threads = sshash -t of the run; seed = the order's seed value, seed_idx = the repeat index (0-based) it was run for"),
+        row("runs", "run_id", "run directory of this row relative to the runs root (dataset/scheme variant/seed)"),
+        row("runs", "threads / seed / seed_idx", "threads = sshash -t of the run; seed = the seed value of the scheme's order, seed_idx = the repeat index (0-based) it was run for"),
         row("runs", "check_ok", "sshash check (the built index against the input) passed"),
         row("runs", "host / sshash_version", "machine the run was made on and the sshash build (git version) that ran it"),
         row("runs", "build_exit_code / check_exit_code / bench_exit_code / query_exit_code", "exit status of that step (0 = ok)"),
@@ -1320,15 +1320,15 @@ def overview_rows() -> list[dict]:
         row("summary/runs", "bits_per_kmer", "index_disk_gb * 1e9 * 8 / n_kmers (the on-disk index file size, os.path.getsize)"),
         row("summary/runs", "bench_*_ns", "sshash bench's internal avg_nanosec_per_kmer (the paper's own headline query-time metric)"),
         row("summary/runs", "query_*", "secondary: sshash query against the dataset's real paired FASTQ (wall time via /usr/bin/time -v, query_run_s = elapsed_millisec / 1000 from sshash's own JSON, i.e. the timed query phase in seconds)"),
-        row("summary", "{metric}_ratio", "this variant's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the order effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
-        row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this order/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
-        row("summary/runs/orders", "w", "window size L - k + 1 (=11 for L=31, k=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
-        row("summary/runs/orders", "density_factor", "particular (measured): (n_minimizer_positions/n_kmers) * (w+1) -- see scripts/density.py"),
-        row("orders", "description / cli", "what the order does and the sshash command-line flags that select it"),
-        row("orders", "{dataset}_particular_density_factor_mean / {dataset}_particular_density_factor_std", "measured density_factor of this order variant on that dataset (mean/std over the seeds), the per-dataset counterpart of the theoretical expected_density_factor"),
-        row("orders", "k / w / L", "unified names shared by all apps: k = m (minimizer length, 21), w = window size in m-mers = sshash k - m + 1 (11), L = k + w - 1 = sshash's k-mer length (31). One row per (order variant, k, w, L)"),
-        row("orders", "expected_density_factor_mean / expected_density_factor_std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
-        row("buckets/runs", "n_buckets / avg_bucket_size", "n_kmers / n_buckets; a lower-density order has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
+        row("summary", "{metric}_ratio", "this variant's mean / the same-modality native's mean for the same dataset (either native baseline = 1), isolating the scheme effect from the canonical-vs-regular parsing-mode difference; color scale green (better) -> red (worse)"),
+        row("runs", "query_pos_match / query_neg_match", "fixed positive/negative k-mer set (generated once per dataset from a native reference build) answered identically by this scheme/seed's index -- see scripts/equivalence.py; export hard-fails if any is false"),
+        row("summary/runs/schemes", "w", "window size L - k + 1 (=11 for L=31, k=21; the 'w11' in orders/GreedyMini/w11_k15_canonical)"),
+        row("summary/runs/schemes", "density_factor", "particular (measured): (n_minimizer_positions/n_kmers) * (w+1) -- see scripts/density.py"),
+        row("schemes", "description / cli", "what the scheme does and the sshash command-line flags that select it"),
+        row("schemes", "{dataset}_particular_density_factor_mean / {dataset}_particular_density_factor_std", "measured density_factor of this scheme variant on that dataset (mean/std over the seeds), the per-dataset counterpart of the theoretical expected_density_factor"),
+        row("schemes", "k / w / L", "unified names shared by all apps: k = m (minimizer length, 21), w = window size in m-mers = sshash k - m + 1 (11), L = k + w - 1 = sshash's k-mer length (31). One row per (scheme variant, k, w, L)"),
+        row("schemes", "expected_density_factor_mean / expected_density_factor_std", "theoretical (Monte Carlo on i.i.d. random DNA, mean/std over 5 seeds), independent of dataset -- see scripts/expected_density.py"),
+        row("buckets/runs", "n_buckets / avg_bucket_size", "n_kmers / n_buckets; a lower-density scheme has fewer buckets, hence a larger average bucket -- see scripts/export.py:parse_bucket_stats"),
         row("buckets/summary/runs", "kmers_in_skew_index_pct", "share of k-mers whose bucket is large enough to go in sshash's skew index (the structure for heavy buckets); higher can mean slower lookups despite a smaller/denser index"),
         row("bucket_histogram", "bucket_type / log2_bucket_size / bucket_size_range / n_buckets / n_kmers_in_buckets", "one row per run x log2 bucket-size bin, the paper's logarithmic partitioning: bin b holds the sizes (2^(b-1), 2^b] (b = ceil(log2 size); 0 = singleton), the same intervals as the skew-index partitions. bucket_type: singleton (size 1), light (2 .. 2^l) or heavy (> 2^l, i.e. in the skew index; 2^l = 64 here). Bucket size = number of sampled-m-mer occurrences (super-k-mers). Only runs built with `--bucket-stats` (the harness passes it) have rows. sshash does not tally buckets larger than 4096 per size, so one aggregated row `>4096` (log2 >= 13) carries them (derived from the run's totals): the k-mer column then sums exactly to n_kmers and the bucket column to the number of sampled m-mers"),
         row("super_kmer_histogram", "kmers_in_super_kmer / n_super_kmers", "one row per run x super-k-mer length (k-mers per super-k-mer): how many super-k-mers have that length"),
@@ -1337,11 +1337,11 @@ def overview_rows() -> list[dict]:
         row("buckets/runs", "n_buckets_in_skew_index / minimizer_positions_in_skew_index / minimizer_positions_in_skew_index_pct", "heavy buckets (more than 2^l occurrences) and their occurrences, i.e. the entries of H (heavy_load_buckets); build.log num_buckets_in_skew_index / num_minimizer_positions_of_buckets_in_skew_index; the pct is the share of all Z"),
         row("runs", "num_bits_per_offset", "width in bits of one position in S (build.log), which is also the width of an H entry"),
         row("buckets/runs", "skew_h_bits_per_kmer / skew_mphf_v_bits_per_kmer", "split of skew_index_bits_per_kmer: H = minimizer_positions_in_skew_index * num_bits_per_offset / n_kmers (exact, H is a compact vector of that width); the rest is the per-partition MPHFs f_i and the V_i arrays"),
-        row("summary", "correlation with density / distinct minimizers", "two rows right under the table: for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over the dataset x order rows (ratios are order / native for the same dataset, so datasets are comparable); blank for a constant column. No colour scale"),
-        row("buckets", "{metric}_ratio", "this order's mean / the same-modality native's mean for the same dataset, for every bucket metric (the gain in space for the bits/k-mer breakdown and n_buckets); green (lower) -> red (higher) only on the space and n_buckets ratios, where lower is better"),
-        row("buckets", "correlation with distinct minimizers", "one row right under the table: Excel CORREL between n_buckets_ratio and control_codewords_bits_per_kmer_ratio / mid_load_bits_per_kmer_ratio (the tag array and the light array L) over the dataset x order rows"),
-        row("space_breakdown", "bits_* / saved_* / share_*_pct", "where the bits of the index go (mean bits/k-mer over the seeds, from the build log's SPACE BREAKDOWN: strings, strings_offsets, mphf, tags = control_codewords, light_L = mid_load_buckets array L, skew_fv = the skew index's MPHFs f_i and V_i arrays, skew_H = H, other = begin_buckets_of_size), the saving of each component over the same-modality native (native - order: positive = saved) and its share of the total saving (%). The weights (3e-6 bits/k-mer) are left out"),
-        row("space_breakdown", "saved_by_minimizers / saved_by_occurrences", "the saving split by what sizes the component: by_minimizers = mphf + tags (one entry per distinct minimizer M); by_occurrences = light_L + skew_fv + skew_H (sized by the minimizer occurrences / the heavy tail, so it can be negative); the strings and offsets do not depend on the order"),
+        row("summary", "correlation with density / distinct minimizers", "two rows right under the table: for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over the dataset x scheme rows (ratios are scheme / native for the same dataset, so datasets are comparable); blank for a constant column. No colour scale"),
+        row("buckets", "{metric}_ratio", "this scheme's mean / the same-modality native's mean for the same dataset, for every bucket metric (the gain in space for the bits/k-mer breakdown and n_buckets); green (lower) -> red (higher) only on the space and n_buckets ratios, where lower is better"),
+        row("buckets", "correlation with distinct minimizers", "one row right under the table: Excel CORREL between n_buckets_ratio and control_codewords_bits_per_kmer_ratio / mid_load_bits_per_kmer_ratio (the tag array and the light array L) over the dataset x scheme rows"),
+        row("space_breakdown", "bits_* / saved_* / share_*_pct", "where the bits of the index go (mean bits/k-mer over the seeds, from the build log's SPACE BREAKDOWN: strings, strings_offsets, mphf, tags = control_codewords, light_L = mid_load_buckets array L, skew_fv = the skew index's MPHFs f_i and V_i arrays, skew_H = H, other = begin_buckets_of_size), the saving of each component over the same-modality native (native - scheme: positive = saved) and its share of the total saving (%). The weights (3e-6 bits/k-mer) are left out"),
+        row("space_breakdown", "saved_by_minimizers / saved_by_occurrences", "the saving split by what sizes the component: by_minimizers = mphf + tags (one entry per distinct minimizer M); by_occurrences = light_L + skew_fv + skew_H (sized by the minimizer occurrences / the heavy tail, so it can be negative); the strings and offsets do not depend on the scheme"),
         row("buckets/runs", "n_buckets", "number of distinct sampled m-mers (num_minimizers, M; the same value as distinct_minimizers in the density band): the MPHF and control-codeword array both have M entries"),
         row("buckets/summary/runs", "singleton_bucket_pct / kmers_in_singleton_bucket_pct", "share of buckets, and of k-mers, whose sampled m-mer occurs in exactly one super-k-mer (the fast singleton path, no OFFSETS access)"),
         row("runs", "heavy_bucket_threshold / expected_bucket_cost", "cost model (runs sheet only): the top 1% of k-mers (largest buckets) all cost one capped bucket size (= heavy_bucket_threshold); the rest cost their bucket size (number of super-k-mers to check). expected_bucket_cost = k-mer-weighted mean of that cost; lower is better"),
@@ -1349,52 +1349,52 @@ def overview_rows() -> list[dict]:
     ]
 
 
-ORDER_DESCRIPTIONS = {
+SCHEME_DESCRIPTIONS = {
     "native": {
-        "description": "sshash's own unmodified baseline order (mixer_64-based)",
-        "cli": "(no -O)",
+        "description": "sshash's own unmodified baseline scheme (mixer_64-based order)",
+        "cli": "(no --scheme)",
     },
     "xor": {
         "description": "XOR the minimizer with the seed, then rank canonically",
-        "cli": "-O xor -s SEED",
+        "cli": "--scheme xor -s SEED",
     },
     "xor-pcg-hash": {
         "description": "xor's XOR step, then PCG RXS-M-XS 64-bit scramble before ranking",
-        "cli": "-O xor-pcg-hash -s SEED",
+        "cli": "--scheme xor-pcg-hash -s SEED",
     },
 }
 
 
-def order_info(v: dict) -> dict:
-    """ORDER_DESCRIPTIONS entry for the order of variant `v` (an ID_FIELDS dict); a
+def scheme_info(v: dict) -> dict:
+    """SCHEME_DESCRIPTIONS entry for the scheme of variant `v` (an ID_FIELDS dict); a
     GreedyMini / mod-minimizer variant gets a description generated from its table,
     projection and t."""
-    order = v.get("order") or ""
-    if order in ORDER_DESCRIPTIONS:
-        return ORDER_DESCRIPTIONS[order]
+    scheme = v.get("scheme") or ""
+    if scheme in SCHEME_DESCRIPTIONS:
+        return SCHEME_DESCRIPTIONS[scheme]
     flipped = v.get("projection") == "at1-cg0"
     table = f"{v.get('gm_table')}.gm" if v.get("gm_table") else None
     proj_cli = " --gm-projection at1-cg0" if flipped else ""
     flip_txt = (", with the DNA->binary projection polarity flipped (AT->1, CG->0 instead of AT->0, CG->1)"
                 if flipped else "")
-    if on.is_mod_minimizer(order):
+    if sn.is_mod_minimizer(scheme):
         common = ("Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri 2024, with the "
-                  "centre tie rule of the plain orders; this repo): the k-mer's t-mers are ranked, the "
+                  "centre tie rule of the plain-minimizer schemes; this repo): the k-mer's t-mers are ranked, the "
                   "minimal t-mer at x samples the m-mer at x mod w (t == m mod w), a tie the offset "
                   "closest to the k-mer's centre, so a k-mer and its reverse complement share the bucket; ")
-        if order == "mod-minimizer-xor":
+        if scheme == "mod-minimizer-xor":
             return {"description": common + "t-mers ranked by xor, t = 4 + (m - 4) mod w",
-                    "cli": "-O mod-minimizer-xor --mod-t T -s SEED"}
+                    "cli": "--scheme mod-minimizer-xor --mod-t T -s SEED"}
         return {"description": common + f"t-mers ranked by the GreedyMini {table} table, t = its gm_k" + flip_txt,
-                "cli": f"-O mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/{table} --mod-t T"
+                "cli": f"--scheme mod-minimizer-greedymini --greedy-mini-file orders/GreedyMini/{table} --mod-t T"
                 + proj_cli + " -s SEED"}
-    if order == "greedymini":
+    if scheme == "greedymini":
         return {
             "description": (
                 f"Ranks minimizers by the GreedyMini {table} table extended to the m-mer around its "
                 "centre gm_k-mer (ties by min(Sigma, reverse Sigma) then Gamma)" + flip_txt
             ),
-            "cli": f"-O greedymini --greedy-mini-file orders/GreedyMini/{table}" + proj_cli + " -s SEED",
+            "cli": f"--scheme greedymini --greedy-mini-file orders/GreedyMini/{table}" + proj_cli + " -s SEED",
         }
     return {"description": "", "cli": ""}
 
@@ -1413,20 +1413,20 @@ def summary_datasets(summary: list[dict]) -> list[str]:
     return sorted({r["dataset"] for r in summary if r.get("dataset")}, key=_dataset_sort_key)
 
 
-def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) -> list[dict]:
-    """One row per order variant (`expected` is keyed by variant_key) -- not per
+def schemes_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) -> list[dict]:
+    """One row per scheme variant (`expected` is keyed by variant_key) -- not per
     dataset x variant -- w, expected density, and
     description/CLI don't vary by dataset, so repeating them per dataset is
-    pure duplication: the order's description/CLI/w/expected density_factor,
+    pure duplication: the scheme's description/CLI/w/expected density_factor,
     plus each dataset's particular (measured, mean/std over seeds)
-    density_factor pivoted into its own columns (see orders_field_order). Raw
+    density_factor pivoted into its own columns (see schemes_field_order). Raw
     minimizer_density isn't kept anywhere -- density_factor is enough."""
     expected = expected or {}
     datasets = summary_datasets(summary)
     by_variant: dict[tuple, dict[str, dict]] = {}
     heads: dict[tuple, dict] = {}
     for r in summary:
-        if r.get("order"):
+        if r.get("scheme"):
             key = variant_key(r)
             heads[key] = r
             per = by_variant.setdefault(key, {})
@@ -1437,13 +1437,13 @@ def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) 
     out = []
     for key in sorted(by_variant, key=lambda k: variant_sort_key(heads[k])):
         per_dataset = by_variant[key]
-        info = order_info(heads[key])
+        info = scheme_info(heads[key])
         exp = expected.get(key, {})
         head = next((r for r in per_dataset.values() if r.get("k") is not None and r.get("w") is not None), {})
-        deterministic = heads[key].get("order") in BASELINES
+        deterministic = heads[key].get("scheme") in BASELINES
         exp_std = _num(exp.get("density_factor_std"))
         row = {
-            **{f: heads[key].get(f) for f in on.ID_FIELDS},
+            **{f: heads[key].get(f) for f in sn.ID_FIELDS},
             "description": info["description"],
             "cli": info["cli"],
             "expected_density_factor_mean": _num(exp.get("density_factor_mean")),
@@ -1451,7 +1451,7 @@ def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) 
         }
         # unified names: k = m (minimizer length), w = k_sshash - m + 1, L = k_sshash
         if head:
-            osh.with_klw(row, head["k"], head["w"])
+            ssh.with_klw(row, head["k"], head["w"])
         for ds in datasets:
             r = per_dataset.get(ds)
             row[f"{ds}_particular_density_factor_mean"] = r.get("density_factor_mean") if r else None
@@ -1461,23 +1461,23 @@ def orders_rows(summary: list[dict], expected: dict[tuple, dict] | None = None) 
     return out
 
 
-def orders_field_order(summary: list[dict]) -> list[str]:
-    return list(osh.orders_fields(summary_datasets(summary)))
+def schemes_field_order(summary: list[dict]) -> list[str]:
+    return list(ssh.schemes_fields(summary_datasets(summary)))
 
 
 
 
 def bucket_rows(summary: list[dict]) -> list[dict]:
     """Dedicated bucket/binning view (mean +/- std over seeds), per dataset x
-    order -- see scripts/export.py:parse_bucket_stats. Explains why a
-    lower-density order isn't automatically faster to query: fewer buckets
+    scheme -- see scripts/export.py:parse_bucket_stats. Explains why a
+    lower-density scheme isn't automatically faster to query: fewer buckets
     (from lower density) means a larger *average* bucket, and a bigger share
     of k-mers land in sshash's skew index (its structure for heavy buckets).
     These columns are the only place the bucket metrics are shown (the summary
     sheet leaves them out)."""
     out = []
     for r in summary:
-        row = {k: r.get(k) for k in ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers")}
+        row = {k: r.get(k) for k in ("dataset", *sn.ID_FIELDS, "modality", "n_repeats", "n_kmers")}
         for metric in BUCKET_METRICS:
             row[f"{metric}_mean"] = r.get(f"{metric}_mean")
             row[f"{metric}_std"] = r.get(f"{metric}_std")
@@ -1487,13 +1487,13 @@ def bucket_rows(summary: list[dict]) -> list[dict]:
 
 
 def bucket_field_order() -> list[str]:
-    fields = ["dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
+    fields = ["dataset", *sn.ID_FIELDS, "modality", "n_repeats", "n_kmers"]
     for metric in BUCKET_METRICS:
         fields.extend((f"{metric}_mean", f"{metric}_std", f"{metric}_ratio"))
     return fields
 
 
-# Space breakdown: where the bits of the index go, and which part of the saving of an order
+# Space breakdown: where the bits of the index go, and which part of the saving of a scheme
 # over native comes from what. Components are the dictionary::print_info entries of the
 # build log (bits per k-mer); the weights (3e-6) are left out.
 SPACE_COMPONENTS = (
@@ -1508,12 +1508,12 @@ SPACE_COMPONENTS = (
 )
 SPACE_BY_MINIMIZERS = ("mphf", "tags")            # one entry per distinct minimizer (M)
 SPACE_BY_OCCURRENCES = ("light_L", "skew_fv", "skew_H")  # sized by minimizer occurrences / heavy tail
-SPACE_ID_FIELDS = ("dataset", *on.ID_FIELDS, "modality", "n_repeats", "n_kmers")
+SPACE_ID_FIELDS = ("dataset", *sn.ID_FIELDS, "modality", "n_repeats", "n_kmers")
 
 
 def space_rows(rows: list[dict], summary: list[dict], baseline: str = "native") -> list[dict]:
     """Per dataset x variant: mean bits/k-mer of every component, the saving over the
-    same-modality native (native - order, so positive = saved), each component's share
+    same-modality native (native - scheme, so positive = saved), each component's share
     of the total saving, and the saving split by what sizes the component (see
     SPACE_BY_MINIMIZERS / SPACE_BY_OCCURRENCES). Values, not formulas: the means are
     over the seeds' runs."""
@@ -1537,7 +1537,7 @@ def space_rows(rows: list[dict], summary: list[dict], baseline: str = "native") 
     for srow in summary:
         key = (srow["dataset"], srow.get("modality"), variant_key(srow))
         comp = means[key]
-        base_id = variant_key(on.make_id(baseline, baselines=BASELINES))
+        base_id = variant_key(sn.make_id(baseline, baselines=BASELINES))
         base = means.get((srow["dataset"], srow.get("modality"), base_id)) or means.get(
             (srow["dataset"], "canonical", base_id)
         )
@@ -1614,7 +1614,7 @@ def datasets_rows(rows: list[dict]) -> list[dict]:
 # sheets (xlsx_book sheet dicts)
 # ---------------------------------------------------------------------------
 
-BASELINE_ORDER = "native"  # the ratio baseline: every `_ratio` is this variant / native
+BASELINE_SCHEME = "native"  # the ratio baseline: every `_ratio` is this variant / native
 
 _WRAP_WIDTHS = {"description": 70, "cli": 60, "meaning": 110, "column": 40, "sheet": 22}
 
@@ -1634,14 +1634,14 @@ def _dataset_block_sheet(name: str, fields: Sequence[str], rows: list[dict], **e
     merge = [f for f in XLSX_MERGE_FIELDS if f in fields]
     scope = {}
     if name == "runs":
-        scope = {f: ["dataset", "modality", *on.ID_FIELDS] for f in on.ID_FIELDS if f in fields}
+        scope = {f: ["dataset", "modality", *sn.ID_FIELDS] for f in sn.ID_FIELDS if f in fields}
         merge += list(scope)
     return _sheet(name, fields, rows, merge_fields=merge, merge_scope=scope,
                   block_fields=["dataset"], **extra)
 
 
-def build_sheets(rows, summary, orders, buckets, space, bucket_hist, super_kmer_hist) -> list[dict]:
-    """The workbook: overview, orders, datasets, summary, runs (+ buckets, space_breakdown,
+def build_sheets(rows, summary, schemes, buckets, space, bucket_hist, super_kmer_hist) -> list[dict]:
+    """The workbook: overview, schemes, datasets, summary, runs (+ buckets, space_breakdown,
     bucket_histogram, super_kmer_histogram)."""
     summary_fields = summary_field_order()
     bucket_fields = bucket_field_order()
@@ -1651,7 +1651,7 @@ def build_sheets(rows, summary, orders, buckets, space, bucket_hist, super_kmer_
     return [
         _sheet("overview", ["sheet", "column", "meaning"], overview_rows(),
                wrap_fields=["meaning"], widths=_WRAP_WIDTHS),
-        _sheet("orders", orders_field_order(summary), orders, wrap_fields=["description", "cli"],
+        _sheet("schemes", schemes_field_order(summary), schemes, wrap_fields=["description", "cli"],
                widths=_WRAP_WIDTHS),
         _sheet("datasets", ["dataset", "k", "w", "L", "n_kmers"], datasets_rows(rows)),
         _dataset_block_sheet("summary", summary_fields, summary, ratio_fields=ratio,
@@ -1700,7 +1700,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     if not rows:
         die(f"no completed runs in {runs_root}")
 
-    n_cmp, errors = validate_orders_equivalence(rows)
+    n_cmp, errors = validate_schemes_equivalence(rows)
     if errors:
         for msg in errors:
             print(f"error: {msg}", file=sys.stderr)
@@ -1708,7 +1708,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
 
     rows.sort(key=lambda r: (*row_sort_key(r), int(r.get("seed_idx") or 0)))
     summary = summary_rows(rows)
-    attach_native_ratios(summary, BASELINE_ORDER)
+    attach_native_ratios(summary, BASELINE_SCHEME)
 
     m_val = next((r.get("k") for r in summary if r.get("k") is not None), None)  # minimizer length
     w_val = next((r.get("w") for r in summary if r.get("w") is not None), None)
@@ -1716,24 +1716,24 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     if m_val is not None and w_val is not None:
         seen: dict[tuple, dict] = {}
         for r in summary:
-            if r.get("order"):
-                seen.setdefault(variant_key(r), {**{f: r.get(f) for f in on.ID_FIELDS},
+            if r.get("scheme"):
+                seen.setdefault(variant_key(r), {**{f: r.get(f) for f in sn.ID_FIELDS},
                                                  "gm_file": r.get("gm_table") and gm_table_file(r["gm_table"])})
-        expected = ensure_expected_orders(
+        expected = ensure_expected_schemes(
             out_root, int(m_val), int(w_val), list(bench_seeds())[:5], variants=list(seen.values()),
         )
-    orders = orders_rows(summary, expected)
-    required = [f for f in orders_field_order(summary)
-                if f in ("order", "k", "w", "L") or "density_factor" in f]
-    holes = osh.missing_cells(orders, required)
+    schemes = schemes_rows(summary, expected)
+    required = [f for f in schemes_field_order(summary)
+                if f in ("scheme", "k", "w", "L") or "density_factor" in f]
+    holes = ssh.missing_cells(schemes, required)
     if holes:
-        shown = ", ".join(f"{orders[i].get('order')}/{orders[i].get('gm_table') or ''}:{f}" for i, f in holes[:12])
-        die(f"orders sheet has {len(holes)} empty density/identity cell(s): {shown}")
+        shown = ", ".join(f"{schemes[i].get('scheme')}/{schemes[i].get('gm_table') or ''}:{f}" for i, f in holes[:12])
+        die(f"schemes sheet has {len(holes)} empty density/identity cell(s): {shown}")
     buckets = bucket_rows(summary)
-    space = space_rows(rows, summary, BASELINE_ORDER)
+    space = space_rows(rows, summary, BASELINE_SCHEME)
 
     write_csv(csvs_dir / "sshash_runs.csv", rows, list(RUN_FIELDS))
-    write_csv(csvs_dir / "sshash_orders.csv", orders, orders_field_order(summary))
+    write_csv(csvs_dir / "sshash_schemes.csv", schemes, schemes_field_order(summary))
     write_csv(csvs_dir / "sshash_summary.csv", summary, summary_field_order())
     write_csv(csvs_dir / "sshash_buckets.csv", buckets, bucket_field_order())
     write_csv(csvs_dir / "sshash_space_breakdown.csv", space, space_field_order())
@@ -1741,7 +1741,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     write_csv(csvs_dir / "sshash_super_kmer_histogram.csv", super_kmer_hist,
               SUPER_KMER_HISTOGRAM_FIELDS)
 
-    sheets = build_sheets(rows, summary, orders, buckets, space, bucket_hist, super_kmer_hist)
+    sheets = build_sheets(rows, summary, schemes, buckets, space, bucket_hist, super_kmer_hist)
     sheets += density_effect.sheets("sshash", csvs_dir.parent)
     sheets += significance.sheets("sshash", csvs_dir.parent)
     names = write_book(xlsx_dir / "sshash_results.xlsx", sheets)

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# minimap2 order-comparison benchmark harness. See README.md.
+# minimap2 scheme-comparison benchmark harness. See README.md.
 set -uo pipefail
 HERE_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE_DIR"
 
 source lib/env.sh
 source lib/constants.sh
-source lib/orders.sh
+source lib/schemes.sh
 source lib/run.sh
 load_bench_env
 load_bench_config
@@ -22,17 +22,17 @@ Commands:
                                 error, 15 kb mean, 100-25,000 bp; needs
                                 $PBSIM1, built by setup.sh). depth defaults
                                 to 5 (D1; D2 uses 0.5).
-  run <order> [seed] [seed_idx] Run one order (see lib/orders.sh ALL_ORDERS);
+  run <scheme> [seed] [seed_idx] Run one scheme (see lib/schemes.sh ALL_SCHEMES);
                                 greedymini uses PROJECTION (at0-cg1 default or
                                 at1-cg0) and GM_TABLE (w10_k15_canonical)
-  sweep [orders...]            Run every default order (or the given list);
-                                every order (native too: its repeats
+  sweep [schemes...]           Run every default scheme (or the given list);
+                                every scheme (native too: its repeats
                                 give the baseline replicates) is swept across
                                 config.yaml's full seed list;
                                 greedymini runs once per projection in
                                 PROJECTIONS (at0-cg1,at1-cg0), each its own run
   export [--datasets a,b]      Aggregate runs/**/meta.json -> results/csvs/*.csv + results/minimap2_results.xlsx
-  list                         List orders sweep would run
+  list                         List schemes sweep would run
 EOF
 }
 
@@ -55,22 +55,22 @@ cmd_pbsim_reads() {
 }
 
 cmd_sweep() {
-  local orders=("$@")
-  if [ ${#orders[@]} -eq 0 ]; then
-    IFS=',' read -r -a orders <<< "$DEFAULT_ORDERS"
+  local schemes=("$@")
+  if [ ${#schemes[@]} -eq 0 ]; then
+    IFS=',' read -r -a schemes <<< "$DEFAULT_SCHEMES"
   fi
-  # Seed-major: every order (and greedymini projection) runs for seed 0, then for seed 1, ...,
-  # so time-varying conditions (load, the other benchmark slot's disk use) hit all orders alike.
-  local fail=0 i o p
+  # Seed-major: every scheme (and greedymini projection) runs for seed 0, then for seed 1, ...,
+  # so time-varying conditions (load, the other benchmark slot's disk use) hit all schemes alike.
+  local fail=0 i s p
   for i in "${!ALL_SEEDS[@]}"; do
-    for o in "${orders[@]}"; do
+    for s in "${schemes[@]}"; do
       local projs=("")
-      if order_needs_gm "$o"; then
+      if scheme_needs_gm "$s"; then
         IFS=',' read -r -a projs <<< "$PROJECTIONS"
       fi
       for p in "${projs[@]}"; do
         [ -n "$p" ] && PROJECTION="$p"
-        run_one "$o" "${ALL_SEEDS[$i]}" "$i" || fail=1
+        run_one "$s" "${ALL_SEEDS[$i]}" "$i" || fail=1
       done
     done
   done
@@ -83,12 +83,12 @@ cmd_export() {
 }
 
 cmd_list() {
-  local o p
-  for o in ${DEFAULT_ORDERS//,/ }; do
-    if order_needs_gm "$o"; then
-      for p in ${PROJECTIONS//,/ }; do echo "$o --gm-projection $p ($GM_TABLE)"; done
+  local s p
+  for s in ${DEFAULT_SCHEMES//,/ }; do
+    if scheme_needs_gm "$s"; then
+      for p in ${PROJECTIONS//,/ }; do echo "$s --gm-projection $p ($GM_TABLE)"; done
     else
-      echo "$o"
+      echo "$s"
     fi
   done
 }

@@ -5,7 +5,7 @@
 #   RESULTS_NAME=results THREADS=16 experiments/full_run.sh
 #
 # Per dataset: `sweep` with minimap2's own default mid_occ, then `sweep` with MID_OCC fixed to
-# native's effective threshold (every order filters repeats by the same rule), then
+# native's effective threshold (every scheme filters repeats by the same rule), then
 # analysis/run_seed_experiments.sh (seed-0 indexes, fixed random read sample, 5 timing replicates).
 # Finally accuracy_paired.py, stats.py and `export`. Every timed step first waits for a quiet
 # machine (benchmark/common/wait_low_load.sh; BENCH_LOAD_MAX busy cores, default 4).

@@ -43,12 +43,12 @@ def test_correlation_rows_formulas_and_cached_values():
 
 
 def test_space_rows_saving_split():
-    def run(order, seed, **c):
+    def run(scheme, seed, **c):
         base = {"strings_bits_per_kmer": 2.0, "strings_offsets_bits_per_kmer": 0.1, "mphf_bits_per_kmer": 0.4,
                 "control_codewords_bits_per_kmer": 4.0, "mid_load_bits_per_kmer": 0.5,
                 "skew_mphf_v_bits_per_kmer": 0.1, "skew_h_bits_per_kmer": 0.05, "begin_buckets_bits_per_kmer": 0.0}
         base.update(c)
-        return _row("cod", order, seed, **(GM13 if order == "greedymini" else {}), **base)
+        return _row("cod", scheme, seed, **(GM13 if scheme == "greedymini" else {}), **base)
 
     rows = [run("native", 0), run("native", 1),
             run("greedymini", 0, control_codewords_bits_per_kmer=3.0, mphf_bits_per_kmer=0.3,
@@ -57,7 +57,7 @@ def test_space_rows_saving_split():
                 mid_load_bits_per_kmer=0.4, skew_h_bits_per_kmer=0.07)]
     summary = summary_rows(rows)
     attach_native_ratios(summary)
-    out = {r["order"]: r for r in space_rows(rows, summary)}
+    out = {r["scheme"]: r for r in space_rows(rows, summary)}
     gm = out["greedymini"]
     assert gm["saved_tags"] == 1.0 and gm["saved_mphf"] == 0.1 and gm["saved_light_L"] == 0.1
     assert gm["saved_skew_H"] == -0.02 and gm["saved_strings"] == 0.0
@@ -82,13 +82,13 @@ from scripts.export import (
     _pearson,
     summary_field_order,
     summary_rows,
-    validate_orders_equivalence,
+    validate_schemes_equivalence,
     write_csv,
     HISTOGRAM_ID_FIELDS,
     bucket_rows,
     build_sheets,
-    orders_rows,
-    orders_field_order,
+    schemes_rows,
+    schemes_field_order,
 )
 from xlsx_book import write_book
 import xlsx_check
@@ -108,13 +108,13 @@ def test_column_order():
     assert r[r.index("modality"):r.index("modality") + 4] == ["modality", "threads", "seed", "seed_idx"]
 
 
-def _row(dataset, order, seed_idx, n_kmers=1000, check_ok=True, pos_match=True, neg_match=True, **extra):
+def _row(dataset, scheme, seed_idx, n_kmers=1000, check_ok=True, pos_match=True, neg_match=True, **extra):
     row = {
         "dataset": dataset,
         "k": 11,
         "w": 21,
         "L": 31,
-        "order": order,
+        "scheme": scheme,
         "gm_k": None,
         "projection": None,
         "gm_table": None,
@@ -136,9 +136,9 @@ def _row(dataset, order, seed_idx, n_kmers=1000, check_ok=True, pos_match=True, 
         "check_ok": check_ok,
         "query_pos_match": pos_match,
         "query_neg_match": neg_match,
-        "run_id": f"{dataset}/{order}/{seed_idx}",
+        "run_id": f"{dataset}/{scheme}/{seed_idx}",
     }
-    if order in ("mod-minimizer-xor", "mod-minimizer-greedymini"):
+    if scheme in ("mod-minimizer-xor", "mod-minimizer-greedymini"):
         row["mod_t"] = 10
     row.update(extra)
     return row
@@ -160,41 +160,41 @@ def test_histogram_overflow_makes_the_histogram_exact() -> None:
     assert exact["expected_bucket_cost"] > plain["expected_bucket_cost"]
 
 
-def test_validate_orders_equivalence_ok() -> None:
+def test_validate_schemes_equivalence_ok() -> None:
     rows = [
         _row("cod", "native", 0),
         _row("cod", "native", 1),
         _row("cod", "xor", 0),
         _row("cod", "greedymini", 0, **GM15),
     ]
-    n_cmp, errors = validate_orders_equivalence(rows)
+    n_cmp, errors = validate_schemes_equivalence(rows)
     assert n_cmp == 4
     assert errors == []
-    print("ok  validate_orders_equivalence: no errors on matching runs")
+    print("ok  validate_schemes_equivalence: no errors on matching runs")
 
 
-def test_validate_orders_equivalence_catches_kmer_mismatch() -> None:
+def test_validate_schemes_equivalence_catches_kmer_mismatch() -> None:
     rows = [
         _row("cod", "native", 0, n_kmers=1000),
         _row("cod", "xor", 0, n_kmers=999),
     ]
-    _, errors = validate_orders_equivalence(rows)
+    _, errors = validate_schemes_equivalence(rows)
     assert any("n_kmers differs" in e for e in errors), errors
-    print("ok  validate_orders_equivalence: catches num_kmers mismatch")
+    print("ok  validate_schemes_equivalence: catches num_kmers mismatch")
 
 
-def test_validate_orders_equivalence_catches_query_mismatch() -> None:
+def test_validate_schemes_equivalence_catches_query_mismatch() -> None:
     rows = [
         _row("cod", "native", 0),
         _row("cod", "xor", 0, pos_match=False),
         _row("cod", "greedymini", 0, neg_match=False, **GM15),
         _row("cod", "xor-pcg-hash", 0, check_ok=False),
     ]
-    _, errors = validate_orders_equivalence(rows)
+    _, errors = validate_schemes_equivalence(rows)
     assert any("query_pos_match is false" in e for e in errors), errors
     assert any("query_neg_match is false" in e for e in errors), errors
     assert any("EVERYTHING OK" in e for e in errors), errors
-    print("ok  validate_orders_equivalence: catches query_pos_match/query_neg_match/check_ok failures")
+    print("ok  validate_schemes_equivalence: catches query_pos_match/query_neg_match/check_ok failures")
 
 
 def test_summary_rows_and_ratios() -> None:
@@ -207,8 +207,8 @@ def test_summary_rows_and_ratios() -> None:
     summary = summary_rows(rows)
     assert len(summary) == 2
     attach_native_ratios(summary)
-    gm = next(r for r in summary if r["order"] == "greedymini")
-    native = next(r for r in summary if r["order"] == "native")
+    gm = next(r for r in summary if r["scheme"] == "greedymini")
+    native = next(r for r in summary if r["scheme"] == "native")
     assert native["build_wall_s_ratio"] == 1.0
     assert gm["build_wall_s_ratio"] < 1.0  # greedymini built faster in this synthetic example
     assert gm["bits_per_kmer_ratio"] < 1.0
@@ -252,12 +252,12 @@ def test_write_csv_and_xlsx_roundtrip() -> None:
         assert (out_dir / "sshash_runs.csv").is_file()
         assert (out_dir / "sshash_summary.csv").is_file()
         header = (out_dir / "sshash_summary.csv").read_text().splitlines()[0].split(",")
-        assert header[4:10] == ["order", "gm_k", "projection", "gm_table", "mod_t", "modality"]
+        assert header[4:10] == ["scheme", "gm_k", "projection", "gm_table", "mod_t", "modality"]
 
-        sheets = build_sheets(rows, summary, orders_rows(summary), bucket_rows(summary),
+        sheets = build_sheets(rows, summary, schemes_rows(summary), bucket_rows(summary),
                               space_rows(rows, summary), hist, [])
         assert [sh["name"] for sh in sheets] == [
-            "overview", "orders", "datasets", "summary", "runs", "buckets", "space_breakdown",
+            "overview", "schemes", "datasets", "summary", "runs", "buckets", "space_breakdown",
             "bucket_histogram", "super_kmer_histogram"]
         xlsx_path = out_dir / "sshash_results.xlsx"
         names = write_book(xlsx_path, sheets)
@@ -274,53 +274,53 @@ def test_write_csv_and_xlsx_roundtrip() -> None:
 def test_layout_paths(monkeypatch=None) -> None:
     import os
     from scripts.common import bench_paths
-    from scripts.expected_density import expected_orders_csv_path
+    from scripts.expected_density import expected_schemes_csv_path
     old = {k: os.environ.pop(k, None) for k in ("SSHASH_DATA_DIR", "SSHASH_RESULTS_DIR")}
     os.environ["SSHASH_BENCH_ROOT"] = "/r"
     try:
         data, results = bench_paths()
         assert (str(data), str(results)) == ("/r/data", "/r/results")
-        assert str(expected_orders_csv_path(results)) == "/r/results/csvs/sshash_density_expected_orders.csv"
+        assert str(expected_schemes_csv_path(results)) == "/r/results/csvs/sshash_density_expected_schemes.csv"
     finally:
         for k, v in old.items():
             if v is not None:
                 os.environ[k] = v
 
 
-def test_orders_sheet_unified_klw() -> None:
-    import orders_sheet as osh
+def test_schemes_sheet_unified_klw() -> None:
+    import schemes_sheet as ssh
     _, summary, _ = _sample_book_inputs()
-    orders = orders_rows(summary, {})
-    fields = [f for f in orders_field_order(summary)]
-    assert fields[:9] == ["order", "k", "w", "L", "gm_k", "projection", "gm_table", "mod_t", "description"]
-    for r in orders:
+    schemes = schemes_rows(summary, {})
+    fields = [f for f in schemes_field_order(summary)]
+    assert fields[:9] == ["scheme", "k", "w", "L", "gm_k", "projection", "gm_table", "mod_t", "description"]
+    for r in schemes:
         assert (r["k"], r["w"], r["L"]) == (11, 21, 31), r
-    native = next(r for r in orders if r["order"] == "native")
+    native = next(r for r in schemes if r["scheme"] == "native")
     assert native["cod_particular_density_factor_std"] == 0.0 or native["cod_particular_density_factor_std"] is not None
     # no expected density given -> the helper reports the holes (export dies on them)
-    assert osh.missing_cells(orders, ["expected_density_factor_mean"])
-    print("ok  orders sheet: k=m, w, L=k+w-1 and column order")
+    assert ssh.missing_cells(schemes, ["expected_density_factor_mean"])
+    print("ok  schemes sheet: k=m, w, L=k+w-1 and column order")
 
 
 def test_variants_are_separate_groups() -> None:
-    """Two tables of one greedymini order stay separate summary / space rows; each ratio is
+    """Two tables of one greedymini scheme stay separate summary / space rows; each ratio is
     against native."""
     rows = [_row("cod", "native", 0), _row("cod", "greedymini", 0, **GM13, bits_per_kmer=2.0),
             _row("cod", "greedymini", 0, **GM15, bits_per_kmer=3.0)]
     summary = summary_rows(rows)
     attach_native_ratios(summary, "native")
-    assert [(r["order"], r["gm_k"]) for r in summary] == [("native", None), ("greedymini", 13), ("greedymini", 15)]
+    assert [(r["scheme"], r["gm_k"]) for r in summary] == [("native", None), ("greedymini", 13), ("greedymini", 15)]
     assert [r["bits_per_kmer_ratio"] for r in summary] == [1.0, 0.5, 0.75]
-    assert [(r["order"], r["gm_k"]) for r in space_rows(rows, summary)] == [
+    assert [(r["scheme"], r["gm_k"]) for r in space_rows(rows, summary)] == [
         ("native", None), ("greedymini", 13), ("greedymini", 15)]
-    print("ok  order variants (gm_k) are separate groups")
+    print("ok  scheme variants (gm_k) are separate groups")
 
 
 def main() -> int:
-    test_validate_orders_equivalence_ok()
-    test_orders_sheet_unified_klw()
-    test_validate_orders_equivalence_catches_kmer_mismatch()
-    test_validate_orders_equivalence_catches_query_mismatch()
+    test_validate_schemes_equivalence_ok()
+    test_schemes_sheet_unified_klw()
+    test_validate_schemes_equivalence_catches_kmer_mismatch()
+    test_validate_schemes_equivalence_catches_query_mismatch()
     test_summary_rows_and_ratios()
     test_datasets_csv_rows_are_complete()
     test_write_csv_and_xlsx_roundtrip()

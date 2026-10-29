@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Classification profile of a finished full run (experiments/full_run.sh): for every database
-# (order variant x seed) and query set, one classify run with a classify built with
+# (scheme variant x seed) and query set, one classify run with a classify built with
 # ENABLE_MINIMIZER_PROF=1, which times the three phases of each read pair (computing the
 # selected k-mers into a token stream, the hash-table lookups, resolving the hits) and counts the
 # lookups, the lookups that find no taxon, and the GreedyMini ranks taken on the finite (UHS) and
@@ -66,7 +66,7 @@ make -C "$PROF" classify ENABLE_MINIMIZER_PROF=1 >&2 || { echo "error: profiling
 BIN="$PROF/classify"
 
 fail=0
-# seed-major, all order variants of a seed one after the other (as the timed classify)
+# seed-major, all scheme variants of a seed one after the other (as the timed classify)
 mapfile -t dbs < <(find "$RUNS" -path '*/db/hash.k2d' | sed 's#/db/hash.k2d##' | sort)
 seeds=$(printf '%s\n' "${dbs[@]}" | sed 's#.*/##' | sort -un)
 for seed in $seeds; do

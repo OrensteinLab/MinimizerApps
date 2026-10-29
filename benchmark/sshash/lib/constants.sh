@@ -12,13 +12,13 @@ else
   PYTHON="${PYTHON:-python3}"
 fi
 
-# Single source of the run defaults (k, m, seeds; the order list is ALL_ORDERS in lib/orders.sh);
+# Single source of the run defaults (k, m, seeds; the scheme list is ALL_SCHEMES in lib/schemes.sh);
 # config.yaml only holds the dataset list, seeds, paths and the GreedyMini tables/projections.
 CMD="run"
 DATASETS=""
 K=31
 M=21
-ORDERS="all"
+SCHEMES="all"
 GM_TABLES=""       # --gm-tables: comma-separated table names (default: config.yaml's)
 GM_PROJECTIONS=""  # --gm-projections: at0-cg1 / at1-cg0 (default: config.yaml's)
 MODALITY="canonical"

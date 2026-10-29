@@ -1,6 +1,6 @@
 # Benchmark harnesses: shared protocol and tools
 
-Four apps are benchmarked across minimizer orders (random xor / xor-pcg-hash, GreedyMini, mod-minimizer
+Four apps are benchmarked across minimizer schemes (random xor / xor-pcg-hash, GreedyMini, mod-minimizer
 variants, and each app's own baseline): `minimap2/` (read mapping), `sshash/` (k-mer dictionary),
 `kraken2/` (taxonomic classification) and `kmc/` (k-mer counting). Each folder has its own README (data,
 `.env`, usage, outputs); this file describes what they share.
@@ -15,10 +15,10 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
 
 1. **Slots: one NUMA node per app** (`full_run_all.sh`, `BENCH_NODE`). The apps run in two slots, one per node,
    in parallel; the apps of a slot run one after the other. Every timed step of an app runs on its slot's node,
-   so all orders and seeds of an app are measured on the same node.
+   so all schemes and seeds of an app are measured on the same node.
    - The two slots share no cores, L3 cache, memory controller or memory.
    - They do share the disk (`/localdata`: kmc's temp files, kraken2's library reads, sshash's external sort)
-     and the inter-socket link. Interleaving the orders (point 5) keeps this from favouring one order, and the
+     and the inter-socket link. Interleaving the schemes (point 5) keeps this from favouring one scheme, and the
      step records keep the disk's busy share and each step's start and end, so overlaps can be checked afterwards.
    - Default assignment: node 0 runs minimap2 then kmc, node 1 runs kraken2 then sshash. Node 1 usually has more
      free 2 MB blocks, which the huge-page-sensitive steps need.
@@ -65,12 +65,12 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
      of 4 KB pages.
    - The kernel's automatic NUMA balancing skips a process bound with `MPOL_BIND`, so bound steps run without
      balancing scans.
-5. **Repeats for every order, baseline included.** Each order runs for each seed in `config.yaml`; minimap2
+5. **Repeats for every scheme, baseline included.** Each scheme runs for each seed in `config.yaml`; minimap2
    `native`, sshash `native` and kmc `default` are repeated like the others (their repeats only measure timing
-   noise), so every comparison has replicates on both sides. kraken2 has no native run, so its reference order
-   is `xor`. Orders are interleaved within a repeat, so drift hits all orders alike: kmc runs one `-O all -n N`
-   call, sshash and kraken2 classify loop over the orders inside each seed, and the minimap2 `sweep` is
-   seed-major (all orders for seed 0, then seed 1, ...).
+   noise), so every comparison has replicates on both sides. kraken2 has no native run, so its reference scheme
+   is `xor`. Schemes are interleaved within a repeat, so drift hits all schemes alike: kmc runs one `-S all -n N`
+   call, sshash and kraken2 classify loop over the schemes inside each seed, and the minimap2 `sweep` is
+   seed-major (all schemes for seed 0, then seed 1, ...).
 6. **What is recorded for every step**:
    - from `/usr/bin/time -v`: wall seconds, CPU seconds (`*_cpu_s` = user + system, all threads), peak RSS
      (`*_max_rss_gb`), major/minor page faults and file-system reads (`*_major_pagefaults`, `*_read_gb`);
@@ -101,27 +101,27 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
      `bench_huge_fraction`.
 8. **A fresh results directory per protocol or code change** (`full_run_all.sh` refuses a non-empty one). The
    harnesses skip runs that already have results, so resuming into an older directory would mix conditions
-   (another protocol, or another version of an order such as the mod-minimizer's tie rule).
+   (another protocol, or another version of a scheme such as the mod-minimizer's tie rule).
 
 ### Wall time or CPU time
 
 Wall time is the headline (what a user waits for). CPU time is the diagnostic: it mostly excludes waiting
 (contention, input reads), so a wall-time difference **without** a CPU-time difference is load or cache, not
-the order. A step with `*_read_gb` > 0 read from disk (cold page cache) and is not comparable with warm runs;
+the scheme. A step with `*_read_gb` > 0 read from disk (cold page cache) and is not comparable with warm runs;
 the page cache is recorded, not controlled. CPU time is not immune to contention either (hyperthread sharing
 and memory bandwidth inflate it, which is why pinning uses one thread per core).
 
-### Significance tests (`common/order_tests.py`)
+### Significance tests (`common/scheme_tests.py`)
 
 ```bash
-python common/order_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir <results dir> [--exclude-cold-gb 1]
+python common/scheme_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir <results dir> [--exclude-cold-gb 1]
 ```
 
 Per context (dataset, repeat-filter condition, ...) and timed metric (wall and CPU seconds of each step) it
-compares every GreedyMini / mod-minimizer variant, xor and xor-pcg-hash with the baseline order and with xor:
+compares every GreedyMini / mod-minimizer variant, xor and xor-pcg-hash with the baseline scheme and with xor:
 Welch's t-test on log times over the repeats (ratio of geometric means, 90% CI, p, Holm-adjusted over the
 candidates of a block), plus TOST equivalence at +-5%. No scipy (`common/stats_util.py`). Output:
-`<results dir>/csvs/order_tests_<app>.csv` and a per-metric verdict count. `--exclude-cold-gb G` drops the
+`<results dir>/csvs/scheme_tests_<app>.csv` and a per-metric verdict count. `--exclude-cold-gb G` drops the
 steps that read more than G GB from disk, a sensitivity check for the page-cache confound.
 
 ## Running everything
@@ -169,7 +169,7 @@ Each app's export adds the sheets `density_effect` and `density_effect_points` t
   and of each setting, with the number of runs and of schemes: r near 1 means that the metric follows the
   density, near 0 that it does not depend on it.
 - **minimap2.** Only the fixed-threshold block (`-f` = native's threshold) is paired, found by position as in
-  `order_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
+  `scheme_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
   not make the run comparable. A result set without a fixed block has no `density_effect` sheets.
 
 ## Whether each scheme changes each metric (`common/significance.py`)
@@ -185,7 +185,7 @@ temporary disk, bits per k-mer).
   setting and metric (p_holm); TOST equivalence at +-5% (the 90% CI of the ratio in [1/1.05, 1.05]).
 - **Verdict.** lower / higher when p_holm < 0.05, else equivalent (TOST) or inconclusive.
 - Not tested: kraken2 at minimum hit groups 0 and the sshash 13-mer GreedyMini tables (not in the paper).
-  Unlike `order_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
+  Unlike `scheme_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
 
 ## Profiling (`<app>/experiments/profile_run.sh`)
 
@@ -216,11 +216,11 @@ minimizers" stamp).
 | `wait_low_load.sh`, `node_gate.py` | wait for a quiet machine / NUMA node before a timed step (CPUs, memory, free 2 MB blocks, compaction) |
 | `bench_step.py`, `step_record.py` | run a timed step pinned and memory-bound, and record its node, huge pages, load and disk; the record's columns |
 | `pin_cpus.sh`, `pin_cpus.py` | CPU pinning: one NUMA node, one thread per core, spare cores |
-| `order_tests.py`, `stats_util.py` | significance tests of order differences; scipy-free t / Welch / Holm |
+| `scheme_tests.py`, `stats_util.py` | significance tests of scheme differences; scipy-free t / Welch / Holm |
 | `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
 | `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Holm, TOST (the `significance` sheet) |
 | `mirror_results.py` | mirror a result set (large files hard-linked, small ones copied) for the profiling scripts |
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |
-| `order_names.py`, `orders_sheet.py`, `density.py`, `expected_density_driver.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | order identities and the shared analysis helpers |
+| `scheme_names.py`, `schemes_sheet.py`, `density.py`, `expected_density_driver.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |

@@ -269,7 +269,7 @@ private:
         mod w is exempt (see bucket_type).
     */
     bool forward_scheme() const {
-        if (!is_mod_mode(m_build_config.order)) return true;
+        if (!is_mod_mode(m_build_config.scheme)) return true;
         const uint64_t w = m_build_config.k - m_build_config.m + 1;
         return m_build_config.mod_t % w == m_build_config.m % w;
     }

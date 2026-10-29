@@ -3,9 +3,9 @@
 
 Manifest columns (tab-separated, written by run_benchmark.sh):
   scheme  context  outdir  seed  seed_idx  gm_k  projection  gm_table  mod_t
-`scheme` is the canonical order (xor, xor-pcg-hash, greedymini,
+`scheme` is the canonical scheme (xor, xor-pcg-hash, greedymini,
 mod-minimizer-xor, mod-minimizer-greedymini); the last four are the separate
-identity fields of benchmark/common/order_names.py (blank when not applicable).
+identity fields of benchmark/common/scheme_names.py (blank when not applicable).
 
 Every (scheme, seed, dataset) is classified exactly once per
 --minimum-hit-groups value m in {0, 2}. Per cell the results dir holds
@@ -51,7 +51,7 @@ if HERE not in sys.path:
 from bench_const import REF_SCHEME, scheme_rank  # noqa: E402
 sys.path.insert(0, os.path.join(HERE, "..", "common"))
 import step_record  # noqa: E402
-import order_names  # noqa: E402
+import scheme_names  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
 import units  # noqa: E402
 from xlsx_util import load_table  # noqa: E402
@@ -502,31 +502,31 @@ def load_manifest(path):
                     context = run_name + context[slash:]
             extra = dict(zip(("gm_k", "projection", "gm_table", "mod_t"),
                              (parts[5:9] + [""] * 4)[:4]))
-            idd = order_names.parse_id(dict(extra, order=parts[0]))
+            idd = scheme_names.parse_id(dict(extra, scheme=parts[0]))
             run = {
+                "label": parts[0],
                 "scheme": parts[0],
-                "order": parts[0],
                 "context": context,
                 "outdir": outdir,
                 "seed": parts[3] if len(parts) > 3 else "",
                 "seed_idx": int(parts[4]) if len(parts) > 4 and parts[4] else 0,
             }
-            run.update((f, idd[f]) for f in order_names.ID_FIELDS if f != "order")
+            run.update((f, idd[f]) for f in scheme_names.ID_FIELDS if f != "scheme")
             runs.append(run)
-    # Display label: the order, plus " (<params>)" only when a library holds
-    # several parameterisations of the same order (e.g. both projections).
+    # Display label: the scheme, plus " (<params>)" only when a library holds
+    # several parameterisations of the same scheme (e.g. both projections).
     variants = {}
     for r in runs:
-        r["params"] = order_names.order_dir_name(
-            r["order"], r["gm_k"], r["projection"], r["mod_t"]).partition("/")[2]
-        variants.setdefault(r["order"], set()).add(r["params"])
+        r["params"] = scheme_names.scheme_dir_name(
+            r["scheme"], r["gm_k"], r["projection"], r["mod_t"]).partition("/")[2]
+        variants.setdefault(r["scheme"], set()).add(r["params"])
     for r in runs:
-        if len(variants[r["order"]]) > 1 and r["params"]:
-            r["scheme"] = "{} ({})".format(r["order"], r["params"])
+        if len(variants[r["scheme"]]) > 1 and r["params"]:
+            r["label"] = "{} ({})".format(r["scheme"], r["params"])
     runs.sort(
         key=lambda r: (
-            scheme_rank(r["scheme"]),
-            r["scheme"],
+            scheme_rank(r["label"]),
+            r["label"],
             r["seed_idx"],
             r["context"],
         )
@@ -771,7 +771,7 @@ def load_density_rows(run_dir):
                 for k, v in row.items():
                     if k in ("scheme", "toggle_hex", "variant", "context") or v in (None, ""):
                         continue
-                    if k in order_names.ID_FIELDS:   # gm_k, projection, gm_table, mod_t
+                    if k in scheme_names.ID_FIELDS:   # gm_k, projection, gm_table, mod_t
                         rec[k] = int(v) if k in ("gm_k", "mod_t") else v
                         continue
                     try:
@@ -869,14 +869,13 @@ def collect_per_seed_rows(by_scheme, metrics_by_scheme):
         ms = metrics_by_scheme[scheme]
         for run, m in zip(runs, ms):
             row = {
-                "scheme": _scheme_base(scheme),
                 "dataset": m.get("dataset") or _scheme_dataset(scheme),
                 "minimum_hit_groups": m.get("minimum_hit_groups", _scheme_mhg(scheme)),
                 "seed_idx": run.get("seed_idx"),
                 "context": run.get("context"),
                 "seed": run.get("seed"),
             }
-            row.update((f, run.get(f)) for f in order_names.ID_FIELDS)
+            row.update((f, run.get(f)) for f in scheme_names.ID_FIELDS)
             row.update(m)
             per_seed.append(row)
     return per_seed
@@ -1246,7 +1245,7 @@ def main():
 
     by_scheme = defaultdict(list)
     for r in runs:
-        by_scheme[r["scheme"]].append(r)
+        by_scheme[r["label"]].append(r)
 
     orig_runs = runs
     cells = []

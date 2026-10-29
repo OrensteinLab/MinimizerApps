@@ -8,7 +8,7 @@ import sys
 COMMANDS = {
     "export": ("scripts.export", "Export runs to CSV/XLSX"),
     "experiment": ("scripts.experiments", "List/expand experiment YAML"),
-    "orders": ("scripts.orders", "Order name -> sshash CLI flags"),
+    "schemes": ("scripts.schemes", "Scheme name -> sshash CLI flags"),
     "equivalence": ("scripts.equivalence", "Fixed pos/neg query sets + per-run equivalence checks"),
     "zenodo": ("scripts.zenodo", "Zenodo record 17582116 lookup (maintainers only)"),
     "meta": ("scripts.meta", "Write run meta.json from META_* env"),

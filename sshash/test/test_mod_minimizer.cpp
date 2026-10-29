@@ -1,4 +1,4 @@
-// Tests of the strand-symmetric mod-minimizer orders (mod-minimizer-xor, mod-minimizer-greedymini):
+// Tests of the strand-symmetric mod-minimizer schemes (mod-minimizer-xor, mod-minimizer-greedymini):
 // util::compute_mod_minimizer against a string-level reference of the definition, the
 // mirror-equivariance a single-probe lookup needs, and mod_minimizer_iterator against
 // util::compute_minimizer over whole sequences (with resets).
@@ -91,7 +91,7 @@ template <typename kmer_t>
 static void test_config(uint64_t k, uint64_t m, hasher_type const& hasher, uint64_t seed,
                         std::mt19937_64& gen, uint64_t num_kmers) {
     const uint64_t t = hasher.mod_t();
-    const std::string label = std::string(custom_order_mode_name(hasher.mode())) +
+    const std::string label = std::string(custom_scheme_mode_name(hasher.mode())) +
                               " k=" + std::to_string(k) + " m=" + std::to_string(m) +
                               " t=" + std::to_string(t);
     uint64_t before = num_failed;
@@ -120,8 +120,8 @@ static void test_config(uint64_t k, uint64_t m, hasher_type const& hasher, uint6
     }
 
     /* 2. the incremental iterator == compute_minimizer, over sequences, with resets */
-    dispatch_order(hasher.mode(), [&](auto mode) {
-        constexpr custom_order_mode Mode = decltype(mode)::value;
+    dispatch_scheme(hasher.mode(), [&](auto mode) {
+        constexpr custom_scheme_mode Mode = decltype(mode)::value;
         if constexpr (is_mod_mode(Mode)) {
             for (uint64_t r = 0; r != 4 and num_failed == before; ++r) {
                 const std::string seq = random_dna(4000, gen, r == 3);
@@ -178,12 +178,12 @@ int main(int argc, char** argv) {
     for (cfg c : {cfg{31, 21, 10}, cfg{31, 20, 8}, cfg{30, 20, 9}, cfg{15, 11, 6},
                   cfg{15, 11, 1}, cfg{21, 13, 4}, cfg{12, 8, 3}}) {
         hasher_type hasher(seed);
-        hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
+        hasher.configure(custom_scheme_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
     }
     for (cfg c : {cfg{47, 31, 14}, cfg{55, 31, 6}, cfg{40, 30, 8}}) {
         hasher_type hasher(seed);
-        hasher.configure(custom_order_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
+        hasher.configure(custom_scheme_mode::MOD_XOR_HASH, c.m, "", gm_projection::AT0_CG1, c.t);
         test_config<wide_kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
     }
 
@@ -194,11 +194,11 @@ int main(int argc, char** argv) {
             try { f(); } catch (std::exception const&) { return true; }
             return false;
         };
-        if (!throws([&] { h.configure(custom_order_mode::MOD_XOR_HASH, 21, "", gm_projection::AT0_CG1, 0); }))
+        if (!throws([&] { h.configure(custom_scheme_mode::MOD_XOR_HASH, 21, "", gm_projection::AT0_CG1, 0); }))
             fail("mod-minimizer-xor without t accepted");
-        if (!throws([&] { h.configure(custom_order_mode::MOD_XOR_HASH, 21, "", gm_projection::AT0_CG1, 21); }))
+        if (!throws([&] { h.configure(custom_scheme_mode::MOD_XOR_HASH, 21, "", gm_projection::AT0_CG1, 21); }))
             fail("mod-minimizer-xor with t = m accepted");
-        if (!throws([&] { h.configure(custom_order_mode::XOR_HASH, 21, "", gm_projection::AT0_CG1, 10); }))
+        if (!throws([&] { h.configure(custom_scheme_mode::XOR_HASH, 21, "", gm_projection::AT0_CG1, 10); }))
             fail("--mod-t with a plain order accepted");
     }
 
@@ -210,7 +210,7 @@ int main(int argc, char** argv) {
                 for (cfg c : {cfg{31, 21, t}, cfg{29, 20, t}, cfg{25, 19, t}, cfg{31, 22, t}}) {
                     if (c.t >= c.m or c.t % (c.k - c.m + 1) != c.m % (c.k - c.m + 1)) continue;
                     hasher_type hasher(seed);
-                    hasher.configure(custom_order_mode::MOD_GREEDYMINI, c.m, argv[a], proj, c.t);
+                    hasher.configure(custom_scheme_mode::MOD_GREEDYMINI, c.m, argv[a], proj, c.t);
                     test_config<kmer_t>(c.k, c.m, hasher, seed, gen, 20000);
                 }
             }

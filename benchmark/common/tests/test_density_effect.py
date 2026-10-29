@@ -33,9 +33,9 @@ def test_points_pair_by_setting_and_seed(tmp_path):
     # the default's time differs by seed and by dataset, so a pairing across either gives other ratios
     for ds, scale in (("cod", 1), ("kestrel", 10)):
         for seed, t in (("0", 100), ("1", 200)):
-            rows.append({"dataset": ds, "order": "native", "seed_idx": seed, "density_factor": "2.0",
+            rows.append({"dataset": ds, "scheme": "native", "seed_idx": seed, "density_factor": "2.0",
                          "build_wall_s": str(t * scale)})
-            rows.append({"dataset": ds, "order": "greedymini", "gm_k": "15", "seed_idx": seed,
+            rows.append({"dataset": ds, "scheme": "greedymini", "gm_k": "15", "seed_idx": seed,
                          "density_factor": "1.5", "build_wall_s": str(0.8 * t * scale)})
     write_runs(csvs / "sshash_runs.csv", rows)
     p = dict(de.points(tmp_path, "sshash"))["build_wall_s"]
@@ -47,8 +47,8 @@ def test_points_pair_by_setting_and_seed(tmp_path):
 def test_minimap2_pairs_only_the_fixed_threshold_block(tmp_path):
     csvs = tmp_path / "csvs"
     csvs.mkdir()
-    run = lambda order, thr, t, d: {"dataset": "chrX", "k": "19", "w": "10", "mid_occ_threshold": thr,
-                                    "order": order, "seed_idx": "0", "density_factor": d, "map_run_s": t}
+    run = lambda scheme, thr, t, d: {"dataset": "chrX", "k": "19", "w": "10", "mid_occ_threshold": thr,
+                                    "scheme": scheme, "seed_idx": "0", "density_factor": d, "map_run_s": t}
     rows = [run("native", "159", "10", "2.0"),          # default-filter block
             run("xor", "159", "50", "2.0"),              # derived threshold that happens to equal native's
             run("native", "159", "12", "2.0"),           # fixed block: native's second run of the seed

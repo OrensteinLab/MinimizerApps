@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for scripts/expected_density.py: theoretical expected density_factor,
-generalized to any signature-order scheme (not just GreedyMini)."""
+generalized to any scheme (not just GreedyMini)."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.expected_density import (
-    ORDER_VARIANTS,
+    SCHEME_VARIANTS,
     build_dna_keys,
-    compute_all_orders,
+    compute_all_schemes,
     dna_rev,
-    ensure_expected_orders,
+    ensure_expected_schemes,
     expected_density,
-    load_expected_orders,
+    load_expected_schemes,
     rxs_m_xs64,
 )
 
@@ -61,15 +61,15 @@ def test_canonical_pairs_always_tie():
     # Both-strand (canonical) counting: a p-mer and its reverse complement must
     # always land on the identical comparator value, for every order.
     n = 1 << (2 * P)
-    for order, kw in [
+    for scheme, kw in [
         ("lex", {}),
         ("default", {}),
         ("xor", {"seed": 0xDEADBEEF}),
         ("xor-pcg-hash", {"seed": 0xC0FFEE01}),
     ]:
-        keys = build_dna_keys(order, 28, P, **kw)
+        keys = build_dna_keys(scheme, 28, P, **kw)
         for i in range(n):
-            assert keys[i] == keys[dna_rev(i, P)], order
+            assert keys[i] == keys[dna_rev(i, P)], scheme
 
 
 def test_xor_and_pcg_differ_for_same_seed():
@@ -93,13 +93,13 @@ def test_expected_density_is_in_plausible_range():
     assert 1.0 <= d <= w + 1
 
 
-def test_compute_all_orders_small_alphabet_no_greedymini():
+def test_compute_all_schemes_small_alphabet_no_greedymini():
     # Point gm_dir at an empty directory so the greedymini variants gracefully
     # report n_seeds=0 instead of trying to load real p=9 tables at this test's p=5.
     with tempfile.TemporaryDirectory() as td:
-        rows = compute_all_orders(28, P, w=6, gm_dir=Path(td), n_bases=20_000)
-    by = {(r["order"], r["projection"]): r for r in rows}
-    assert set(by) == set(ORDER_VARIANTS)
+        rows = compute_all_schemes(28, P, w=6, gm_dir=Path(td), n_bases=20_000)
+    by = {(r["scheme"], r["projection"]): r for r in rows}
+    assert set(by) == set(SCHEME_VARIANTS)
     assert {(r["k"], r["w"], r["L"]) for r in rows} == {(P, 6, 28)}  # unified names
 
     for label in ("default", "lex"):
@@ -138,19 +138,19 @@ def test_at1_is_the_flipped_table_and_a_different_order():
     assert expected_density(at1, 9, 20, n_bases=100_000) < 2.0
 
 
-def test_ensure_and_load_expected_orders_cache_round_trip():
+def test_ensure_and_load_expected_schemes_cache_round_trip():
     with tempfile.TemporaryDirectory() as td:
         out_root = Path(td)
-        assert load_expected_orders(out_root) == {}
-        built = ensure_expected_orders(out_root, 28, P, 6, gm_dir=out_root, n_bases=10_000)
-        assert set(built) == set(ORDER_VARIANTS)
-        loaded = load_expected_orders(out_root)
+        assert load_expected_schemes(out_root) == {}
+        built = ensure_expected_schemes(out_root, 28, P, 6, gm_dir=out_root, n_bases=10_000)
+        assert set(built) == set(SCHEME_VARIANTS)
+        loaded = load_expected_schemes(out_root)
         key = ("default", "")
         assert loaded[key]["density_factor_mean"] == built[key]["density_factor_mean"]
         assert (loaded[key]["k"], loaded[key]["w"], loaded[key]["L"]) == (str(P), "6", "28")
 
         # second call with same k/p reuses the cache (doesn't silently change values)
-        again = ensure_expected_orders(out_root, 28, P, 6, gm_dir=out_root)
+        again = ensure_expected_schemes(out_root, 28, P, 6, gm_dir=out_root)
         assert again[key]["density_factor_mean"] == built[key]["density_factor_mean"]
 
 
@@ -162,8 +162,8 @@ if __name__ == "__main__":
     test_xor_and_pcg_differ_for_same_seed()
     test_rxs_m_xs64_matches_custom_order_cpp_constant()
     test_expected_density_is_in_plausible_range()
-    test_compute_all_orders_small_alphabet_no_greedymini()
+    test_compute_all_schemes_small_alphabet_no_greedymini()
     test_greedymini_at0_equals_real_dna_gm_table()
     test_at1_is_the_flipped_table_and_a_different_order()
-    test_ensure_and_load_expected_orders_cache_round_trip()
+    test_ensure_and_load_expected_schemes_cache_round_trip()
     print("ok")

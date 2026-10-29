@@ -163,8 +163,8 @@ dictionary<Kmer, Offsets>::streaming_query_from_file(std::string const& filename
 {
     using dictionary_type = dictionary<Kmer, Offsets>;
     /* compile-time choice of the order, see streaming_query */
-    return dispatch_order(m_hasher.mode(), [&](auto mode) {
-        constexpr custom_order_mode Mode = decltype(mode)::value;
+    return dispatch_scheme(m_hasher.mode(), [&](auto mode) {
+        constexpr custom_scheme_mode Mode = decltype(mode)::value;
         if (m_regular_parsing) {
             return streaming_query_from_file_impl<dictionary_type,
                                                   streaming_query<dictionary_type, Mode, true>>(

@@ -13,7 +13,7 @@ by the strand frame with the smaller Σ(xyz), then by the DNA (Γ), so the order
 is total on canonical ℓ-mers. It keeps the table's designed density at every
 valid ℓ (below). GreedyMini is DNA only (protein databases refuse it). The
 algorithm is the
-shared `common/minimizer-orders/greedymini_centre.h` (the same extension
+shared `common/minimizer-schemes/greedymini_centre.h` (the same extension
 sshash and minimap2 use, including the Σ/Γ plane extraction: `TwoBitPlanes`);
 `src/minimizer_rankers.h` only picks Kraken's ACGT encoding. For ℓ = gm_k
 (and mod-minimizer + greedymini, t = gm_k) the table ranks the ℓ-mer itself
@@ -74,7 +74,7 @@ Classic `.gm` encoding (see `src/greedymini_rank.h`):
 
 ## Ranked list → `.gm`
 
-[`common/minimizer-orders/gm_serializer.cpp`](../../common/minimizer-orders/gm_serializer.cpp)
+[`common/minimizer-schemes/gm_serializer.cpp`](../../common/minimizer-schemes/gm_serializer.cpp)
 (built via that directory's `Makefile`, shared with kmc) turns a plain-text
 list of integer k-mers (rank order) into a `.gm` table. It's usually built
 and run automatically (`../benchmark/kraken2/benchmark_interface.sh`'s
@@ -85,19 +85,19 @@ and run automatically (`../benchmark/kraken2/benchmark_interface.sh`'s
   share the rank (palindromes once).
 
 ```bash
-make -C ../common/minimizer-orders
+make -C ../common/minimizer-schemes
 
 # reverse-collapsed (canonical) UHS
-../common/minimizer-orders/gm_serializer --canonical \
+../common/minimizer-schemes/gm_serializer --canonical \
     ../orders/GreedyMini/w5_k15_canonical.txt \
     -o ../orders/GreedyMini/w5_k15_canonical.gm
 
-../common/minimizer-orders/gm_serializer --canonical \
+../common/minimizer-schemes/gm_serializer --canonical \
     ../orders/GreedyMini/w5_k6_canonical.txt \
     -o ../orders/GreedyMini/w5_k6_canonical.gm -k 6
 
 # plain ranked list (no reverse pairing)
-../common/minimizer-orders/gm_serializer ranked_kmers.txt -o ranked_kmers.gm -k 15
+../common/minimizer-schemes/gm_serializer ranked_kmers.txt -o ranked_kmers.gm -k 15
 ```
 
 Options:

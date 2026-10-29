@@ -46,7 +46,7 @@
 #include "../../../kmc/kmc_api/mmer.h"
 #undef class
 #include "../../../kmc/kmc_api/custom_order.h"
-#include "../../../common/minimizer-orders/greedymini_centre.h"
+#include "../../../common/minimizer-schemes/greedymini_centre.h"
 
 using clk = std::chrono::steady_clock;
 static int P, W;

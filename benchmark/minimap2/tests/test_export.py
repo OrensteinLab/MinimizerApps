@@ -1,5 +1,5 @@
 """Offline tests for lib/export.py (synthetic runs, no minimap2 needed) and
-lib/orders.sh (canonical order names; greedymini projection as a parameter)."""
+lib/schemes.sh (canonical scheme names; greedymini projection as a parameter)."""
 from __future__ import annotations
 
 import json
@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO_ROOT / "benchmark" / "common"))
 import export  # noqa: E402
 import expected_density  # noqa: E402
 import step_record  # noqa: E402
-from order_names import ID_FIELDS  # noqa: E402
+from scheme_names import ID_FIELDS  # noqa: E402
 from xlsx_check import check_xlsx  # noqa: E402
 from xlsx_util import load_xlsx  # noqa: E402
 
@@ -30,12 +30,12 @@ VARIANTS = [
 ]
 
 
-def _write_run(root: Path, order: str, params: dict, seed_idx: int, dens: float) -> None:
-    from order_names import order_dir_name
-    odir = order_dir_name(order, params.get("gm_k"), params.get("projection"), params.get("mod_t"))
-    d = root / "runs" / "dsA" / "k19_w10" / odir / str(seed_idx)
+def _write_run(root: Path, scheme: str, params: dict, seed_idx: int, dens: float) -> None:
+    from scheme_names import scheme_dir_name
+    sdir = scheme_dir_name(scheme, params.get("gm_k"), params.get("projection"), params.get("mod_t"))
+    d = root / "runs" / "dsA" / "k19_w10" / sdir / str(seed_idx)
     d.mkdir(parents=True)
-    meta = {"dataset": "dsA", "order": order, "seed": hex(seed_idx), "seed_idx": seed_idx, "k": 19, "w": 10,
+    meta = {"dataset": "dsA", "scheme": scheme, "seed": hex(seed_idx), "seed_idx": seed_idx, "k": 19, "w": 10,
             "gm_k": params.get("gm_k"), "projection": params.get("projection"),
             "gm_table": params.get("gm_table"), "mod_t": params.get("mod_t"),
             "preset": "map-pb", "threads": 4, "distinct_minimizers": 1000, "avg_occurrences": 1.2,
@@ -48,12 +48,12 @@ def _write_run(root: Path, order: str, params: dict, seed_idx: int, dens: float)
 
 
 def test_export_roundtrip(tmp_path, monkeypatch):
-    for i, (order, params) in enumerate(VARIANTS):
+    for i, (scheme, params) in enumerate(VARIANTS):
         for s in range(2):
-            _write_run(tmp_path, order, params, s, 1.5 + 0.1 * i)
+            _write_run(tmp_path, scheme, params, s, 1.5 + 0.1 * i)
     fake = {(o, p or ""): {"density_factor_mean": "1.9", "density_factor_std": "0.01"}
             for o, p in expected_density.VARIANTS}
-    monkeypatch.setattr(expected_density, "ensure_expected_orders", lambda *a, **k: fake)
+    monkeypatch.setattr(expected_density, "ensure_expected_schemes", lambda *a, **k: fake)
     (tmp_path / "data" / "dsA").mkdir(parents=True)
     assert export.main(["--results-dir", str(tmp_path), "--data-dir", str(tmp_path / "data"),
                         "--samtools", ""]) == 0
@@ -61,7 +61,7 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     assert check_xlsx(str(xlsx)) == []
     book = load_xlsx(str(xlsx))
     # no fixed-threshold block (-f), so no run is paired with native's and there are no density_effect sheets
-    assert list(book) == ["overview", "orders", "datasets", "summary", "runs"]
+    assert list(book) == ["overview", "schemes", "datasets", "summary", "runs"]
     import csv
     runs = list(csv.DictReader((tmp_path / "csvs" / "minimap2_runs.csv").open()))
     assert len(runs) == 10
@@ -75,74 +75,74 @@ def test_export_roundtrip(tmp_path, monkeypatch):
     assert hdr[-n_rec:] == step_record.names("build") + step_record.names("map")
     assert {"map_load_s", "map_run_s"} <= set(hdr) and not {"index_load_s", "map_only_s", "n_seeds"} & set(hdr)
     assert runs[0]["map_pinned_cpus"] == "2,6,10" and runs[0]["map_load_s"] == "0.5" and runs[0]["map_run_s"] != ""
-    greedy = [r for r in runs if r["order"] == "greedymini"]
+    greedy = [r for r in runs if r["scheme"] == "greedymini"]
     assert {r["projection"] for r in greedy} == {"at0-cg1", "at1-cg0"}
     assert {r["gm_k"] for r in greedy} == {"15"}
     assert all(r["mod_t"] == "" for r in greedy)
     summary = list(csv.DictReader((tmp_path / "csvs" / "minimap2_summary.csv").open()))
-    assert len(summary) == 5 and summary[0]["order"] == "native"
+    assert len(summary) == 5 and summary[0]["scheme"] == "native"
     assert float(summary[0]["density_factor_ratio"]) == 1.0
     assert "n_repeats" in summary[0] and "n_seeds" not in summary[0] and "map_run_s_mean" in summary[0]
     assert "build_pinned_cpus" not in summary[0] and "index_size_gb_mean" in summary[0]
-    orders = list(csv.DictReader((tmp_path / "csvs" / "minimap2_orders.csv").open()))
-    assert [(o["order"], o["projection"]) for o in orders] == [
+    schemes = list(csv.DictReader((tmp_path / "csvs" / "minimap2_schemes.csv").open()))
+    assert [(o["scheme"], o["projection"]) for o in schemes] == [
         ("native", ""), ("xor", ""), ("greedymini", "at0-cg1"), ("greedymini", "at1-cg0"),
         ("mod-minimizer-xor", "")]
-    assert "--gm-projection at1-cg0" in orders[3]["cli"]
-    # unified layout: one row per (order, k, w, L), expected for the row, particular for the dataset
-    assert list(orders[0])[:5] == ["order", "k", "w", "L", "gm_k"]
-    assert list(orders[0])[-2:] == ["dsA_particular_density_factor_mean", "dsA_particular_density_factor_std"]
-    assert [(o["k"], o["w"], o["L"], o["mod_t"]) for o in orders] == [("19", "10", "28", "")] * 4 + [("19", "10", "28", "9")]
-    assert all(o["expected_density_factor_mean"] == "1.9" and o["dsA_particular_density_factor_std"] != "" for o in orders)
-    assert orders[0]["dsA_particular_density_factor_std"] in ("0", "0.0")  # native: std 0, not blank
+    assert "--gm-projection at1-cg0" in schemes[3]["cli"]
+    # unified layout: one row per (scheme, k, w, L), expected for the row, particular for the dataset
+    assert list(schemes[0])[:5] == ["scheme", "k", "w", "L", "gm_k"]
+    assert list(schemes[0])[-2:] == ["dsA_particular_density_factor_mean", "dsA_particular_density_factor_std"]
+    assert [(o["k"], o["w"], o["L"], o["mod_t"]) for o in schemes] == [("19", "10", "28", "")] * 4 + [("19", "10", "28", "9")]
+    assert all(o["expected_density_factor_mean"] == "1.9" and o["dsA_particular_density_factor_std"] != "" for o in schemes)
+    assert schemes[0]["dsA_particular_density_factor_std"] in ("0", "0.0")  # native: std 0, not blank
 
 
-def test_orders_one_row_per_klw_and_loud_on_holes():
+def test_schemes_one_row_per_klw_and_loud_on_holes():
     datasets = [{"dataset": "A", "k": 19, "w": 10, "mod_t": 9, "preset": "map-pb"},
                 {"dataset": "B", "k": 15, "w": 10, "mod_t": None, "preset": "map-ont"}]
-    def srow(ds, order, k, t=None):
-        return {"dataset": ds, "order": order, "mid_occ_cap": export.DEFAULT_MID_OCC_CAP, "k": k, "w": 10, "mod_t": t,
+    def srow(ds, scheme, k, t=None):
+        return {"dataset": ds, "scheme": scheme, "mid_occ_cap": export.DEFAULT_MID_OCC_CAP, "k": k, "w": 10, "mod_t": t,
                 "density_factor_mean": 1.5, "density_factor_std": None}
     summary = [srow("A", "native", 19), srow("A", "mod-minimizer-xor", 19, 9),
                srow("B", "native", 15), srow("B", "mod-minimizer-xor", 15, 5)]
     exp = {kwt: {(o, ""): {"density_factor_mean": "1.6", "density_factor_std": "0"} for o in ("native", "mod-minimizer-xor")}
            for kwt in ((19, 10, 9), (15, 10, 5))}
-    rows = export.orders_rows(summary, datasets, exp)
-    assert [(r["order"], r["k"], r["w"], r["L"], r["mod_t"]) for r in rows] == [
+    rows = export.schemes_rows(summary, datasets, exp)
+    assert [(r["scheme"], r["k"], r["w"], r["L"], r["mod_t"]) for r in rows] == [
         ("native", 19, 10, 28, None), ("native", 15, 10, 24, None),
         ("mod-minimizer-xor", 19, 10, 28, 9), ("mod-minimizer-xor", 15, 10, 24, 5)]
     assert rows[0]["A_particular_density_factor_mean"] == 1.5 and rows[0]["A_particular_density_factor_std"] == 0.0
     assert rows[0]["B_particular_density_factor_mean"] is None   # other (k, w, L): accepted empty
-    export.check_orders_complete(rows, datasets)
+    export.check_schemes_complete(rows, datasets)
     rows[3]["B_particular_density_factor_mean"] = None
     with pytest.raises(SystemExit):
-        export.check_orders_complete(rows, datasets)
+        export.check_schemes_complete(rows, datasets)
     rows[3]["B_particular_density_factor_mean"] = 1.0
     rows[1]["expected_density_factor_mean"] = None
     with pytest.raises(SystemExit):
-        export.check_orders_complete(rows, datasets)
+        export.check_schemes_complete(rows, datasets)
 
 
-def test_legacy_order_is_rejected(tmp_path):
+def test_legacy_scheme_is_rejected(tmp_path):
     _write_run(tmp_path, "native", {}, 0, 1.0)
     meta = next((tmp_path / "runs").glob("**/meta.json"))
     m = json.loads(meta.read_text())
-    m["order"] = "greedymini-at1"
+    m["scheme"] = "greedymini-at1"
     meta.write_text(json.dumps(m))
     with pytest.raises(SystemExit):
         export.load_runs(tmp_path)
 
 
 def _sh(snippet: str) -> str:
-    script = f'set -u; HERE_DIR={HERE}; source {HERE}/lib/constants.sh; source {HERE}/lib/orders.sh; {snippet}'
+    script = f'set -u; HERE_DIR={HERE}; source {HERE}/lib/constants.sh; source {HERE}/lib/schemes.sh; {snippet}'
     return subprocess.run(["bash", "-c", script], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def test_orders_sh_dirs_and_flags():
-    assert _sh("order_dir_name xor") == "xor"
-    assert _sh("order_dir_name greedymini") == "greedymini/k15_at0-cg1"
-    assert _sh("PROJECTION=at1-cg0; order_dir_name greedymini") == "greedymini/k15_at1-cg0"
-    assert _sh("order_dir_name mod-minimizer-xor 9") == "mod-minimizer-xor/t9"
-    flags = _sh("PROJECTION=at1-cg0; build_order_flags greedymini 7 0; echo \"${ORDER_FLAGS[*]}\"")
-    assert "--minimizer-order greedymini" in flags and "--gm-projection at1-cg0" in flags
-    assert _sh("order_is_known greedymini-at1 && echo yes || echo no") == "no"
+def test_schemes_sh_dirs_and_flags():
+    assert _sh("scheme_dir_name xor") == "xor"
+    assert _sh("scheme_dir_name greedymini") == "greedymini/k15_at0-cg1"
+    assert _sh("PROJECTION=at1-cg0; scheme_dir_name greedymini") == "greedymini/k15_at1-cg0"
+    assert _sh("scheme_dir_name mod-minimizer-xor 9") == "mod-minimizer-xor/t9"
+    flags = _sh("PROJECTION=at1-cg0; build_scheme_flags greedymini 7 0; echo \"${SCHEME_FLAGS[*]}\"")
+    assert "--scheme greedymini" in flags and "--gm-projection at1-cg0" in flags
+    assert _sh("scheme_is_known greedymini-at1 && echo yes || echo no") == "no"

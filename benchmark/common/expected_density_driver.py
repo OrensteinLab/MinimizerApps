@@ -1,5 +1,5 @@
-"""Shared Monte Carlo driver for the theoretical expected density_factor of an
-order on an i.i.d. uniform-random DNA stream (kmc, sshash, minimap2; kraken2
+"""Shared Monte Carlo driver for the theoretical expected density_factor of a
+scheme on an i.i.d. uniform-random DNA stream (kmc, sshash, minimap2; kraken2
 keeps its own C++ tool). Each app's ``expected_density.py`` is a thin adapter
 that supplies only:
 
@@ -16,7 +16,7 @@ the cache read/validate/merge/write (`ensure_cache`) and the shared CLI
 arguments. The cache layout (a CSV with the id columns, k, w, L, n_seeds,
 density_factor_mean, density_factor_std [, cache_key]) is whatever the adapter
 declares in its `fields`; exporters read it through the adapters'
-`load_expected_orders` / `ensure_expected_orders`.
+`load_expected_schemes` / `ensure_expected_schemes`.
 
 (Not named `expected_density.py`: minimap2's adapter is imported as the
 top-level module `expected_density` and would be shadowed.)

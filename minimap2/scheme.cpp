@@ -1,13 +1,13 @@
 // Custom minimizer order integration for minimap2 (lab fork).
 //
 // minimap2 is pure C; the shared minimizer/signature-order library
-// (common/minimizer-orders/) is unavoidably C++ (GreedyMiniTable class,
+// (common/minimizer-schemes/) is unavoidably C++ (GreedyMiniTable class,
 // templates, in-class member initializers -- none of it is includable from
 // a .c file). Per the existing precedent in this
 // monorepo ("each app keeps its own thin wrapper around it, since the
 // call-site shapes differ" -- orders/README.md), this file is that thin
 // wrapper: it #includes the shared headers UNMODIFIED and exposes a flat
-// extern-"C" API (order.h) that minimap2's C code calls into. It is the only
+// extern-"C" API (scheme.h) that minimap2's C code calls into. It is the only
 // C++ translation unit in minimap2/.
 //
 // -- Design: order selection vs. index key (read this before touching the
@@ -43,20 +43,20 @@
 // logic) -- correct for native's near-injective hash64, but if reused
 // naively for GreedyMini's rank (which collapses many distinct non-UHS
 // k-mers to the same value) it would pathologically over-select right where
-// GreedyMini is supposed to reduce density. RankState<MM_ORDER_GREEDYMINI> below uses the
+// GreedyMini is supposed to reduce density. RankState<MM_SCHEME_GREEDYMINI> below uses the
 // shared centre-extension order in its injective packing (UHS rank, then the
 // Sigma and Gamma planes of the k-mer), which is a total order on canonical
 // k-mers, so ties only occur where the original algorithm intends duplicate
 // detection to fire (genuine repeats), not as an artifact of the ranking's
 // own coarseness.
 
-#include "order.h"
+#include "scheme.h"
 #include "kvec.h" // kv_resize/kv_push (also pulls in kalloc.h for kmalloc/krealloc)
 
-#include "../common/minimizer-orders/pcg_rxs_m_xs.h"
-#include "../common/minimizer-orders/greedymini_rank.h"
-#include "../common/minimizer-orders/greedymini_centre.h"
-#include "../common/minimizer-orders/mod_minimizer_rule.h"
+#include "../common/minimizer-schemes/pcg_rxs_m_xs.h"
+#include "../common/minimizer-schemes/greedymini_rank.h"
+#include "../common/minimizer-schemes/greedymini_centre.h"
+#include "../common/minimizer-schemes/mod_minimizer_rule.h"
 
 #include <algorithm>
 #include <cassert>
@@ -73,20 +73,20 @@
 extern "C" unsigned char seq_nt4_table[256];
 
 // ---------------------------------------------------------------------------
-// mm_order_t
+// mm_scheme_t
 // ---------------------------------------------------------------------------
 
-struct mm_order_s {
-	mm_order_kind_t kind;
+struct mm_scheme_s {
+	mm_scheme_kind_t kind;
 	uint64_t seed;
 	int t;
 	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI only
 	// GREEDYMINI only, built once at init/deserialize for the index's k
 	// (read-only afterwards, so shared by all sketching threads and by
-	// mm_order_clone's copies): the centre-extension order of the gm_k table
+	// mm_scheme_clone's copies): the centre-extension order of the gm_k table
 	// at length k (k = gm_k + 2i), and the Sigma/Gamma planes of minimap2's
 	// ACGT=0123 k-mers. --gm-projection at1-cg0 complements Sigma (sshash's
-	// custom_order_hasher.hpp does the same on its own encoding).
+	// custom_scheme_hasher.hpp does the same on its own encoding).
 	int gm_l = 0;
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
 	std::shared_ptr<const gm_centre::Order> gm_order;
@@ -101,22 +101,22 @@ void set_err(char *errbuf, size_t n, const char *msg) {
 	errbuf[n - 1] = '\0';
 }
 
-bool is_mod_kind(mm_order_kind_t k) {
-	return k == MM_ORDER_MOD_XOR;
+bool is_mod_kind(mm_scheme_kind_t k) {
+	return k == MM_SCHEME_MOD_XOR;
 }
 
 bool valid_kind(uint32_t k) {
-	return k == MM_ORDER_NATIVE || k == MM_ORDER_XOR || k == MM_ORDER_XOR_PCG_HASH ||
-	       k == MM_ORDER_GREEDYMINI || k == MM_ORDER_MOD_XOR;
+	return k == MM_SCHEME_NATIVE || k == MM_SCHEME_XOR || k == MM_SCHEME_XOR_PCG_HASH ||
+	       k == MM_SCHEME_GREEDYMINI || k == MM_SCHEME_MOD_XOR;
 }
 
-bool needs_gm_kind(mm_order_kind_t k) {
-	return k == MM_ORDER_GREEDYMINI;
+bool needs_gm_kind(mm_scheme_kind_t k) {
+	return k == MM_SCHEME_GREEDYMINI;
 }
 
 // GreedyMini rank of a k-mer: the shared centre extension
-// (common/minimizer-orders/greedymini_centre.h), as kraken2's GMRanker and
-// sshash's custom_order_hasher use it. With k = gm_k + 2i the k-mer is
+// (common/minimizer-schemes/greedymini_centre.h), as kraken2's GMRanker and
+// sshash's custom_scheme_hasher use it. With k = gm_k + 2i the k-mer is
 // x y z (|x| = |z| = i, |y| = gm_k): rank the binary (AT/CG) projection of
 // the centre y by the table, then break ties by the smaller of the two
 // strands' (Sigma, Gamma ^ toggle), toggle = the low k bits of --order-seed
@@ -141,17 +141,17 @@ template <int Kind> struct RankState;
 // rank, so masking them keeps the order and keeps a rank off UINT64_MAX
 // (sketch_single_window's "no candidate"; seed ~0 would otherwise drop
 // poly-A).
-template <> struct RankState<MM_ORDER_XOR> {
+template <> struct RankState<MM_SCHEME_XOR> {
 	uint64_t seed;
-	RankState(const mm_order_t *ord, int k) : seed(ord->seed & ((1ULL << 2 * k) - 1)) {}
+	RankState(const mm_scheme_t *ord, int k) : seed(ord->seed & ((1ULL << 2 * k) - 1)) {}
 	void push(int) {}
 	uint64_t rank(uint64_t kmer) const { return kmer ^ seed; }
 };
 
 // xor-pcg-hash: the one input hashing to UINT64_MAX is moved to UINT64_MAX - 1.
-template <> struct RankState<MM_ORDER_XOR_PCG_HASH> {
+template <> struct RankState<MM_SCHEME_XOR_PCG_HASH> {
 	uint64_t seed;
-	RankState(const mm_order_t *ord, int) : seed(ord->seed) {}
+	RankState(const mm_scheme_t *ord, int) : seed(ord->seed) {}
 	void push(int) {}
 	uint64_t rank(uint64_t kmer) const {
 		const uint64_t h = pcg_rxs_m_xs64(kmer ^ seed);
@@ -167,12 +167,12 @@ template <> struct RankState<MM_ORDER_XOR_PCG_HASH> {
 // forward word's newest base is its lowest (roll_in_low); the reverse
 // complement's newest base is its highest (roll_in_high), and complementing
 // a base keeps its AT/CG class (same Sigma bit) and flips Gamma.
-template <> struct RankState<MM_ORDER_GREEDYMINI> {
+template <> struct RankState<MM_SCHEME_GREEDYMINI> {
 	const gm_centre::Order &order;
 	const gm_centre::TwoBitPlanes<true> &planes;
 	int k;
 	uint64_t mask, sigma_f = 0, gamma_f = 0, sigma_r = 0, gamma_r = 0;
-	RankState(const mm_order_t *ord, int k_)
+	RankState(const mm_scheme_t *ord, int k_)
 		: order(*ord->gm_order), planes(ord->gm_planes), k(k_), mask((1ULL << k_) - 1) {}
 	void push(int c) {
 		const uint64_t s = planes.base_sigma((uint64_t)c);
@@ -188,9 +188,9 @@ template <> struct RankState<MM_ORDER_GREEDYMINI> {
 // ---------------------------------------------------------------------------
 // HPC span bookkeeping (copied from sketch.c's own private tiny_queue_t --
 // that one is `static inline`/file-local, not shared library code, so this
-// is minimap2's own helper duplicated the same pragmatic way common/minimizer-orders/dna_revcomp.h's
+// is minimap2's own helper duplicated the same pragmatic way common/minimizer-schemes/dna_revcomp.h's
 // own doc comment describes for consumers that don't already have a copy in
-// scope; not part of common/minimizer-orders/'s order-algorithm surface).
+// scope; not part of common/minimizer-schemes/'s order-algorithm surface).
 // ---------------------------------------------------------------------------
 
 struct tiny_queue_t { int front, count; int a[32]; };
@@ -230,7 +230,7 @@ inline mm128_t cand_to_mm128(const Cand &c, uint64_t mask) {
 }
 
 template <int Kind>
-void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int len,
+void sketch_single_window(const mm_scheme_t *ord, void *km, const char *str, int len,
                            int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
 	RankState<Kind> rs(ord, k);
@@ -317,7 +317,7 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // position mod w does not commute with mirroring the window), so a read and
 // its reverse complement select different loci (~5% at t = 5 on human DNA).
 //
-// This variant (the rule of common/minimizer-orders/mod_minimizer_rule.h,
+// This variant (the rule of common/minimizer-schemes/mod_minimizer_rule.h,
 // shared with the kraken2 and sshash forks) requires t == k (mod w), so the
 // offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in the
 // reverse complement correspond. A unique minimum samples its offset; a tie
@@ -340,7 +340,7 @@ void sketch_single_window(const mm_order_t *ord, void *km, const char *str, int 
 // in its residue slot and emitted when it leaves the window (no later window
 // can select it): output stays in position order, each k-mer once, no sort.
 // ---------------------------------------------------------------------------
-void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int len,
+void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int len,
                           int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
 	const int t = ord->t;
@@ -499,7 +499,7 @@ void sketch_mod_minimizer(const mm_order_t *ord, void *km, const char *str, int 
 } // namespace
 
 // ---------------------------------------------------------------------------
-// extern "C" API (order.h)
+// extern "C" API (scheme.h)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -512,7 +512,7 @@ const int kGmMaxK = 23;
 // already set). Returns false with a message in errbuf on an invalid length
 // (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the centre extension
 // rejects (not mirror symmetric).
-bool build_gm_order(mm_order_t *ord, int l, char *errbuf, size_t errbuf_len) {
+bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	if (!ord->gm) return true;
 	if (l > kGmMaxK) {
 		char msg[160];
@@ -535,31 +535,31 @@ bool build_gm_order(mm_order_t *ord, int l, char *errbuf, size_t errbuf_len) {
 
 } // namespace
 
-extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, size_t errbuf_len)
+extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbuf, size_t errbuf_len)
 {
 	if (errbuf && errbuf_len) errbuf[0] = '\0';
-	if (!conf) { set_err(errbuf, errbuf_len, "mm_order_init: null conf"); return nullptr; }
-	if (conf->kind == MM_ORDER_NATIVE) {
-		set_err(errbuf, errbuf_len, "mm_order_init: MM_ORDER_NATIVE does not need an order context");
+	if (!conf) { set_err(errbuf, errbuf_len, "mm_scheme_init: null conf"); return nullptr; }
+	if (conf->kind == MM_SCHEME_NATIVE) {
+		set_err(errbuf, errbuf_len, "mm_scheme_init: MM_SCHEME_NATIVE does not need a scheme context");
 		return nullptr;
 	}
 	const bool mod = is_mod_kind(conf->kind);
 	if (mod && (conf->t <= 0 || conf->t >= conf->k)) {
-		set_err(errbuf, errbuf_len, "mod-minimizer order requires 0 < --mod-t < -k");
+		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires 0 < --mod-t < -k");
 		return nullptr;
 	}
 	if (mod && !mod_rule::t_is_canonical(conf->k, conf->w, conf->t)) {
-		set_err(errbuf, errbuf_len, "mod-minimizer order requires --mod-t == -k (mod -w) (the centre tie rule)");
+		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires --mod-t == -k (mod -w) (the centre tie rule)");
 		return nullptr;
 	}
 	if (!mod && conf->t != 0) {
-		set_err(errbuf, errbuf_len, "--mod-t given but the chosen order is not a mod-minimizer order");
+		set_err(errbuf, errbuf_len, "--mod-t given but the chosen scheme is not a mod-minimizer scheme");
 		return nullptr;
 	}
 	std::shared_ptr<const GreedyMiniTable> gm;
 	if (needs_gm_kind(conf->kind)) {
 		if (!conf->greedymini_file || !*conf->greedymini_file) {
-			set_err(errbuf, errbuf_len, "greedymini order requires --greedymini-file");
+			set_err(errbuf, errbuf_len, "greedymini scheme requires --greedymini-file");
 			return nullptr;
 		}
 		try {
@@ -573,44 +573,44 @@ extern "C" mm_order_t *mm_order_init(const mm_order_conf_t *conf, char *errbuf, 
 			return nullptr;
 		}
 	} else if (conf->greedymini_file && *conf->greedymini_file) {
-		set_err(errbuf, errbuf_len, "--greedymini-file given but the chosen order does not use a GreedyMini table");
+		set_err(errbuf, errbuf_len, "--greedymini-file given but the chosen scheme does not use a GreedyMini table");
 		return nullptr;
 	}
 	if (conf->gm_projection != MM_GM_PROJ_AT0_CG1 && !needs_gm_kind(conf->kind)) {
-		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini order");
+		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini scheme");
 		return nullptr;
 	}
-	mm_order_t *ord = new (std::nothrow) mm_order_t();
+	mm_scheme_t *ord = new (std::nothrow) mm_scheme_t();
 	if (!ord) { set_err(errbuf, errbuf_len, "out of memory"); return nullptr; }
 	ord->kind = conf->kind;
 	ord->seed = conf->seed;
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_order_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
+	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_scheme_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
 		delete ord;
 		return nullptr;
 	}
 	return ord;
 }
 
-extern "C" int mm_order_validate(const mm_order_t *ord, int k, int w, char *errbuf, size_t errbuf_len)
+extern "C" int mm_scheme_validate(const mm_scheme_t *ord, int k, int w, char *errbuf, size_t errbuf_len)
 {
 	char msg[160];
-	if (!ord) { set_err(errbuf, errbuf_len, "null order"); return -1; }
+	if (!ord) { set_err(errbuf, errbuf_len, "null scheme"); return -1; }
 	if (k <= 0 || k > 28) { // native mm_sketch()'s own bound
-		std::snprintf(msg, sizeof msg, "custom minimizer orders support -k up to 28 (got %d)", k);
+		std::snprintf(msg, sizeof msg, "custom minimizer schemes support -k up to 28 (got %d)", k);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
 	if (is_mod_kind(ord->kind) && (ord->t <= 0 || ord->t >= k || !mod_rule::t_is_canonical(k, w, ord->t))) {
-		std::snprintf(msg, sizeof msg, "mod-minimizer order requires 0 < t < k and t == k (mod w) (t = %d, k = %d, w = %d)", ord->t, k, w);
+		std::snprintf(msg, sizeof msg, "mod-minimizer scheme requires 0 < t < k and t == k (mod w) (t = %d, k = %d, w = %d)", ord->t, k, w);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
 	if (needs_gm_kind(ord->kind) != (ord->gm != nullptr)) {
-		set_err(errbuf, errbuf_len, needs_gm_kind(ord->kind) ? "greedymini order without a GreedyMini table"
-		                                                     : "GreedyMini table given for an order that does not use one");
+		set_err(errbuf, errbuf_len, needs_gm_kind(ord->kind) ? "greedymini scheme without a GreedyMini table"
+		                                                     : "GreedyMini table given for a scheme that does not use one");
 		return -1;
 	}
 	if (ord->gm && (!ord->gm_order || ord->gm_l != k)) {
@@ -621,7 +621,7 @@ extern "C" int mm_order_validate(const mm_order_t *ord, int k, int w, char *errb
 	return 0;
 }
 
-extern "C" int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_t *conf)
+extern "C" int mm_scheme_matches_conf(const mm_scheme_t *ord, const mm_scheme_conf_t *conf)
 {
 	if (!ord || !conf || ord->kind != conf->kind) return 0;
 	if (needs_gm_kind(ord->kind)) {
@@ -640,34 +640,34 @@ extern "C" int mm_order_matches_conf(const mm_order_t *ord, const mm_order_conf_
 	return ord->seed == conf->seed && (!is_mod_kind(ord->kind) || ord->t == conf->t);
 }
 
-extern "C" void mm_order_destroy(mm_order_t *ord) { delete ord; }
+extern "C" void mm_scheme_destroy(mm_scheme_t *ord) { delete ord; }
 
-extern "C" mm_order_t *mm_order_clone(const mm_order_t *ord)
+extern "C" mm_scheme_t *mm_scheme_clone(const mm_scheme_t *ord)
 {
 	if (!ord) return nullptr;
-	return new (std::nothrow) mm_order_t(*ord); // shares the GreedyMiniTable via shared_ptr copy
+	return new (std::nothrow) mm_scheme_t(*ord); // shares the GreedyMiniTable via shared_ptr copy
 }
 
-extern "C" mm_order_kind_t mm_order_kind(const mm_order_t *ord) { return ord ? ord->kind : MM_ORDER_NATIVE; }
+extern "C" mm_scheme_kind_t mm_scheme_kind(const mm_scheme_t *ord) { return ord ? ord->kind : MM_SCHEME_NATIVE; }
 
-extern "C" void mm_sketch_ordered(const mm_order_t *ord, void *km, const char *str, int len,
+extern "C" void mm_sketch_scheme(const mm_scheme_t *ord, void *km, const char *str, int len,
                                    int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
 	switch (ord->kind) {
-		case MM_ORDER_XOR:
-			sketch_single_window<MM_ORDER_XOR>(ord, km, str, len, w, k, rid, is_hpc, p);
+		case MM_SCHEME_XOR:
+			sketch_single_window<MM_SCHEME_XOR>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
-		case MM_ORDER_XOR_PCG_HASH:
-			sketch_single_window<MM_ORDER_XOR_PCG_HASH>(ord, km, str, len, w, k, rid, is_hpc, p);
+		case MM_SCHEME_XOR_PCG_HASH:
+			sketch_single_window<MM_SCHEME_XOR_PCG_HASH>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
-		case MM_ORDER_GREEDYMINI:
-			sketch_single_window<MM_ORDER_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
+		case MM_SCHEME_GREEDYMINI:
+			sketch_single_window<MM_SCHEME_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
-		case MM_ORDER_MOD_XOR:
+		case MM_SCHEME_MOD_XOR:
 			sketch_mod_minimizer(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		default:
-			assert(0 && "mm_sketch_ordered: MM_ORDER_NATIVE should call mm_sketch() directly");
+			assert(0 && "mm_sketch_scheme: MM_SCHEME_NATIVE should call mm_sketch() directly");
 	}
 }
 
@@ -686,7 +686,7 @@ const size_t kChunk = 4096; // table entries per fwrite/fread
 // centre rule; an index without it was built with the retired G/T-strand rule.
 constexpr uint8_t kModTieRuleCentre = 1;
 
-uint64_t blob_len(const mm_order_t *ord) {
+uint64_t blob_len(const mm_scheme_t *ord) {
 	uint64_t len = sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int32_t) + sizeof(uint8_t);
 	if (ord->gm) len += sizeof(uint64_t) + (uint64_t)ord->gm->size() * sizeof(uint64_t);
 	return len + sizeof(uint8_t) + sizeof(int32_t) + sizeof(uint8_t);
@@ -710,7 +710,7 @@ struct SectionReader {
 
 } // namespace
 
-extern "C" int mm_order_dump(const mm_order_t *ord, FILE *fp)
+extern "C" int mm_scheme_dump(const mm_scheme_t *ord, FILE *fp)
 {
 	if (!ord || !fp) return -1;
 	const uint64_t len = blob_len(ord);
@@ -741,26 +741,26 @@ extern "C" int mm_order_dump(const mm_order_t *ord, FILE *fp)
 	return ok ? 0 : -1;
 }
 
-extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
+extern "C" mm_scheme_t *mm_scheme_load(FILE *fp, char *errbuf, size_t errbuf_len)
 {
 	if (errbuf && errbuf_len) errbuf[0] = '\0';
 	uint64_t len = 0;
 	if (std::fread(&len, sizeof len, 1, fp) != 1 || len == 0) {
-		set_err(errbuf, errbuf_len, "truncated order metadata");
+		set_err(errbuf, errbuf_len, "truncated scheme metadata");
 		return nullptr;
 	}
 	SectionReader in{fp, len};
 	uint32_t kind32; uint64_t seed; int32_t t32; uint8_t has_gm;
 	if (!in.get(&kind32, sizeof kind32) || !in.get(&seed, sizeof seed) || !in.get(&t32, sizeof t32) || !in.get(&has_gm, sizeof has_gm)) {
-		set_err(errbuf, errbuf_len, "truncated order metadata");
+		set_err(errbuf, errbuf_len, "truncated scheme metadata");
 		return nullptr;
 	}
-	if (!valid_kind(kind32) || kind32 == MM_ORDER_NATIVE) {
-		set_err(errbuf, errbuf_len, "index was built with a minimizer order this binary no longer supports; rebuild it");
+	if (!valid_kind(kind32) || kind32 == MM_SCHEME_NATIVE) {
+		set_err(errbuf, errbuf_len, "index was built with a minimizer scheme this binary no longer supports; rebuild it");
 		return nullptr;
 	}
-	if (has_gm != (needs_gm_kind((mm_order_kind_t)kind32) ? 1 : 0)) {
-		set_err(errbuf, errbuf_len, "corrupt order metadata (GreedyMini table flag does not match the order)");
+	if (has_gm != (needs_gm_kind((mm_scheme_kind_t)kind32) ? 1 : 0)) {
+		set_err(errbuf, errbuf_len, "corrupt scheme metadata (GreedyMini table flag does not match the scheme)");
 		return nullptr;
 	}
 
@@ -792,8 +792,8 @@ extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
 	if (in.left >= sizeof gm_l) in.get(&gm_l, sizeof gm_l);
 	uint8_t mod_rule_id = 0; // absent: written before the centre tie rule
 	if (in.left >= sizeof mod_rule_id) in.get(&mod_rule_id, sizeof mod_rule_id);
-	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated order metadata"); return nullptr; }
-	if (is_mod_kind((mm_order_kind_t)kind32) && mod_rule_id != kModTieRuleCentre) {
+	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated scheme metadata"); return nullptr; }
+	if (is_mod_kind((mm_scheme_kind_t)kind32) && mod_rule_id != kModTieRuleCentre) {
 		set_err(errbuf, errbuf_len, "mod-minimizer index built with the retired G/T-strand tie rule; rebuild it");
 		return nullptr;
 	}
@@ -801,9 +801,9 @@ extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
 		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini centre extension; rebuild it");
 		return nullptr;
 	}
-	mm_order_t *ord = new (std::nothrow) mm_order_t();
+	mm_scheme_t *ord = new (std::nothrow) mm_scheme_t();
 	if (!ord) { set_err(errbuf, errbuf_len, "out of memory"); return nullptr; }
-	ord->kind = (mm_order_kind_t)kind32;
+	ord->kind = (mm_scheme_kind_t)kind32;
 	ord->seed = seed;
 	ord->t = (int)t32;
 	ord->gm = gm;
@@ -812,28 +812,28 @@ extern "C" mm_order_t *mm_order_load(FILE *fp, char *errbuf, size_t errbuf_len)
 	return ord;
 }
 
-extern "C" const char *mm_order_kind_name(mm_order_kind_t kind)
+extern "C" const char *mm_scheme_kind_name(mm_scheme_kind_t kind)
 {
 	switch (kind) {
-		case MM_ORDER_NATIVE:            return "native";
-		case MM_ORDER_XOR:               return "xor";
-		case MM_ORDER_XOR_PCG_HASH:      return "xor-pcg-hash";
-		case MM_ORDER_GREEDYMINI:        return "greedymini";
-		case MM_ORDER_MOD_XOR:           return "mod-minimizer-xor";
+		case MM_SCHEME_NATIVE:            return "native";
+		case MM_SCHEME_XOR:               return "xor";
+		case MM_SCHEME_XOR_PCG_HASH:      return "xor-pcg-hash";
+		case MM_SCHEME_GREEDYMINI:        return "greedymini";
+		case MM_SCHEME_MOD_XOR:           return "mod-minimizer-xor";
 	}
 	return "unknown";
 }
 
-extern "C" int mm_order_parse_kind(const char *s, mm_order_kind_t *out)
+extern "C" int mm_scheme_parse_kind(const char *s, mm_scheme_kind_t *out)
 {
 	if (!s || !out) return -1;
-	struct Entry { const char *name; mm_order_kind_t kind; };
+	struct Entry { const char *name; mm_scheme_kind_t kind; };
 	static const Entry table[] = {
-		{ "native",                     MM_ORDER_NATIVE },
-		{ "xor",                        MM_ORDER_XOR },
-		{ "xor-pcg-hash",               MM_ORDER_XOR_PCG_HASH },
-		{ "greedymini",                 MM_ORDER_GREEDYMINI },
-		{ "mod-minimizer-xor",          MM_ORDER_MOD_XOR },
+		{ "native",                     MM_SCHEME_NATIVE },
+		{ "xor",                        MM_SCHEME_XOR },
+		{ "xor-pcg-hash",               MM_SCHEME_XOR_PCG_HASH },
+		{ "greedymini",                 MM_SCHEME_GREEDYMINI },
+		{ "mod-minimizer-xor",          MM_SCHEME_MOD_XOR },
 	};
 	for (const Entry &e : table)
 		if (std::strcmp(s, e.name) == 0) { *out = e.kind; return 0; }

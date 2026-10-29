@@ -6,7 +6,7 @@ defaults:
   datasets: f_vesca,g_gallus,m_balbisiana,h_sapiens_2,h_sapiens_3
   k: 28
   input: gzip
-  signature_order: all
+  scheme: all
   n_seeds: 5
   force: true
 

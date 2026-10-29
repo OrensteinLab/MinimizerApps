@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full sshash benchmark (all datasets x all orders/variants x 5 seeds, threads 16, canonical
+# Full sshash benchmark (all datasets x all schemes/variants x 5 seeds, threads 16, canonical
 # modality) into a fresh results dir, each timed step waiting for a quiet machine
 # (benchmark/common/wait_low_load.sh), then export.
 #
@@ -22,7 +22,7 @@ BIN="${SSHASH_BIN:-$REPO/sshash/build/sshash}"
 [ -x "$BIN" ] || { echo "error: sshash binary $BIN not found" >&2; exit 1; }
 mkdir -p "$RES"
 echo "results: $RES  binary: $BIN  $(date -Is)"
-./sshash_bench.sh run -d "${DATASETS:-cod,kestrel,human,ncbi-virus,se,hprc}" -O all -n 5 -t 16 \
+./sshash_bench.sh run -d "${DATASETS:-cod,kestrel,human,ncbi-virus,se,hprc}" -S all -n 5 -t 16 \
   --sshash "$BIN" --results-dir "$RES" || { echo "run failed (re-run resumes)" >&2; fail=1; }
 ./sshash_bench.sh export --results-dir "$RES" || { echo "export failed" >&2; fail=1; }
 echo "=== done $(date -Is)$([ "$fail" = 0 ] || echo "  (some step failed, see above)")"

@@ -1,14 +1,14 @@
-# Default order sweep. Run with: ./minimap2_bench.sh sweep
+# Default scheme sweep. Run with: ./minimap2_bench.sh sweep
 #
 # Not yet wired through benchmark/common/experiments_lib.py's generic
 # YAML-config expander the way kraken2's/kmc's/sshash's own experiments.py
 # are (see benchmark/common/experiments_lib.py's docstring) -- this file
 # documents the sweep's shape for now; minimap2_bench.sh's `sweep`/`list`
-# commands read lib/orders.sh's DEFAULT_ORDERS directly. Wiring this file
+# commands read lib/schemes.sh's DEFAULT_SCHEMES directly. Wiring this file
 # through the shared engine (a scripts/experiments.py mirroring sshash's) is
 # a natural next step once the sweep needs to vary k/w/seeds/datasets rather
-# than just the fixed order list below.
-description: "Compare minimizer orders at each dataset preset's own k (map-pb k=19, map-ont k=15), w=10"
+# than just the fixed scheme list below.
+description: "Compare minimizer schemes at each dataset preset's own k (map-pb k=19, map-ont k=15), w=10"
 
 defaults:
   dataset: smoke
@@ -18,15 +18,15 @@ defaults:
   seed: 0x2545F4914F6CDD1D
 
 configs:
-  - order: native
-  - order: xor
-  - order: xor-pcg-hash
+  - scheme: native
+  - scheme: xor
+  - scheme: xor-pcg-hash
   # greedymini: the table (gm_table; gm_k = its k) and the AT/CG projection
   # (--gm-projection) are separate parameters, one run/row per projection
-  - order: greedymini
+  - scheme: greedymini
     gm_table: w10_k15_canonical
     projection: at0-cg1
-  - order: greedymini
+  - scheme: greedymini
     gm_table: w10_k15_canonical
     projection: at1-cg0
-  - order: mod-minimizer-xor
+  - scheme: mod-minimizer-xor

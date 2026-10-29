@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""Paired per-read accuracy of every order against native, per (dataset,
+"""Paired per-read accuracy of every scheme against native, per (dataset,
 mid_occ_cap) block, from each run's map.paf and the dataset's truth.tsv.
 
 Correctness is lib/score_accuracy.py's criterion (paftools mapeval: same
 contig, same strand, overlap >= 10% of the union of true and mapped spans),
 recomputed per read so
-two orders can be compared on the *same* reads:
+two schemes can be compared on the *same* reads:
 
 - Per seed run (analysis_accuracy_paired.csv, descriptive): McNemar exact
-  test on the discordant reads (b = native right / order wrong, c = native
-  wrong / order right), two-sided binomial p, and the 95% CI of the paired
+  test on the discordant reads (b = native right / scheme wrong, c = native
+  wrong / scheme right), two-sided binomial p, and the 95% CI of the paired
   difference in correct rate, (c - b) / n, with the paired variance
   (b + c - (b - c)^2 / n) / n^2.
-- Per order (analysis_accuracy_order.csv, the inferential test stats.py uses):
-  reads are the independent unit. Every seed of an order is mapped against
+- Per scheme (analysis_accuracy_scheme.csv, the inferential test stats.py uses):
+  reads are the independent unit. Every seed of a scheme is mapped against
   the *same* native run on the *same* reads, so seeds are not independent
   replicates and their discordant counts must not be pooled as n * n_seeds
-  pairs. Instead, per read i, d_i = (mean over the order's seeds of
+  pairs. Instead, per read i, d_i = (mean over the scheme's seeds of
   correct_i) - native correct_i; the difference is mean(d) with
   SE = sd(d) / sqrt(n), and p is the paired t-test on d over reads (df =
   n - 1; n is in the hundreds to ~100k, so the CLT holds even for the
-  {-1, ..., 1}-valued d_i). An order run with a single seed is the usual
+  {-1, ..., 1}-valued d_i). A scheme run with a single seed is the usual
   paired 0/1 comparison, tested with the exact McNemar test instead.
 - MAPQ curve: for each threshold q, the fraction of reads with a primary at
   MAPQ >= q and the error rate among them (minimap2's own operating-point
   metric).
 
-Writes analysis_accuracy_paired.csv, analysis_accuracy_order.csv and
+Writes analysis_accuracy_paired.csv, analysis_accuracy_scheme.csv and
 analysis_mapq_curve.csv under --results-dir (nothing when no dataset has a
 truth.tsv). Usage:
   python3.11 analysis/accuracy_paired.py --results-dir $MINIMAP2_RESULTS_DIR --data-dir $MINIMAP2_DATA_DIR
@@ -96,12 +96,12 @@ def mcnemar_p(b: int, c: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def paired_over_reads(order_ok: list[list[int]], base_ok: list[int], idx) -> dict:
+def paired_over_reads(scheme_ok: list[list[int]], base_ok: list[int], idx) -> dict:
     """Seed-averaged paired difference vs native with reads as the unit (see
-    the module docstring): d_i = mean_s(order correct_i) - native correct_i."""
+    the module docstring): d_i = mean_s(scheme correct_i) - native correct_i."""
     idx = list(idx)
-    n, n_seeds = len(idx), len(order_ok)
-    d = [sum(ok[i] for ok in order_ok) / n_seeds - base_ok[i] for i in idx]
+    n, n_seeds = len(idx), len(scheme_ok)
+    d = [sum(ok[i] for ok in scheme_ok) / n_seeds - base_ok[i] for i in idx]
     out = {"n_seeds": n_seeds, "n_reads": n, "diff_correct_rate": None, "diff_se": None,
            "df": None, "test": None, "p": None}
     if n == 0:
@@ -127,14 +127,14 @@ def _paired_t_p(mean: float, se: float, df: int) -> float:
 
 def runs_by_block(results: Path) -> dict[tuple[str, str], dict[str, list[Path]]]:
     """{(dataset, cap): {variant: [run dirs sorted by seed_idx]}}; a variant is
-    the order's run-directory name (`xor`, `greedymini/k15_at1-cg0`, ...,
-    order_names.order_dir_name), which analysis/stats.py:id_cols splits into
-    the order, gm_k, projection, gm_table and mod_t columns."""
+    the scheme's run-directory name (`xor`, `greedymini/k15_at1-cg0`, ...,
+    scheme_names.scheme_dir_name), which analysis/stats.py:id_cols splits into
+    the scheme, gm_k, projection, gm_table and mod_t columns."""
     out: dict[tuple[str, str], dict[str, list[Path]]] = {}
     bases: dict[str, str] = {}
     for paf in sorted((results / "runs").glob("**/map.paf")):
         run = paf.parent
-        # runs/<dataset>/<cond>/<order>[/<params>]/<seed_idx>
+        # runs/<dataset>/<cond>/<scheme>[/<params>]/<seed_idx>
         parts = run.relative_to(results / "runs").parts
         if len(parts) < 4:
             continue
@@ -155,23 +155,23 @@ def main(argv=None) -> int:
     ap.add_argument("--data-dir", type=Path, required=True)
     args = ap.parse_args(argv)
 
-    paired_rows, order_rows, curve_rows = [], [], []
+    paired_rows, scheme_rows, curve_rows = [], [], []
     truths: dict[str, dict] = {}
-    for (ds, cap), orders in sorted(runs_by_block(args.results_dir).items()):
+    for (ds, cap), schemes in sorted(runs_by_block(args.results_dir).items()):
         if not (args.data_dir / ds / "truth.tsv").is_file():
             continue  # real reads (D3): no per-read correctness
         if ds not in truths:
             truths[ds] = load_truth(args.data_dir / ds / "truth.tsv")
         truth = truths[ds]
         rep = [truth[r]["in_repeat"] for r in sorted(truth)]
-        if "native" not in orders:
+        if "native" not in schemes:
             continue
-        _, base_ok, _ = correctness(truth, primary_hits(orders["native"][0] / "map.paf"))
-        for order, runs in sorted(orders.items()):
-            order_ok: list[list[int]] = []
+        _, base_ok, _ = correctness(truth, primary_hits(schemes["native"][0] / "map.paf"))
+        for scheme, runs in sorted(schemes.items()):
+            scheme_ok: list[list[int]] = []
             for run in runs:
                 _, ok, mq = correctness(truth, primary_hits(run / "map.paf"))
-                order_ok.append(ok)
+                scheme_ok.append(ok)
                 for subset, mask in (("all", None), ("in_repeat", rep)):
                     idx = range(len(ok)) if mask is None else [i for i, m in enumerate(mask) if m]
                     n = len(idx)
@@ -181,10 +181,10 @@ def main(argv=None) -> int:
                     var = (b + c - (b - c) ** 2 / n) / n ** 2 if n else 0.0
                     half = 1.96 * math.sqrt(max(var, 0.0))
                     paired_rows.append({
-                        "dataset": ds, **id_cols(order), "mid_occ_cap": cap, "seed_idx": run.name,
+                        "dataset": ds, **id_cols(scheme), "mid_occ_cap": cap, "seed_idx": run.name,
                         "subset": subset, "n_reads": n,
                         "correct": sum(ok[i] for i in idx), "native_correct": sum(base_ok[i] for i in idx),
-                        "b_native_only": b, "c_order_only": c,
+                        "b_native_only": b, "c_scheme_only": c,
                         "diff_correct_rate": round(diff, 6),
                         "ci95_lo": round(diff - half, 6), "ci95_hi": round(diff + half, 6),
                         "mcnemar_p": round(mcnemar_p(b, c), 6),
@@ -194,25 +194,25 @@ def main(argv=None) -> int:
                     sel = [i for i in range(n) if mq[i] >= q]
                     wrong = sum(1 for i in sel if not ok[i])
                     curve_rows.append({
-                        "dataset": ds, **id_cols(order), "mid_occ_cap": cap, "seed_idx": run.name,
+                        "dataset": ds, **id_cols(scheme), "mid_occ_cap": cap, "seed_idx": run.name,
                         "mapq_ge": q, "frac_reads": round(len(sel) / n, 6),
                         "error_rate": round(wrong / len(sel), 6) if sel else None, "n_wrong": wrong,
                     })
-            if order != "native":
+            if scheme != "native":
                 for subset, mask in (("all", None), ("in_repeat", rep)):
                     idx = range(len(base_ok)) if mask is None else [i for i, m in enumerate(mask) if m]
-                    res = paired_over_reads(order_ok, base_ok, idx)
+                    res = paired_over_reads(scheme_ok, base_ok, idx)
                     if res["p"] is not None:
                         res["p"] = round(res["p"], 8)
-                    order_rows.append({"dataset": ds, **id_cols(order), "mid_occ_cap": cap, "subset": subset, **res})
-            print(f"{ds} {cap} {order}: {len(runs)} run(s)", file=sys.stderr)
+                    scheme_rows.append({"dataset": ds, **id_cols(scheme), "mid_occ_cap": cap, "subset": subset, **res})
+            print(f"{ds} {cap} {scheme}: {len(runs)} run(s)", file=sys.stderr)
 
     if not paired_rows:
         print("no dataset with truth.tsv and a native run: nothing to compare (real-read datasets "
               "such as D3 have no per-read correctness)", file=sys.stderr)
         return 0
     for name, rows in (("analysis_accuracy_paired.csv", paired_rows),
-                       ("analysis_accuracy_order.csv", order_rows),
+                       ("analysis_accuracy_scheme.csv", scheme_rows),
                        ("analysis_mapq_curve.csv", curve_rows)):
         if not rows:
             continue

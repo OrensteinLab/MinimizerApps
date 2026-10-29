@@ -7,8 +7,8 @@ Reads ``<results>/runs`` and writes CSVs to ``<results>/csvs`` and the workbook 
 - ``kmc3_runs.csv`` — one row per run (metrics + telemetry)
 - ``kmc3_summary.csv`` — one row per run (per seed; headline metrics)
 - ``kmc3_vs_paper.csv`` — lex runs vs ``paper_kmc3.csv`` (when paper CSV exists)
-- ``kmc3_orders.csv`` — the ``orders`` sheet (one row per order variant, k, w, L)
-- ``kmc3_results.xlsx`` — ``overview`` (column reference), ``orders``, ``datasets``,
+- ``kmc3_schemes.csv`` — the ``schemes`` sheet (one row per scheme variant, k, w, L)
+- ``kmc3_results.xlsx`` — ``overview`` (column reference), ``schemes``, ``datasets``,
   ``summary`` (mean/std), ``readlen_check``, ``gm_lut``, ``runs``, ``vs_paper``
   (written with benchmark/common/xlsx_book.write_book)
 
@@ -16,14 +16,14 @@ Every sheet/CSV uses the unified parameter names k = minimizer length (kmc -p),
 w = window, L = k + w - 1 = kmc's k-mer length (kmc -k); internally this module keeps
 kmc's own k/p and renames on output (``unify_rows``).
 
-Orders are the canonical names of benchmark/common/order_names.py (``xor``,
+Schemes are the canonical names of benchmark/common/scheme_names.py (``xor``,
 ``xor-pcg-hash``, ``greedymini``) plus kmc's baselines ``default`` / ``lex``; the
 GreedyMini identity is the separate columns ``gm_k`` (= minimizer length k of the
 table), ``projection``, ``gm_table`` and ``gm_lut`` (dna | binary LUT backend).
 - ``kmc3_density_particular.csv`` — per-dataset particular DNA vs binary factors
   (from ``scripts density``; GM-DNA rows get ``binary_density_factor`` for bin/DNA comparison)
 
-Exits with an error if custom-order k-mer counts differ from the lex baseline.
+Exits with an error if custom-scheme k-mer counts differ from the lex baseline.
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-import order_names
+import scheme_names
 from paths import bench_paths
-import orders_sheet
+import schemes_sheet
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib
 import step_record
 from scripts.common import die, load_dotenv
@@ -57,21 +57,21 @@ from scripts.density import (
     particular_index,
     particular_variant_index,
 )
-from scripts.expected_density import expected_orders_csv_path, load_expected_orders
+from scripts.expected_density import expected_schemes_csv_path, load_expected_schemes
 from scripts.metrics import enrich_super_kmer_metrics
 from scripts.schemes import (
     BASELINES,
     GM_ID_FIELDS,
     ID_FIELDS,
     SCHEME_ORDER,
-    order_from_json,
+    scheme_from_json,
     resolve_scheme_label,
     variant_key,
     variant_sort_key,
 )
 
-# Ratios are taken against kmc's shipped lex order, the `default` rows.
-BASELINE_ORDER = "default"
+# Ratios are taken against kmc's shipped lex order, the `default` scheme rows.
+BASELINE_SCHEME = "default"
 
 
 def results_dir(path: str) -> Path:
@@ -239,11 +239,11 @@ SUMMARY_PARAM_FIELDS = (
 RUNS_FIELD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         # Matches SUMMARY_PARAM_FIELDS' order for every shared field (dataset ..
-        # order, gm_k, projection, gm_table, gm_lut, then the app params n_bins, threads,
+        # scheme, gm_k, projection, gm_table, gm_lut, then the app params n_bins, threads,
         # strict_memory, mem_limit_gb), so "runs" and "summary" line up
         # column-for-column as far as their differing row granularity allows;
         # runs-only extras (run_id, label, signature_order_label, seed_idx,
-        # seed) are placed per the rule: dataset, order, params, seeds.
+        # seed) are placed per the rule: dataset, scheme, params, seeds.
         "id / params",
         (
             "run_id",
@@ -364,10 +364,10 @@ CATEGORY_LABELS: dict[str, str] = {
 }
 
 
-def order_of(row: dict) -> str:
-    """Order of a run: canonical name or baseline ("default" = KMC's shipped
+def scheme_of(row: dict) -> str:
+    """Scheme of a run: canonical name or baseline ("default" = KMC's shipped
     is_allowed-protected lex, "lex" = true canonical lex with no denylist --
-    see the orders sheet)."""
+    see the schemes sheet)."""
     return resolve_scheme_label(row)
 
 
@@ -396,7 +396,7 @@ def scheme_sort_key(row: dict) -> tuple:
 
 def decorate_export_row(row: dict) -> dict:
     out = dict(row)
-    out["order"] = order_of(row)
+    out["scheme"] = scheme_of(row)
     for field in GM_ID_FIELDS:
         out[field] = row.get(field) if row.get(field) not in ("",) else None
     out["p"] = row.get("signature_len")
@@ -433,7 +433,7 @@ def config_group_key(r: dict) -> tuple:
 
 
 def agg_group_key(r: dict) -> tuple:
-    """Config + the full order identity (order, gm_k, projection, gm_table, gm_lut),
+    """Config + the full scheme identity (scheme, gm_k, projection, gm_table, gm_lut),
     so e.g. the two projections or LUT backends of greedymini never pool."""
     return (*config_group_key(r), *(str(x) if x is not None else "" for x in variant_key(r)))
 
@@ -538,14 +538,14 @@ def _apply_lex_ratio_formulas(
     col = {name: _xlsx_col(i) for i, name in enumerate(fields)}
     lex_at: dict[tuple, int] = {}
     for i, row in enumerate(rows, start=XLSX_DATA_START_ROW):
-        if row.get("order") == BASELINE_ORDER:
+        if row.get("scheme") == BASELINE_SCHEME:
             lex_at[_xlsx_match_key(row, with_seed=with_seed)] = i
     for i, row in enumerate(rows, start=XLSX_DATA_START_ROW):
         lex_i = lex_at.get(_xlsx_match_key(row, with_seed=with_seed))
         if lex_i is None:
             continue
         idx = i - XLSX_DATA_START_ROW
-        is_lex = row.get("order") == BASELINE_ORDER
+        is_lex = row.get("scheme") == BASELINE_SCHEME
         for metric in RATIO_METRICS:
             rname = f"{metric}_ratio"
             mcol = col.get(metric_field(metric))
@@ -776,13 +776,13 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
     sig_order = meta.get("signature_order") or stats.get("json_signature_order") or "default"
     order_label = meta.get("signature_order_label") or stats.get("json_signature_order_label") or ""
     order_mode = meta.get("signature_order_mode") or stats.get("json_signature_order_mode") or ""
-    # canonical order + separate gm columns (meta.json written by scripts/meta.py);
-    # a meta without `order` falls back to kmc.json's self-report.
-    order = meta.get("order") or order_from_json(sig_order, order_mode, order_label)
-    order_names.validate_order(order, BASELINES)
-    is_gm = order_names.is_greedymini(order)
+    # canonical scheme + separate gm columns (meta.json written by scripts/meta.py);
+    # a meta without `scheme` falls back to kmc.json's self-report.
+    scheme = meta.get("scheme") or scheme_from_json(sig_order, order_mode, order_label)
+    scheme_names.validate_scheme(scheme, BASELINES)
+    is_gm = scheme_names.is_greedymini(scheme)
     gm_k = meta.get("gm_k") if is_gm else None
-    projection = (meta.get("projection") or order_names.DEFAULT_PROJECTION) if is_gm else None
+    projection = (meta.get("projection") or scheme_names.DEFAULT_PROJECTION) if is_gm else None
     gm_lut = (meta.get("gm_lut") or stats.get("json_signature_order_gm_lut") or "") if is_gm else ""
     order_seed = meta.get("signature_order_seed")
     if order_seed is None:
@@ -805,7 +805,7 @@ def load_run_row(run_dir: Path, *, runs_root: Path | None = None) -> dict | None
         "strict_memory": meta.get("strict_memory"),
         "config_tag": meta.get("config_tag", ""),
         "signature_len": meta.get("signature_len"),
-        "order": order,
+        "scheme": scheme,
         "gm_k": gm_k,
         "projection": projection,
         "gm_table": (meta.get("gm_table") or None) if is_gm else None,
@@ -881,10 +881,10 @@ def _attach_lex_ratios(
 ) -> None:
     lex_at: dict[tuple, dict] = {}
     for row in rows:
-        if row.get("order") == BASELINE_ORDER:
+        if row.get("scheme") == BASELINE_SCHEME:
             lex_at[row_key(row)] = row
     for row in rows:
-        is_lex = row.get("order") == BASELINE_ORDER
+        is_lex = row.get("scheme") == BASELINE_SCHEME
         base = lex_at.get(row_key(row))
         for metric in RATIO_METRICS:
             rname = ratio_name(metric)
@@ -985,7 +985,7 @@ def gm_lut_summary_rows(all_rows: Sequence[dict], main_rows: Sequence[dict]) -> 
 
     lex_pool: dict[tuple, list[dict]] = {}
     for row in main_rows:
-        if row.get("order") == BASELINE_ORDER:
+        if row.get("scheme") == BASELINE_SCHEME:
             lex_pool.setdefault(_xlsx_match_key(row, with_seed=False), []).append(row)
 
     by_layout: dict[tuple, dict[tuple, list[dict]]] = {}
@@ -1010,7 +1010,7 @@ def gm_lut_summary_rows(all_rows: Sequence[dict], main_rows: Sequence[dict]) -> 
     return summary_xlsx_rows(bundle)
 
 
-# Unified parameter names (common/orders_sheet.py): k = minimizer length, w = window,
+# Unified parameter names (common/schemes_sheet.py): k = minimizer length, w = window,
 # L = k + w - 1 = span (kmc's k-mer length). Internally this module keeps kmc's own
 # names (k = k-mer length, p = signature length, as in meta.json / the CLI); every
 # sheet and CSV is renamed once on the way out. Simultaneous swap: old k -> L, old p -> k.
@@ -1026,7 +1026,7 @@ def unify_rows(rows: Sequence[dict]) -> list[dict]:
 
 
 def write_csv(path: Path, rows: list[dict], fields: Sequence[str] | None = None, *, unified: bool = False) -> None:
-    """`unified=True`: rows/fields already use the unified names (orders)."""
+    """`unified=True`: rows/fields already use the unified names (schemes)."""
     if not rows:
         path.write_text("")
         return
@@ -1063,14 +1063,14 @@ XLSX_MERGE_FIELDS: dict[str, frozenset[str]] = {
     "gm_lut": frozenset(
         (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, "n_repeats")
     ),
-    # runs: the id columns (order, gm_k, projection, gm_table, gm_lut) merge over the
+    # runs: the id columns (scheme, gm_k, projection, gm_table, gm_lut) merge over the
     # seed repeats of one variant -- see XLSX_ID_MERGE_SCOPE
     "runs": frozenset(
         (*XLSX_MERGE_DATASET, "avg_read_len", *XLSX_MERGE_MINIMIZER, *XLSX_MERGE_CONFIG, *ID_FIELDS)
     ),
 }
 # An id column merges across rows that agree on the whole config + the full
-# order identity (so two variants never share a merged id cell).
+# scheme identity (so two variants never share a merged id cell).
 XLSX_ID_MERGE_SCOPE = {
     f: ("dataset", "L", "input_format", "n_bins", "threads", "mem_limit_gb", "strict_memory", *ID_FIELDS)
     for f in ID_FIELDS
@@ -1212,8 +1212,8 @@ def _xlsx_field_categories(raw_name: str, fields: Sequence[str]) -> list[str] | 
         return _categories_from_groups(fields, VS_PAPER_FIELD_GROUPS)
     if raw_name == "overview":
         return ["metrics reference"] * len(fields)
-    if raw_name == "orders":
-        return ["order reference"] * len(fields)
+    if raw_name == "schemes":
+        return ["scheme reference"] * len(fields)
     if raw_name == "datasets":
         return ["dataset reference"] * len(fields)
     if raw_name == "signature_cost":
@@ -1290,7 +1290,7 @@ def make_sheet(
     n_bins / threads cell fills. Category bands and headers are not filled."""
     fields = list(fields)
     categories = _xlsx_field_categories(name, fields)
-    if name not in ("orders", "overview"):  # those two are authored with the unified names
+    if name not in ("schemes", "overview"):  # those two are authored with the unified names
         fields = [unify_name(f) for f in fields]
         rows = unify_rows(rows)
     sheet: dict = {
@@ -1301,7 +1301,7 @@ def make_sheet(
     if categories:
         sheet["categories"] = [_category_display(c) for c in categories]
     wide = {f: _WIDE_TEXT_FIELDS[f] for f in fields if f in _WIDE_TEXT_FIELDS}
-    if name in ("overview", "orders", "datasets") and wide:
+    if name in ("overview", "schemes", "datasets") and wide:
         sheet["widths"] = wide
         sheet["wrap_fields"] = [f for f in wide if f in ("meaning", "notes", "description")]
     if name in XLSX_COLOR_SHEETS:
@@ -1330,7 +1330,7 @@ def validate_custom_vs_lex(rows: list[dict]) -> tuple[int, list[str]]:
     by_key: dict[tuple, dict[str, dict]] = {}
     for r in rows:
         label = r.get("signature_order_label") or ""
-        slot = "lex" if r.get("order") == BASELINE_ORDER or not label else f"custom:{label}"
+        slot = "lex" if r.get("scheme") == BASELINE_SCHEME or not label else f"custom:{label}"
         by_key.setdefault(config_group_key(r), {})[slot] = r
 
     errors: list[str] = []
@@ -1364,7 +1364,7 @@ def vs_paper_rows(rows: list[dict], paper_rows: list[dict], platform: str) -> li
     }
     groups: dict[tuple, list[dict]] = {}
     for r in rows:
-        if order_of(r) != BASELINE_ORDER:
+        if scheme_of(r) != BASELINE_SCHEME:
             continue
         groups.setdefault(config_group_key(r), []).append(r)
 
@@ -1436,25 +1436,26 @@ _METRIC_MEANING: dict[str, tuple[str, str]] = {
     "count_cpu_s": (
         "CPU time of the timed kmc call (user + system, summed over all threads; GNU time -v). Wall time = CPU "
         "time / cores actually running, so wall time rises with contention or input reads while CPU time mostly "
-        "does not: compare orders on both -- a wall-time difference without a CPU-time one is load or I/O, "
-        "not the order", "seconds"),
+        "does not: compare schemes on both -- a wall-time difference without a CPU-time one is load or I/O, "
+        "not the scheme", "seconds"),
     "count_stage1_s": ("KMC internal stage 1 time (splitting)", "seconds"),
     "count_stage2_s": ("KMC internal stage 2 time (counting)", "seconds"),
     "count_stage3_s": ("KMC internal stage 3 time (only reported by some KMC versions/modes)", "seconds"),
     "count_max_rss_gb": ("peak RSS of the timed kmc call (GNU time -v)", "decimal GB (KiB * 1024 / 10^9; GNU time reports KiB)"),
 }
-_ORDER_SHEET_MEANING: dict[str, tuple[str, str]] = {
-    "order": (
-        "signature/minimizer ordering scheme (canonical names, orders/README.md)",
+_SCHEME_SHEET_MEANING: dict[str, tuple[str, str]] = {
+    "scheme": (
+        "signature (minimizer) scheme = an order + the minimizer selection rule (canonical names, "
+        "benchmark/common/scheme_names.py, orders/README.md)",
         "default (kmc's shipped lex, is_allowed-protected) | lex (pure canonical lex, no denylist) | xor (random "
-        "xor seed) | xor-pcg-hash (xor seed then PCG hash) | greedymini (GreedyMini UHS table) -- see the orders "
+        "xor seed) | xor-pcg-hash (xor seed then PCG hash) | greedymini (GreedyMini UHS table) -- see the schemes "
         "sheet for what each one actually does"),
     "gm_k": ("greedymini only: table k (= minimizer length k)", ""),
     "projection": ("greedymini only: DNA->binary projection (at0-cg1 default | at1-cg0 = kmc -oat1)", ""),
     "gm_table": ("greedymini only: table file stem (w{w}_k{k}_canonical)", ""),
     "gm_lut": (
         "greedymini only: table LUT backend (dna = 4^k DNA table | binary = 2^k rank LUT + runtime projection)",
-        "gm_k / projection / gm_table / gm_lut are separate columns, never packed into the order name; two rows "
+        "gm_k / projection / gm_table / gm_lut are separate columns, never packed into the scheme name; two rows "
         "that differ in any of them are different variants and are never pooled"),
 }
 _COLUMN_MEANING: dict[str, tuple[str, str]] = {
@@ -1519,9 +1520,9 @@ _COLUMN_MEANING: dict[str, tuple[str, str]] = {
     "paper_count_wall_s": ("published KMC 3 paper wall time", "seconds"),
     "paper_count_max_rss_gb": ("published KMC 3 paper memory", "decimal GB"),
     "paper_disk_gb": ("published KMC 3 paper temp disk usage", "decimal GB"),
-    "description": ("what the order variant does", ""),
+    "description": ("what the scheme variant does", ""),
     "cli": ("kmc command-line flags that select this variant", ""),
-    "is_allowed_denylist": ("whether kmc's is_allowed denylist (forbidden signatures) applies to this order", ""),
+    "is_allowed_denylist": ("whether kmc's is_allowed denylist (forbidden signatures) applies to this scheme", ""),
     "expected_density_factor_mean": (
         "theoretical density factor on i.i.d. random DNA, mean over the benchmark's seeds for "
         "xor/xor-pcg-hash/greedymini (0 std for the deterministic default/lex)", ""),
@@ -1543,8 +1544,8 @@ def _legend_entry(sheet: str, col: str) -> tuple[str, str]:
                 "count_wall_s_ratio, which compares to this run's own lex baseline")
         if col in _METRIC_MEANING:
             return (_METRIC_MEANING[col][0] + " (default/lex runs, mean across repeats)", _METRIC_MEANING[col][1])
-    if col in _ORDER_SHEET_MEANING:
-        return _ORDER_SHEET_MEANING[col]
+    if col in _SCHEME_SHEET_MEANING:
+        return _SCHEME_SHEET_MEANING[col]
     if col in _COLUMN_MEANING:
         return _COLUMN_MEANING[col]
     for suf in ("_mean", "_std", "_ratio"):
@@ -1592,8 +1593,8 @@ def overview_rows(sheet_fields: dict[str, Sequence[str]]) -> list[dict]:
     ]
 
 
-ORDER_DESCRIPTIONS: dict[str, tuple[str, str]] = {
-    # order -> (description, has is_allowed denylist: yes/no)
+SCHEME_DESCRIPTIONS: dict[str, tuple[str, str]] = {
+    # scheme -> (description, has is_allowed denylist: yes/no)
     "default": (
         "KMC's shipped lexicographic order: canonical (reverse-complement-min) integer value "
         "of the p-mer, EXCEPT is_allowed() (kmc_api/mmer.h) maps poly-A/poly-T-type "
@@ -1651,48 +1652,48 @@ def _dataset_sort_key(dataset: str) -> tuple:
         return (1, dataset)
 
 
-ORDER_CLI: dict[str, str] = {
+SCHEME_CLI: dict[str, str] = {
     "default": "kmc -k<L> -p<k> (shipped order, no -or/-co)",
     "lex": "kmc -k<L> -p<k> -orxor -os0",
     "xor": "kmc -k<L> -p<k> -orxor -os<seed>",
     "xor-pcg-hash": "kmc -k<L> -p<k> -orxor-pcg-hash -os<seed>",
     "greedymini": "kmc -k<L> -p<k> -co<gm_table>[_dna].gm -ol<label> -os<seed>",
 }
-ORDER_CLI_AT1 = " -oat1"  # appended for projection at1-cg0 (binary .gm only)
+SCHEME_CLI_AT1 = " -oat1"  # appended for projection at1-cg0 (binary .gm only)
 
-# Deterministic orders: no seed, so their expected-density std is 0 (the
+# Deterministic schemes: no seed, so their expected-density std is 0 (the
 # cache leaves it blank because there is nothing to average over).
-DETERMINISTIC_ORDERS = frozenset({"default", "lex"})
+DETERMINISTIC_SCHEMES = frozenset({"default", "lex"})
 
 
-def orders_field_order(datasets: Sequence[str]) -> list[str]:
-    """Shared `orders` layout (common/orders_sheet.py) minus `mod_t` (a
+def schemes_field_order(datasets: Sequence[str]) -> list[str]:
+    """Shared `schemes` layout (common/schemes_sheet.py) minus `mod_t` (a
     mod-minimizer parameter kmc has no use for), plus kmc's `is_allowed_denylist`."""
-    fields = [f for f in orders_sheet.orders_fields(datasets, with_gm_lut=True) if f != "mod_t"]
+    fields = [f for f in schemes_sheet.schemes_fields(datasets, with_gm_lut=True) if f != "mod_t"]
     fields.insert(fields.index("cli") + 1, "is_allowed_denylist")
     return fields
 
 
-def orders_density_fields(datasets: Sequence[str]) -> list[str]:
+def schemes_density_fields(datasets: Sequence[str]) -> list[str]:
     """The density columns that must never be empty."""
-    return [*orders_sheet.EXPECTED_FIELDS, *orders_sheet.particular_fields(datasets)]
+    return [*schemes_sheet.EXPECTED_FIELDS, *schemes_sheet.particular_fields(datasets)]
 
 
-def check_orders_complete(rows: Sequence[dict], datasets: Sequence[str]) -> None:
-    """Refuse to write an orders sheet with an empty density cell."""
-    missing = orders_sheet.missing_cells(rows, orders_density_fields(datasets))
+def check_schemes_complete(rows: Sequence[dict], datasets: Sequence[str]) -> None:
+    """Refuse to write a schemes sheet with an empty density cell."""
+    missing = schemes_sheet.missing_cells(rows, schemes_density_fields(datasets))
     if not missing:
         return
     lines = []
     for i, field in missing:
         r = rows[i]
-        ident = "/".join(str(r.get(f)) for f in ("order", "gm_lut", "projection") if r.get(f))
+        ident = "/".join(str(r.get(f)) for f in ("scheme", "gm_lut", "projection") if r.get(f))
         lines.append(f"  {ident} (k={r.get('k')} w={r.get('w')} L={r.get('L')}): {field}")
     die(
-        f"orders sheet has {len(missing)} empty density cell(s):\n" + "\n".join(lines) + "\n"
+        f"schemes sheet has {len(missing)} empty density cell(s):\n" + "\n".join(lines) + "\n"
         "fill expected cells with `python -m scripts expected-density --force`, and particular "
-        "cells of (order, dataset) pairs without a kmc run with `python -m scripts density "
-        "particular-orders --order O [--projection P] --datasets D`"
+        "cells of (scheme, dataset) pairs without a kmc run with `python -m scripts density "
+        "particular-schemes --scheme S [--projection P] --datasets D`"
     )
 
 
@@ -1702,8 +1703,8 @@ def _mean_std_or_zero(values: Sequence[float]) -> tuple[float, float]:
     return round(mean, 4), (round(statistics.stdev(values), 4) if len(values) > 1 else 0.0)
 
 
-def orders_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], list[str]]:
-    """One row per (order variant, k, w, L), k = p (minimizer length), w = window,
+def schemes_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], list[str]]:
+    """One row per (scheme variant, k, w, L), k = p (minimizer length), w = window,
     L = k + w - 1 (kmc's k-mer length): description + cli, theoretical expected
     density_factor on i.i.d. random DNA (mean/std over the benchmark's predefined
     seeds for xor/xor-pcg-hash/greedymini; std 0 for the deterministic default/lex),
@@ -1713,7 +1714,7 @@ def orders_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], 
     bins/threads/input format do not change it, so every config counts, with
     repeats of one seed averaged first). A (variant, dataset) with no kmc run falls
     back to the density-only scan rows of kmc3_density_particular.csv
-    (`scripts density particular-orders`), std 0 (one scan)."""
+    (`scripts density particular-schemes`), std 0 (one scan)."""
     scans = particular_variant_index(load_particular_rows(particular_csv_path(out_root)))
 
     usable = [r for r in main_rows if _as_float(r.get("density_factor")) is not None]
@@ -1736,24 +1737,24 @@ def orders_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], 
             _as_float(r["density_factor"])
         )
 
-    expected = load_expected_orders(out_root)
+    expected = load_expected_schemes(out_root)
     if not expected:
         print(
-            f"warning: no {expected_orders_csv_path(out_root).name}; "
-            "run `python -m scripts expected-density` for per-order expected density",
+            f"warning: no {expected_schemes_csv_path(out_root).name}; "
+            "run `python -m scripts expected-density` for per-scheme expected density",
             file=sys.stderr,
         )
 
     out: list[dict] = []
     for ident in sorted(id_rows, key=lambda i: (variant_sort_key(id_rows[i]), i[1:])):
-        scheme, p, w, L = ident
-        order, gm_k, projection, gm_table, gm_lut = scheme
-        desc, denylist = ORDER_DESCRIPTIONS.get(order, ("", ""))
-        cli = ORDER_CLI.get(order, "")
+        variant, p, w, L = ident
+        scheme, gm_k, projection, gm_table, gm_lut = variant
+        desc, denylist = SCHEME_DESCRIPTIONS.get(scheme, ("", ""))
+        cli = SCHEME_CLI.get(scheme, "")
         if projection == "at1-cg0":
-            cli += ORDER_CLI_AT1
+            cli += SCHEME_CLI_AT1
         row: dict = {
-            "order": order,
+            "scheme": scheme,
             "gm_k": gm_k,
             "projection": projection,
             "gm_table": gm_table,
@@ -1762,20 +1763,20 @@ def orders_rows(main_rows: Sequence[dict], out_root: Path) -> tuple[list[dict], 
             "cli": cli,
             "is_allowed_denylist": denylist,
         }
-        orders_sheet.with_klw(row, p, w)
+        schemes_sheet.with_klw(row, p, w)
         if row["L"] != L:
-            die(f"orders: k={p} w={w} does not give L={L} for {order}")
-        exp = expected.get((order, projection or ""), {})
+            die(f"schemes: k={p} w={w} does not give L={L} for {scheme}")
+        exp = expected.get((scheme, projection or ""), {})
         if int(exp.get("k") or 0) == p and int(exp.get("w") or 0) == w:
             row["expected_density_factor_mean"] = _as_float(exp.get("density_factor_mean"))
             std = _as_float(exp.get("density_factor_std"))
-            row["expected_density_factor_std"] = 0.0 if std is None and order in DETERMINISTIC_ORDERS else std
+            row["expected_density_factor_std"] = 0.0 if std is None and scheme in DETERMINISTIC_SCHEMES else std
         for ds in datasets:
             seeds = by_id.get(ident, {}).get(ds)
             if seeds:
                 vals = [statistics.mean(v) for v in seeds.values()]
             else:
-                scan = scans.get((order, projection or "", ds, L, p))
+                scan = scans.get((scheme, projection or "", ds, L, p))
                 v = _as_float(scan.get("density_factor_dna")) if scan else None
                 vals = [v] if v is not None else []
             if vals:
@@ -1820,7 +1821,7 @@ def datasets_rows(main_rows: Sequence[dict], out_root: Path, paper_rows: Sequenc
     canon = [
         r
         for r in main_rows
-        if order_of(r) == BASELINE_ORDER
+        if scheme_of(r) == BASELINE_SCHEME
         and int(r.get("n_bins") or 0) == 512
         and int(r.get("threads") or 0) == 12
         and not r.get("strict_memory")
@@ -1889,8 +1890,8 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     readlen_xlsx = summary_xlsx_rows(readlen_rows) if readlen_rows else []
     runs_xlsx = [dict(r) for r in main_rows]
     gm_lut_xlsx = gm_lut_summary_rows(rows, main_rows)
-    orders_xlsx, orders_datasets = orders_rows(main_rows, out_root)
-    check_orders_complete(orders_xlsx, orders_datasets)
+    schemes_xlsx, schemes_datasets = schemes_rows(main_rows, out_root)
+    check_schemes_complete(schemes_xlsx, schemes_datasets)
     n_lex_cmp, count_errors = validate_custom_vs_lex(main_rows)
 
     paper_path = Path(args.paper_csv)
@@ -1931,7 +1932,7 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         write_csv(out_root / "kmc3_gm_lut.csv", gm_lut_xlsx, gm_lut_csv_fields)
     attach_summary_lex_ratios(summary_xlsx)
     write_csv(out_root / "kmc3_summary.csv", summary_xlsx, prune_empty_fields(summary_xlsx, summary_xlsx_field_order()))
-    write_csv(out_root / "kmc3_orders.csv", orders_xlsx, orders_field_order(orders_datasets), unified=True)
+    write_csv(out_root / "kmc3_schemes.csv", schemes_xlsx, schemes_field_order(schemes_datasets), unified=True)
     if vs_paper:
         write_csv(out_root / "kmc3_vs_paper.csv", vs_paper, vs_paper_field_order())
     signature_cost = load_signature_cost(results_root)
@@ -1948,10 +1949,10 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     readlen_fields = prepare_agg_xlsx_sheet(readlen_xlsx) if readlen_xlsx else []
     runs_fields = prepare_runs_xlsx_sheet(runs_xlsx)
     gm_lut_fields = prepare_agg_xlsx_sheet(gm_lut_xlsx) if gm_lut_xlsx else []
-    orders_fields = orders_field_order(orders_datasets)  # complete by check_orders_complete
+    schemes_fields = schemes_field_order(schemes_datasets)  # complete by check_schemes_complete
     datasets_fields = prune_empty_fields(datasets_xlsx, datasets_field_order())
     sheets = [
-        make_sheet("orders", orders_xlsx, orders_fields),
+        make_sheet("schemes", schemes_xlsx, schemes_fields),
         make_sheet("datasets", datasets_xlsx, datasets_fields),
         make_sheet("summary", summary_xlsx, summary_fields, footer_rows=summary_footer),
     ]

@@ -37,7 +37,7 @@ from xlsx_util import write_csv  # noqa: E402
 ALPHA = 0.05
 TOST_MARGIN = 1.05
 
-# app -> list of (runs csv, setting columns, default order, the metrics of the paper's figures)
+# app -> list of (runs csv, setting columns, default scheme, the metrics of the paper's figures)
 SPEC = {
     "kraken2": [
         ("kraken2_build_runs.csv", ("library",), "xor", ["build_wall_s", "index_size_gb", "build_max_rss_gb"]),
@@ -82,10 +82,10 @@ def log_ratios(results, app):
         rows = [r for r in rows if not SKIP.get(app, lambda _r: False)(r)]
         base = defaultdict(list)
         for r in rows:
-            if r.get("order") == dflt:
+            if r.get("scheme") == dflt:
                 base[(tuple(r.get(c, "") for c in ctx), r.get("seed_idx"))].append(r)
         for r in rows:
-            if r.get("order") == dflt:
+            if r.get("scheme") == dflt:
                 continue
             setting = tuple(r.get(c, "") for c in ctx)
             b = base.get((setting, r.get("seed_idx")))

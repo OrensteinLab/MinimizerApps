@@ -1,13 +1,13 @@
-"""Fixed positive/negative k-mer query sets + the order/seed equivalence gate.
+"""Fixed positive/negative k-mer query sets + the scheme/seed equivalence gate.
 
 Generated once per dataset from a throwaway *native*-order reference index
 (sampling real k-mers from the input FASTA as positives, and random
 33-mers verified absent via `sshash query` as negatives), then re-checked
-against every other order/seed's index for that dataset with the exact same
-fixed sets -- so "does this order answer membership queries the same way"
+against every other scheme/seed's index for that dataset with the exact same
+fixed sets -- so "does this scheme answer membership queries the same way"
 is tested with the same yardstick everywhere, not re-derived per run.
 
-See export.py:validate_orders_equivalence for the hard-fail gate that reads
+See export.py:validate_schemes_equivalence for the hard-fail gate that reads
 back the `query_pos_match`/`query_neg_match`/`num_kmers` fields this module
 (via lib/run.sh) writes into each run's meta.json.
 """
@@ -151,7 +151,7 @@ def sample_negative_kmers(
 def build_reference_index(
     sshash_bin: str, fasta_path: Path, k: int, m: int, threads: int, out_path: Path, tmp_dir: Path
 ) -> None:
-    """Native-order reference build. `tmp_dir` is sshash's external-memory directory (-d; its default
+    """Native-scheme reference build. `tmp_dir` is sshash's external-memory directory (-d; its default
     is the cwd): it must be on a disk with room for the largest dataset (hprc: several GB)."""
     cmd = [
         sshash_bin,
@@ -162,7 +162,7 @@ def build_reference_index(
         str(k),
         "-m",
         str(m),
-        "-O",
+        "--scheme",
         "native",
         "-t",
         str(threads),

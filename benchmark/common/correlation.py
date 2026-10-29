@@ -4,8 +4,8 @@ For every `{metric}_ratio` column of a summary sheet, one row under the table pe
 driver (e.g. the density ratio, the distinct-minimizer ratio) holding the Pearson
 correlation of that column with the driver's column over all rows. The cell is
 Excel's own CORREL (live and traceable) with the computed value cached, so a
-viewer that does not recalculate still shows it. Ratios are this order / the
-baseline order of the same setting, so rows of different settings are comparable.
+viewer that does not recalculate still shows it. Ratios are this scheme / the
+baseline scheme of the same setting, so rows of different settings are comparable.
 """
 from __future__ import annotations
 

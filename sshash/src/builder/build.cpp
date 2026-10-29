@@ -22,9 +22,9 @@ void dictionary<Kmer, Offsets>::build(std::string const& filename,
                                  " but got m = " + std::to_string(build_config.m));
     }
     if (build_config.m > build_config.k) throw std::runtime_error("m must be <= k");
-    if (build_config.regular_parsing and is_mod_mode(build_config.order)) {
+    if (build_config.regular_parsing and is_mod_mode(build_config.scheme)) {
         throw std::runtime_error(
-            "regular parsing does not apply to the mod-minimizer orders "
+            "regular parsing does not apply to the mod-minimizer schemes "
             "(mod-minimizer-xor, mod-minimizer-greedymini)");
     }
 

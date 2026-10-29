@@ -9,6 +9,6 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 test: all
-	cd $(BUILD_DIR) && ./test_alphabet && ./test_minimizer
+	cd $(BUILD_DIR) && ./test_alphabet 31 && ./test_minimizer
 	# GreedyMini / mod-minimizer tests (need rank tables):
-	#   ./test_gm_centre DIR  ./test_gm_rolling DIR  ./test_streaming_order INPUT.fa TABLE.gm  ./test_mod_minimizer
+	#   ./test_gm_centre DIR  ./test_gm_rolling DIR  ./test_streaming_scheme INPUT.fa TABLE.gm  ./test_mod_minimizer

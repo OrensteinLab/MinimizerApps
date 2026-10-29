@@ -16,7 +16,7 @@
  * smaller of the two strand frames' Sigma(xyz), then the DNA, packed into one
  * uint64. Strand invariant, injective on canonical l-mers (no spaced seed),
  * and it keeps the table's designed density at every valid l. The algorithm
- * and its proofs/notes live in common/minimizer-orders/greedymini_centre.h;
+ * and its proofs/notes live in common/minimizer-schemes/greedymini_centre.h;
  * this file only extracts the Sigma/Gamma planes from kraken2's ACGT encoding
  * (TwoBitPlanes<true>). The scanner compares table ranks first (rank_first():
  * Sigma plane + one table load per l-mer) and asks for the full packed value
@@ -39,10 +39,10 @@
 #define KRAKEN2_MINIMIZER_RANKERS_H_
 
 #include "greedymini_rank.h"
-#include "../../common/minimizer-orders/greedymini_centre.h"
+#include "../../common/minimizer-schemes/greedymini_centre.h"
 #include "dna_kmer.h"
 #include "sketching_schemes.h"
-#include "../../common/minimizer-orders/pcg_rxs_m_xs.h"
+#include "../../common/minimizer-schemes/pcg_rxs_m_xs.h"
 
 #include <cstdint>
 #include <memory>

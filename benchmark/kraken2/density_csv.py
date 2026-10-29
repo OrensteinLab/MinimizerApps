@@ -2,15 +2,15 @@
 """Helpers for the per-seed density table (results/runs/<lib>/minimizer_density.csv).
 
   density_csv.py missing CSV SEED_IDX TOGGLE_HEX L K SPACES PROJECTION GM_FILE MOD_GM_FILE SCHEME...
-      print the schemes (canonical orders) that have no row for the same
-      (order, gm_k, projection, gm_table, mod_t, seed_idx) with the same
+      print the schemes (canonical scheme names) that have no row for the same
+      (scheme, gm_k, projection, gm_table, mod_t, seed_idx) with the same
       toggle / l / k / spaces in CSV (one per line); a mod-minimizer row
       counts only with the current tie rule (mod_tie_rule = MOD_TIE_RULE)
   density_csv.py merge CSV NEW_CSV SPACES L K PROJECTION GM_FILE MOD_GM_FILE
       replace rows of the same (scheme, gm fields, seed_idx) in CSV by the rows
       of NEW_CSV (written by kraken2/src/benchmark_minimizers -o X.csv); keeps
       all other rows; adds the `spaces` column and the identity columns
-      gm_k, projection, gm_table, mod_t (benchmark/common/order_names.py)
+      gm_k, projection, gm_table, mod_t (benchmark/common/scheme_names.py)
       and, on mod-minimizer rows, mod_tie_rule; sorted by seed_idx, scheme
   Columns use the unified names k = minimizer length (the tool's -l), w,
   L = k + w - 1 (the tool's -k); files with the old l / k header are mapped on
@@ -25,7 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bench_const import scheme_id, scheme_sort_key  # noqa: E402
-import order_names  # noqa: E402
+import scheme_names  # noqa: E402
 
 ID_COLS = ("gm_k", "projection", "gm_table", "mod_t")
 # Tie rule of the mod-minimizer the rows were computed with; rows without it predate the centre rule
@@ -37,11 +37,11 @@ def is_mod(scheme):
     return (scheme or "").startswith("mod-minimizer")
 
 
-def ident(order, projection, gm_file, mod_gm_file, l, k):
-    """Identity columns (text) of a density row of `order`."""
-    gm = {"greedymini": gm_file, "mod-minimizer-greedymini": mod_gm_file}.get(order)
-    idd = scheme_id(order, gm or None, projection or None, int(l), int(k))
-    return order_names.format_id(idd)
+def ident(scheme, projection, gm_file, mod_gm_file, l, k):
+    """Identity columns (text) of a density row of `scheme`."""
+    gm = {"greedymini": gm_file, "mod-minimizer-greedymini": mod_gm_file}.get(scheme)
+    idd = scheme_id(scheme, gm or None, projection or None, int(l), int(k))
+    return scheme_names.format_id(idd)
 
 
 def row_key(r):

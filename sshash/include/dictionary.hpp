@@ -82,7 +82,7 @@ struct dictionary  //
     bool is_member(char const* string_kmer, bool check_reverse_complement = true) const;
     bool is_member(Kmer uint_kmer, bool check_reverse_complement = true) const;
 
-    template <typename, custom_order_mode, bool>
+    template <typename, custom_scheme_mode, bool>
     friend struct streaming_query;
 
     streaming_query_report  //

@@ -9,7 +9,7 @@
 #include "mmpriv.h"
 #include "bseq.h"
 #include "khash.h"
-#include "order.h"
+#include "scheme.h"
 
 mm_tbuf_t *mm_tbuf_init(void)
 {
@@ -63,8 +63,8 @@ static void collect_minimizers(void *km, const mm_mapopt_t *opt, const mm_idx_t 
 	mv->n = 0;
 	for (i = n = 0; i < n_segs; ++i) {
 		size_t j;
-		if (mi->order)
-			mm_sketch_ordered(mi->order, km, seqs[i], qlens[i], mi->w, mi->k, i, mi->flag&MM_I_HPC, mv);
+		if (mi->scheme)
+			mm_sketch_scheme(mi->scheme, km, seqs[i], qlens[i], mi->w, mi->k, i, mi->flag&MM_I_HPC, mv);
 		else
 			mm_sketch(km, seqs[i], qlens[i], mi->w, mi->k, i, mi->flag&MM_I_HPC, mv);
 		for (j = n; j < mv->n; ++j)

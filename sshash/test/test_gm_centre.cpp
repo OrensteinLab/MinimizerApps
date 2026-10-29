@@ -1,4 +1,4 @@
-// Checks the GreedyMini hash (-O greedymini): an explicit canonical
+// Checks the GreedyMini hash (--scheme greedymini): an explicit canonical
 // gm_k table is extended to the m-mer xyz (|x| = |z| = (m - gm_k) / 2, |y| = gm_k) by ranking
 // the binary projection of y (one table probe), breaking ties by min(Sigma(xyz),
 // reverse(Sigma(xyz))) and then by Gamma.
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
     for (int c = 0; c != 4; ++c) {
         const std::string path = dir + "/" + cfgs[c].table;
         hs[c].seed(1234);
-        hs[c].configure(custom_order_mode::GREEDYMINI, l, path, cfgs[c].proj);
+        hs[c].configure(custom_scheme_mode::GREEDYMINI, l, path, cfgs[c].proj);
         if (!hs[c].strand_invariant()) {
             std::cerr << "expected a strand-invariant order" << std::endl;
             ++failures;
@@ -269,20 +269,20 @@ int main(int argc, char** argv) {
         hasher_type h;
         const char* tmp = "/tmp/test_gm_centre_synth.gm";
         make_table(tmp, 14, true, 3);  // symmetric, but m - gm_k = 7 is odd
-        if (!throws([&] { h.configure(custom_order_mode::GREEDYMINI, 21, tmp,
+        if (!throws([&] { h.configure(custom_scheme_mode::GREEDYMINI, 21, tmp,
                                       gm_projection::AT0_CG1); },
                     "even")) {
             std::cerr << "gm_k = 14 at m=21 must be rejected" << std::endl;
             ++failures;
         }
         make_table(tmp, 9, false, 11);  // asymmetric
-        if (!throws([&] { h.configure(custom_order_mode::GREEDYMINI, 13, tmp,
+        if (!throws([&] { h.configure(custom_scheme_mode::GREEDYMINI, 13, tmp,
                                       gm_projection::AT0_CG1); },
                     "mirror-symmetric")) {
             std::cerr << "asymmetric table must be rejected" << std::endl;
             ++failures;
         }
-        if (!throws([&] { h.configure(custom_order_mode::NATIVE, 21, "",
+        if (!throws([&] { h.configure(custom_scheme_mode::NATIVE, 21, "",
                                       gm_projection::AT1_CG0); },
                     "greedymini")) {
             std::cerr << "a projection with a non-greedymini order must be rejected" << std::endl;
@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
             make_table(tmp, c.gk, true, 5 + c.gk);
             for (auto proj : {gm_projection::AT0_CG1, gm_projection::AT1_CG0}) {
                 hasher_type h(99);
-                h.configure(custom_order_mode::GREEDYMINI, c.l, tmp, proj);
+                h.configure(custom_scheme_mode::GREEDYMINI, c.l, tmp, proj);
                 string_ref sr;
                 {
                     auto raw = load_gm_file_raw(tmp);

@@ -37,7 +37,7 @@ source "$HERE/../common/wait_low_load.sh"
 # shellcheck source=../common/pin_cpus.sh
 source "$HERE/../common/pin_cpus.sh"
 
-# Profiling build, separate from the timed binary (minimap2/minimap2); common/ beside it for order.cpp
+# Profiling build, separate from the timed binary (minimap2/minimap2); common/ beside it for scheme.cpp
 B="$REPO/build-prof"
 mkdir -p "$B"
 rsync -a --delete --exclude '*.o' --exclude '*.a' --exclude minimap2 --exclude sdust --exclude minimap2-lite \

@@ -29,13 +29,13 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from order_tests import minimap2_fixed_block  # noqa: E402
+from scheme_tests import minimap2_fixed_block  # noqa: E402
 from xlsx_book import write_book  # noqa: E402
 from xlsx_util import write_csv  # noqa: E402
 
-VARIANT = ("order", "gm_k", "projection", "gm_table", "gm_lut", "mod_t")
+VARIANT = ("scheme", "gm_k", "projection", "gm_table", "gm_lut", "mod_t")
 
-# app -> list of (runs csv, setting columns, default order, metrics). A setting is a dataset with its parameters;
+# app -> list of (runs csv, setting columns, default scheme, metrics). A setting is a dataset with its parameters;
 # minimap2's includes the occurrence threshold, and only its fixed-threshold block (threshold fixed to the
 # default scheme's value) is paired: a derived threshold differs between schemes, and one that happens to
 # equal the default's must not join the fixed block (ROWS picks the block by position, not by value).
@@ -103,10 +103,10 @@ def points(results, app):
         rows = ROWS.get(fname, list)(rows)
         base = defaultdict(list)   # the default's runs of a setting and seed
         for r in rows:
-            if r.get("order") == dflt:
+            if r.get("scheme") == dflt:
                 base[(tuple(r.get(c, "") for c in ctx), r.get("seed_idx"))].append(r)
         for r in rows:
-            if r.get("order") == dflt:
+            if r.get("scheme") == dflt:
                 continue
             b = base.get((tuple(r.get(c, "") for c in ctx), r.get("seed_idx")))
             if not b:

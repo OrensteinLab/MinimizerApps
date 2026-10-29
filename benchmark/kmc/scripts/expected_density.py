@@ -1,5 +1,5 @@
-"""Theoretical expected DNA-alphabet density_factor for every signature-order
-scheme (default, lex = true canonical lex, xor, xor-pcg-hash, greedymini), via Monte
+"""Theoretical expected DNA-alphabet density_factor for every scheme
+(default, lex = true canonical lex, xor, xor-pcg-hash, greedymini), via Monte
 Carlo simulation on an i.i.d. uniform-random DNA stream -- not measured on any
 real dataset. xor/xor-pcg-hash/greedymini are seed-dependent (see benchmark/README.md:
 "Run order and the lex baseline" for why seed matters), so this reports mean
@@ -7,8 +7,8 @@ and std across the benchmark's predefined seeds, not a single value.
 
 Thin adapter over benchmark/common/expected_density_driver.py (loop, mean/std, cache,
 CLI); this file only has kmc's own variants, DNA comparator keys and random
-stream. Feeds the `orders` xlsx sheet (see scripts/export.py); cached to
-`kmc3_density_expected_orders.csv` since it's independent of any actual
+stream. Feeds the `schemes` xlsx sheet (see scripts/export.py); cached to
+`kmc3_density_expected_schemes.csv` since it's independent of any actual
 benchmark run (a pure function of k/p/w and the seed list) and each
 simulation costs real Monte Carlo time.
 """
@@ -26,14 +26,14 @@ from scripts.density import unify_param_row, _cmp_keys_dna, resolve_gm_ranks
 
 DEFAULT_N_BASES = 4_000_000
 DEFAULT_SEED = 0xC0FFEE01
-N_ORDER_SEEDS = 5  # matches this benchmark's default -n (see README)
+N_SCHEME_SEEDS = 5  # matches this benchmark's default -n (see README)
 
-ORDER_LABELS = ("default", "lex", "xor", "xor-pcg-hash", "greedymini")
+SCHEME_LABELS = ("default", "lex", "xor", "xor-pcg-hash", "greedymini")
 PROJECTION_AT0 = "at0-cg1"
 PROJECTION_AT1 = "at1-cg0"  # kmc -oat1
-# One expected-density row per (order, projection); projection is "" for every
-# order but greedymini, which has both projections (kmc -oat1 = at1-cg0).
-ORDER_VARIANTS = tuple((o, "" if o != "greedymini" else PROJECTION_AT0) for o in ORDER_LABELS) + (
+# One expected-density row per (scheme, projection); projection is "" for every
+# scheme but greedymini, which has both projections (kmc -oat1 = at1-cg0).
+SCHEME_VARIANTS = tuple((s, "" if s != "greedymini" else PROJECTION_AT0) for s in SCHEME_LABELS) + (
     ("greedymini", PROJECTION_AT1),
 )
 
@@ -118,7 +118,7 @@ def greedymini_dna_keys(
 
 
 def build_dna_keys(
-    order: str,
+    scheme: str,
     k: int,
     p: int,
     *,
@@ -127,16 +127,16 @@ def build_dna_keys(
     projection: str = PROJECTION_AT0,
 ) -> list[int]:
     """Build the per-DNA-p-mer comparator array (size 4^p) a real KMC run would
-    use for `order`, matching kmc_api/mmer.h + custom_order.cpp exactly.
+    use for `scheme`, matching kmc_api/mmer.h + custom_order.cpp exactly.
     `k` (the outer k-mer length) only matters for greedymini -- it's encoded
     in the GreedyMini table's on-disk filename (w{k-p+1}_k{p}_canonical...),
     even though the table itself, like every other order here, operates over
     p-mers (4^p entries)."""
     n = 1 << (2 * p)
-    if order == "lex":
+    if scheme == "lex":
         # True canonical lex, no is_allowed denylist: MIN(i, revcomp(i)).
         return [min(i, dna_rev(i, p)) for i in range(n)]
-    if order == "default":
+    if scheme == "default":
         # KMC's shipped lex: same, but is_allowed()-excluded p-mers (and their
         # revcomp) are pushed to a sentinel so they can never be the minimizer.
         special = n
@@ -147,22 +147,22 @@ def build_dna_keys(
             rv = r if _is_allowed(r, p) else special
             keys[i] = min(sv, rv)
         return keys
-    if order == "xor":
+    if scheme == "xor":
         if seed is None:
             raise ValueError("xor order requires a seed")
         rank_by_dna = [(i ^ seed) & 0xFFFFFFFFFFFFFFFF for i in range(n)]
         return _dna_sort_key_from_rank(rank_by_dna, p, seed & 0xFFFFFFFF)
-    if order == "xor-pcg-hash":
+    if scheme == "xor-pcg-hash":
         if seed is None:
             raise ValueError("xor-pcg-hash order requires a seed")
         rank_by_dna = [rxs_m_xs64(i ^ seed) for i in range(n)]
         return _dna_sort_key_from_rank(rank_by_dna, p, seed & 0xFFFFFFFF)
-    if order == "greedymini":
+    if scheme == "greedymini":
         # Both LUT backends are the same order (verified identical measured
         # density elsewhere). seed=None = the table's own embedded seed
         # (seeds[0]); the at0 result equals the real _dna.gm sort_key.
         return greedymini_dna_keys(k, p, bench_seeds()[0] if seed is None else seed, projection, gm_dir)
-    raise ValueError(f"unknown order: {order}")
+    raise ValueError(f"unknown scheme: {scheme}")
 
 
 ROUNDING = shared.Rounding(sample=4, avg=4, std=4, single_std=None)
@@ -187,54 +187,54 @@ def expected_density(
     return shared.window_density(keys, w, ROUNDING)
 
 
-def _order_seeds(order: str) -> list[int | None]:
-    if order in ("default", "lex"):
+def _scheme_seeds(scheme: str) -> list[int | None]:
+    if scheme in ("default", "lex"):
         return [None]  # deterministic, no seed dependence
-    return list(bench_seeds()[:N_ORDER_SEEDS])
+    return list(bench_seeds()[:N_SCHEME_SEEDS])
 
 
-def compute_all_orders(
+def compute_all_schemes(
     k: int, p: int, w: int, *, gm_dir: Path | None = None, n_bases: int = DEFAULT_N_BASES
 ) -> list[dict]:
     """Expected density_factor (mean/std over seeds where applicable) for every
-    (order, projection) variant. density_factor_std is None for deterministic
-    orders (default, lex) since there's no seed to vary; the export shows 0."""
+    (scheme, projection) variant. density_factor_std is None for deterministic
+    schemes (default, lex) since there's no seed to vary; the export shows 0."""
 
     def sample(v, _ctx, seed):
-        order, projection = v
+        scheme, projection = v
         try:
-            keys = build_dna_keys(order, k, p, seed=seed, gm_dir=gm_dir, projection=projection or PROJECTION_AT0)
+            keys = build_dna_keys(scheme, k, p, seed=seed, gm_dir=gm_dir, projection=projection or PROJECTION_AT0)
         except FileNotFoundError:
             raise shared.Unavailable from None
         return expected_density(keys, p, w, n_bases=n_bases)
 
     return shared.compute_rows(
-        ORDER_VARIANTS,
-        seeds_of=lambda v: _order_seeds(v[0]),
+        SCHEME_VARIANTS,
+        seeds_of=lambda v: _scheme_seeds(v[0]),
         sample=sample,
-        row_id=lambda v: {"order": v[0], "projection": v[1], "k": p, "w": w, "L": k},
+        row_id=lambda v: {"scheme": v[0], "projection": v[1], "k": p, "w": w, "L": k},
         rounding=ROUNDING,
     )
 
 
-EXPECTED_ORDERS_FIELDS = ("order", "projection", "k", "w", "L", "n_seeds", "density_factor_mean", "density_factor_std")
+EXPECTED_SCHEMES_FIELDS = ("scheme", "projection", "k", "w", "L", "n_seeds", "density_factor_mean", "density_factor_std")
 
 
-def expected_orders_csv_path(results: Path) -> Path:
-    return results / "kmc3_density_expected_orders.csv"
+def expected_schemes_csv_path(results: Path) -> Path:
+    return results / "kmc3_density_expected_schemes.csv"
 
 
 def _key(row: dict) -> tuple[str, str] | None:
-    return (row["order"], row.get("projection") or "") if row.get("order") else None
+    return (row["scheme"], row.get("projection") or "") if row.get("scheme") else None
 
 
-def load_expected_orders(results: Path) -> dict[tuple[str, str], dict]:
-    """Load the cache written by ensure_expected_orders, keyed by
-    (order, projection); {} if not built yet."""
-    return shared.read_csv_rows(expected_orders_csv_path(results), _key, unify_param_row)
+def load_expected_schemes(results: Path) -> dict[tuple[str, str], dict]:
+    """Load the cache written by ensure_expected_schemes, keyed by
+    (scheme, projection); {} if not built yet."""
+    return shared.read_csv_rows(expected_schemes_csv_path(results), _key, unify_param_row)
 
 
-def ensure_expected_orders(
+def ensure_expected_schemes(
     results: Path,
     k: int,
     p: int,
@@ -249,13 +249,13 @@ def ensure_expected_orders(
     safe/cheap to reuse across every export once built. A cache with another
     variant set (e.g. pre-projection) or another k/p is stale."""
     return shared.ensure_cache(
-        expected_orders_csv_path(results),
-        EXPECTED_ORDERS_FIELDS,
-        ORDER_VARIANTS,
+        expected_schemes_csv_path(results),
+        EXPECTED_SCHEMES_FIELDS,
+        SCHEME_VARIANTS,
         key_of_variant=lambda v: v,
         key_of_row=_key,
-        load=lambda: load_expected_orders(results),
-        compute=lambda _todo: compute_all_orders(k, p, w, gm_dir=gm_dir, n_bases=n_bases),
+        load=lambda: load_expected_schemes(results),
+        compute=lambda _todo: compute_all_schemes(k, p, w, gm_dir=gm_dir, n_bases=n_bases),
         accept=lambda cached: all(int(r.get("L") or 0) == k and int(r.get("k") or 0) == p for r in cached.values()),
         force=force,
     )
@@ -272,9 +272,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = shared.base_parser(
         "scripts expected-density",
-        "Theoretical expected density_factor per signature-order scheme "
+        "Theoretical expected density_factor per scheme "
         "(Monte Carlo on i.i.d. random DNA; mean/std over predefined seeds for "
-        "xor/xor-pcg-hash/greedymini). Feeds the `orders` xlsx sheet's expected_density_factor_mean/std "
+        "xor/xor-pcg-hash/greedymini). Feeds the `schemes` xlsx sheet's expected_density_factor_mean/std "
         "columns -- run this once (or after changing k/p) to (re)build that cache.",
         default_results=str(default_results),
         default_n_bases=DEFAULT_N_BASES,
@@ -288,11 +288,11 @@ def main(argv: list[str] | None = None) -> int:
     results = Path(args.results_dir).resolve() / "csvs"  # --results-dir is the results root
     gm_dir = Path(args.gm_dir) if args.gm_dir else None
 
-    cached = ensure_expected_orders(
+    cached = ensure_expected_schemes(
         results, args.k, args.p, w, gm_dir=gm_dir, force=args.force, n_bases=args.n_bases
     )
-    print(f"wrote {expected_orders_csv_path(results)} ({len(cached)} orders)", file=sys.stderr)
-    for label, projection in ORDER_VARIANTS:
+    print(f"wrote {expected_schemes_csv_path(results)} ({len(cached)} schemes)", file=sys.stderr)
+    for label, projection in SCHEME_VARIANTS:
         r = cached.get((label, projection))
         if r:
             print(shared.format_row(f"{label} {projection}".strip(), r, 18, "expected_density"))

@@ -212,7 +212,7 @@ zenodo/               # Wood 2019 reference tarball (download_data.sh, prepare_s
 results/
   runs/
     {standard,strain_exclusion,standard_p10,standard_p0.5}/   # one dir per library
-      {order dir}/{seed}/{db,results}   # order dir: xor | greedymini/k15_at0-cg1 | ...
+      {scheme dir}/{seed}/{db,results}   # scheme dir: xor | greedymini/k15_at0-cg1 | ...
       benchmark_comparison.txt          # run summary text
       minimizer_density.csv             # INPUT: density microbenchmark rows
   csvs/kraken2_<sheet>.csv              # the only copy of the exported tables (all libraries)
@@ -235,24 +235,24 @@ results/
   classified once per `--minimum-hit-groups` value (0 = paper setting, 2 = k2
   default), so the classify-side sheets (`summary`, `runs`, `profile`,
   `vs_reference`, the four `accuracy_*`) carry `minimum_hit_groups` as an
-  app-parameter column (after `mod_t`, before `n_repeats` / `seed_idx`; column order: dataset, order, app parameter, seed, metrics) / slice key and are sorted dataset → minimum_hit_groups →
-  order; `build` / `build_runs` do not (building is independent of it). The
+  app-parameter column (after `mod_t`, before `n_repeats` / `seed_idx`; column order: dataset, scheme, app parameter, seed, metrics) / slice key and are sorted dataset → minimum_hit_groups →
+  scheme; `build` / `build_runs` do not (building is independent of it). The
   replicates are the seeds (one classify run each; no repeats, no cold round),
   so `_std` is across seeds; `n_repeats` = number of runs (repeats) aggregated into the row's mean / std. `runs` and `build_runs` also carry I/O telemetry (`build_major_pagefaults`, `build_read_gb`, `classify_major_pagefaults`, `classify_read_gb`; runs-only, not in `build` / `summary`) and, in a `telemetry` band at the end, the text columns `build_pinned_cpus` (`cpus_build.txt`) and `classify_pinned_cpus` (`classification_performance_<dataset>_mhg<n>_cpus.txt`): every timed step is pinned to one NUMA node, one thread per physical core plus 2 spare cores, with its memory bound to that node (`benchmark/common/pin_cpus.sh`, `bench_step.py`); blank when the file is absent. The `overview` legend only lists sheets and columns that exist in the workbook. Sheets, in order:
 
   | Sheet | Rows |
   |---|---|
   | `overview` | column reference: what every sheet and column means, by category |
-  | `libraries` | one per Kraken library: sequences, taxa, FASTA GB, role, query sets and orders run |
+  | `libraries` | one per Kraken library: sequences, taxa, FASTA GB, role, query sets and schemes run |
   | `datasets` | one per query set: reads, read length, `truth` (simulated / real), `scoring`, provenance, libraries |
-  | `orders` | one per (order variant, `k`, `w`, `L`), columns `order, k, w, L, gm_k, projection, gm_table, mod_t, description, cli`, then `sketching, rank_order, minimizer_spaces, spaced_seed_mask`, then the density factors; unified names: `k` = minimizer length (the kraken2 option `l`, 31), `w` = window (5), `L` = k + w - 1 = kraken2's own k-mer length (35); no empty cells (the export fails if an order lacks density rows): CLI, density factors (`expected_density_factor_mean/_std`, and per library `<library>_particular_density_factor_mean/_std`; also on `build`), `gm_table` (`w5_k15_canonical` / `w5_k6_canonical`), spaced seed. Orders are shown by short name (`greedymini`, `mod-minimizer-greedymini`; the table is in `gm_table`) |
-  | `build` | library × order, mean / std / ratio over seeds, columns in the SSHash order (id / params, density, minimizers, space, build): `expected_density_factor`, `density_factor`, `distinct_minimizers` (the `size` field of the `hash.k2d` header), then `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
+  | `schemes` | one per (scheme variant, `k`, `w`, `L`), columns `scheme, k, w, L, gm_k, projection, gm_table, mod_t, description, cli`, then `sketching, rank_order, minimizer_spaces, spaced_seed_mask`, then the density factors; unified names: `k` = minimizer length (the kraken2 option `l`, 31), `w` = window (5), `L` = k + w - 1 = kraken2's own k-mer length (35); no empty cells (the export fails if a scheme lacks density rows): CLI, density factors (`expected_density_factor_mean/_std`, and per library `<library>_particular_density_factor_mean/_std`; also on `build`), `gm_table` (`w5_k15_canonical` / `w5_k6_canonical`), spaced seed. Schemes are shown by short name (`greedymini`, `mod-minimizer-greedymini`; the table is in `gm_table`) |
+  | `build` | library × scheme, mean / std / ratio over seeds, columns in the SSHash order (id / params, density, minimizers, space, build): `expected_density_factor`, `density_factor`, `distinct_minimizers` (the `size` field of the `hash.k2d` header), then `build_wall_s`, `build_max_rss_gb`, `index_size_gb` and the density microbenchmark (`expected_density_factor`, `density_factor`). Build does not depend on the query set, so it appears once here, not on every dataset row |
   | `build_runs` | the per-seed rows behind `build` (same split as `summary` / `runs` in the sshash / kmc apps) |
-  | `summary` | library × dataset × `minimum_hit_groups` × order, classify phase only; right after the identity columns (`library, dataset, order, gm_k, projection, gm_table, mod_t, minimum_hit_groups, n_repeats`) the order's density factors and `distinct_minimizers` (repeated for every dataset / `minimum_hit_groups` block), then the classify columns: `classify_wall_s` (= `classify_load_s` + `classify_run_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
-  | `runs` | one per seed × library × dataset × order, the rows behind `summary`: the raw numbers of the single classify run of that seed |
-  | `profile` | classify phase profile (`scan_s`, `lookup_s`, `resolve_s`, `scan_pct_of_phases`, `lookups_per_mbp`, `ns_per_lookup`, `lookup_miss_pct`, `uhs_pct`, ...; `experiments/profile_run.sh`, a classify built with `ENABLE_MINIMIZER_PROF=1`), library × dataset × `minimum_hit_groups` × order, mean / std / ratio; only present when `classify_profile_<dataset>_mhg<m>.txt` files exist |
+  | `summary` | library × dataset × `minimum_hit_groups` × scheme, classify phase only; right after the identity columns (`library, dataset, scheme, gm_k, projection, gm_table, mod_t, minimum_hit_groups, n_repeats`) the scheme's density factors and `distinct_minimizers` (repeated for every dataset / `minimum_hit_groups` block), then the classify columns: `classify_wall_s` (= `classify_load_s` + `classify_run_s`; processing = the classify `processed in` seconds, DB load = wall − processing), `classify_max_rss_gb`, `classify_mreads_per_min` (per processing time), `classified_pct` and the accuracy of the dataset (std rounded to ≥ 4 significant digits) |
+  | `runs` | one per seed × library × dataset × scheme, the rows behind `summary`: the raw numbers of the single classify run of that seed |
+  | `profile` | classify phase profile (`scan_s`, `lookup_s`, `resolve_s`, `scan_pct_of_phases`, `lookups_per_mbp`, `ns_per_lookup`, `lookup_miss_pct`, `uhs_pct`, ...; `experiments/profile_run.sh`, a classify built with `ENABLE_MINIMIZER_PROF=1`), library × dataset × `minimum_hit_groups` × scheme, mean / std / ratio; only present when `classify_profile_<dataset>_mhg<m>.txt` files exist |
   | `vs_reference` | paired agreement with `xor` of the same seed, dataset and `minimum_hit_groups` (`genus_mape_pct`, `concordance_pct`, `jaccard_pct`, ...), mean / std |
-  | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami` | accuracy of that dataset per slice (`minimum_hit_groups` × `group` × `rank`, or SRA run for FDA-ARGOS): one row per order, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to `xor` of the same slice; sorted dataset → `minimum_hit_groups` → slice → order, slice cells merged, border between slices. `accuracy_strain_exclusion` and `accuracy_cami` have the same columns in the same order (identity, counts `n_truth n_calls n_scored tp vp fp fn no`, `excluded excluded_fraction`, then CAMI-only `ex_unclassified ex_consistent ex_off`, then `sensitivity ppv f1`; see the shared definitions below). Groups: `all`, `prokaryote`, `virus` (both sheets), then CAMI `bacteria`, `archaea`, `other`, `novelty:*`; CAMI `prokaryote` = the archaea + bacteria reads scored as one group by `score_cami.py` (as `prokaryote` is in the strain-exclusion truth). Higher-is-better ratios: sensitivity, ppv, f1, concordant; lower: discordant; neutral (no ratio): ancestor, unclassified, excluded, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics_mhg<m>.tsv`). Omitted when the dataset did not run |
+  | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami` | accuracy of that dataset per slice (`minimum_hit_groups` × `group` × `rank`, or SRA run for FDA-ARGOS): one row per scheme, `<metric>_mean`, `<metric>_std` over seeds and `<metric>_ratio` to `xor` of the same slice; sorted dataset → `minimum_hit_groups` → slice → scheme, slice cells merged, border between slices. `accuracy_strain_exclusion` and `accuracy_cami` have the same columns in the same order (identity, counts `n_truth n_calls n_scored tp vp fp fn no`, `excluded excluded_fraction`, then CAMI-only `ex_unclassified ex_consistent ex_off`, then `sensitivity ppv f1`; see the shared definitions below). Groups: `all`, `prokaryote`, `virus` (both sheets), then CAMI `bacteria`, `archaea`, `other`, `novelty:*`; CAMI `prokaryote` = the archaea + bacteria reads scored as one group by `score_cami.py` (as `prokaryote` is in the strain-exclusion truth). Higher-is-better ratios: sensitivity, ppv, f1, concordant; lower: discordant; neutral (no ratio): ancestor, unclassified, excluded, counts. Per-seed rows are not on these sheets (the raw numbers stay in each run's `results/*_metrics_mhg<m>.tsv`). Omitted when the dataset did not run |
   | `paper_check` | paper equivalence for `xor` at `minimum_hit_groups` 0 on the `strain_exclusion` library: our strain-exclusion genus sensitivity / PPV / F1 (prokaryote, virus; Table S1) and FDA-ARGOS genus concordant / discordant / ancestor / unclassified (unweighted mean over experiments; Table S5) next to the published Kraken 2 values (`tables/paper_kraken2_published.csv`, derived from `table_s1.csv` and `table_s5_kraken2_expected.csv`), `difference` and `within_tolerance` (absolute tolerance 0.01, `PAPER_TOLERANCE` in `export_layout.py`). Also `kraken2_paper_check.csv`. Differences are reported as they are |
   | `density_effect`, `density_effect_points` | how closely each metric of `build_runs` / `runs` follows the density: Pearson r of the metric and the density factor, both as ratios to `xor`'s run of the same seed and setting (library, or dataset and `minimum_hit_groups`), over all settings and per setting, and the paired points (`benchmark/common/density_effect.py`; also `csvs/density_effect_kraken2.csv`) |
   | `significance` | whether each scheme changes each metric of the paper's figures: paired by seed with `xor` of the same setting (library for the build; dataset, `minimum_hit_groups` and library for classify), t-test on the log ratios, Holm, TOST at +-5% (`benchmark/common/significance.py`; also `csvs/significance_kraken2.csv`) |
@@ -264,7 +264,7 @@ results/
   resp. `distinct_minimizers_ratio`), with the computed value cached next to the
   formula. `build` has 5 rows (n = 5, in the label); in `summary` the density
   and minimizer values repeat per dataset / `minimum_hit_groups` block, so the
-  number of independent points is the number of orders. The CSVs hold data only;
+  number of independent points is the number of schemes. The CSVs hold data only;
   the values are in `kraken2_correlations.csv` (`sheet, row_label, column,
   value, n`).
 
@@ -306,10 +306,10 @@ results/
   `run_benchmark.sh -E -S <schemes> ...` several times into the same `-o` dir
   (e.g. `-S xor greedymini`, then `-S xor-pcg-hash mod-minimizer-xor
   mod-minimizer-greedymini`): an invocation replaces only the
-  `.benchmark_run_manifest` lines of ITS run dirs (order + params; other lines are
+  `.benchmark_run_manifest` lines of ITS run dirs (scheme + params; other lines are
   kept), so the final
-  `compare_benchmark.py` / merged workbook cover every order. A scheme/seed whose
-  `results/runs/<lib>/<order dir>/<seed>/db/hash.k2d` exists is not rebuilt, only classified
+  `compare_benchmark.py` / merged workbook cover every scheme. A scheme/seed whose
+  `results/runs/<lib>/<scheme dir>/<seed>/db/hash.k2d` exists is not rebuilt, only classified
   (`db/` may be a directory of symlinks to a database built elsewhere, with
   `results/build_performance.txt` copied next to it).
 
@@ -320,7 +320,7 @@ used if the new path is missing.
 
 ## Schemes (`-S`)
 
-| Order (`-S`) | Run directory (`results/runs/<lib>/<dir>/<seed>/`) | CLI |
+| Scheme (`-S`) | Run directory (`results/runs/<lib>/<dir>/<seed>/`) | CLI |
 |-------|------|-----|
 | `xor` | `xor` | `--sketching minimizer --order xor` |
 | `xor-pcg-hash` | `xor-pcg-hash` | `--sketching minimizer --order xor-pcg-hash` |
@@ -328,8 +328,8 @@ used if the new path is missing.
 | `mod-minimizer-xor` | `mod-minimizer-xor/t<mod_t>` (`t6`) | `--sketching mod-minimizer --order xor` |
 | `mod-minimizer-greedymini` | `mod-minimizer-greedymini/k<gm_k>_<projection>_t<mod_t>` (`k6_at0-cg1_t6`) | `--sketching mod-minimizer --order greedymini --greedymini-file w5_k6_*.gm --gm-projection <projection>` |
 
-The five names are the canonical orders shared by all four apps
-(`benchmark/common/order_names.py`). An order never carries parameters: the
+The five names are the canonical schemes shared by all four apps
+(`benchmark/common/scheme_names.py`). A scheme never carries parameters: the
 GreedyMini `gm_k`, the `projection` (`at0-cg1` = A,T -> 0, C,G -> 1, the
 `at1-cg0` = flipped; `-P at0-cg1,at1-cg0` / env `GM_PROJECTION` (comma list,
 default both) / `--gm-projection` of the tools),
@@ -337,7 +337,7 @@ the table stem `gm_table` and the mod-minimizer `mod_t` (= r + ((l - r) mod w),
 r = 4; 6 for l = 31, k = 35) are separate fields: manifest columns, columns of
 `minimizer_density.csv`, and the `gm_k, projection, gm_table, mod_t` columns of
 every sheet (part of every block / merge / group key). Run directories are
-`order_names.order_dir_name`. One invocation runs every GreedyMini scheme
+`scheme_names.scheme_dir_name`. One invocation runs every GreedyMini scheme
 (`greedymini`, `mod-minimizer-greedymini`) for every projection in the list
 (default both, so the default run is 7 variants: xor, xor-pcg-hash,
 mod-minimizer-xor once; each GreedyMini scheme x 2 projections); each
@@ -351,7 +351,7 @@ lists the variants and which are already done without building anything;
 `mod-minimizer` is strand-symmetric mod-sampling (this fork, not a published
 scheme; `kraken2/src/mod_minimizer.h`): mod-sampling (Groot Koerkamp & Pibiri,
 2024) with t == l (mod w) and the centre tie rule shared with minimap2 and
-sshash (`common/minimizer-orders/mod_minimizer_rule.h`): a tie at the minimum
+sshash (`common/minimizer-schemes/mod_minimizer_rule.h`): a tie at the minimum
 takes the offset closest to the k-mer's centre, two equally close ones by the
 k-mer <= its reverse complement, so a read and its reverse complement give the
 same minimizers. Databases built with the earlier forward-only mod-minimizer,
@@ -360,7 +360,7 @@ or with the G/T-strand tie rule, are rejected (rebuild them).
 Names are exact (no aliases: every other spelling, old or new, is rejected). The
 name is `sketching[-]order` (`scheme_label` in `kraken2/src/sketching_schemes.h`);
 the same names are the `scheme` column of the manifest, all metrics TSVs and
-`minimizer_density.csv`, and the `order` column of the sheets. The C++ tools
+`minimizer_density.csv`, and the `scheme` column of the sheets. The C++ tools
 `scan_dump` / `benchmark_minimizers` take the same names with `--gm-projection`.
 (sshash uses `--greedy-mini-file`, kmc its own options.)
 
@@ -368,7 +368,7 @@ greedymini tables (`../../orders/GreedyMini/`): `-g` / env `GM_FILE`
 (`w5_k15_canonical.gm`, used by `greedymini`), `-M` / env `MOD_GM_FILE`
 (`w5_k6_canonical.gm`, used by `mod-minimizer-greedymini`).
 
-## Run output layout (`results/runs/<lib>/<order dir>/<seed>/results/`)
+## Run output layout (`results/runs/<lib>/<scheme dir>/<seed>/results/`)
 
 One classify per (seed, dataset, scheme, `--minimum-hit-groups` m in {0, 2});
 `<ds>` = `strain-exclusion` | `fda-argos` | `cami` | `speed`.
@@ -383,8 +383,8 @@ One classify per (seed, dataset, scheme, `--minimum-hit-groups` m in {0, 2});
 | `strain_exclusion_metrics_mhg<m>.tsv`, `fda_argos_metrics_mhg<m>.tsv`, `cami_metrics_mhg<m>.tsv` | scorer output; second column `minimum_hit_groups` (= m) |
 
 `results/runs/<lib>/.benchmark_run_manifest` has one tab-separated line per scheme and
-seed, written after that seed finished classifying: `scheme` (the order), `context`
-(`<lib>/<order dir>/<seed>`), `results dir`, `toggle` (bit string), `seed index`,
+seed, written after that seed finished classifying: `scheme`, `context`
+(`<lib>/<scheme dir>/<seed>`), `results dir`, `toggle` (bit string), `seed index`,
 `gm_k`, `projection`, `gm_table`, `mod_t` (blank when not applicable).
 There is no repeat/cold-round mechanism: replicates are the seeds only.
 
@@ -395,7 +395,7 @@ There is no repeat/cold-round mechanism: replicates are the seeds only.
 | `setup.sh` | apt + conda env |
 | `.env` | `KRAKEN2_BENCH_ROOT` (<ROOT>; optional `KRAKEN2_DATA_DIR`, `KRAKEN2_RESULTS_DIR`), threads |
 | `benchmark_setup.sh` | conda + `scripts/k2` on PATH |
-| `benchmark_interface.sh` | `-S` orders, `-g/-M/-P` GreedyMini tables + projection, `-m/-z/-N` NCBI size, `-E` strain-exclusion library |
+| `benchmark_interface.sh` | `-S` schemes, `-g/-M/-P` GreedyMini tables + projection, `-m/-z/-N` NCBI size, `-E` strain-exclusion library |
 | `export_layout.py` | `results/kraken2_results.xlsx` + `results/csvs/kraken2_<sheet>.csv` (sheets above); `../common/xlsx_book.py` / `xlsx_charts.py` / `xlsx_util.py` write and read .xlsx without openpyxl, `../common/xlsx_check.py` validates the package |
 | `create_sample_db.py` | NCBI `library.fna` subsample → `db/standard_p10` / `db/standard_p0.5` |
 | `download_library.sh` | NCBI taxonomy + standard libraries + subsamples |
@@ -476,7 +476,7 @@ also waits for free huge-page memory), pinning (build: `--threads` cores + 2 spa
 `classify_run_s` (without the database load) and per-step wall, CPU (`build_cpu_s`,
 `classify_cpu_s`), RSS, major page faults and reads (`*_major_pagefaults`, `*_read_gb`, runs sheets only).
 Classify wall time splits into `classify_load_s` (database load) and `classify_run_s` (the reads); compare
-orders on `classify_run_s`. kraken2 has no native run: the reference order is `xor`. `experiments/full_run.sh`
+schemes on `classify_run_s`. kraken2 has no native run: the reference scheme is `xor`. `experiments/full_run.sh`
 is the full run (5 seeds, 35 databases of about 9.4 GB each).
 
 ## Notes

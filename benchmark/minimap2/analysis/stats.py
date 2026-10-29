@@ -4,26 +4,26 @@ run_seed_experiments.sh, accuracy_paired.py and lib/export.py under
 --results-dir (csvs/analysis/<ds>/{seeds,timing}/ and csvs/analysis_*.csv) and
 writes analysis_*.csv tables into <results-dir>/csvs.
 
-- mechanism: per (dataset, cap, order), from the --dbg-seed-occ pass: read
+- mechanism: per (dataset, cap, scheme), from the --dbg-seed-occ pass: read
   minimizers in the index per kb, fraction dropped by mid_occ, anchors per
   read (chaining input), reference occurrences before filtering, thread-local
   memory per read.
-- timing: per (dataset, cap, order), total sample time per replicate; ratio to
-  native; Welch t-test on log totals (Holm over the orders of a block); 90% CI
+- timing: per (dataset, cap, scheme), total sample time per replicate; ratio to
+  native; Welch t-test on log totals (Holm over the schemes of a block); 90% CI
   of the ratio and TOST equivalence at +-5% (equivalent iff the 90% CI lies in
   [0.95, 1/0.95]); paired per-read median log2 ratio with a bootstrap CI.
-- per-read mechanism: within each order, Pearson r between log anchors and log
+- per-read mechanism: within each scheme, Pearson r between log anchors and log
   per-read time across reads.
-- accuracy: per (dataset, cap, order), from accuracy_paired.py's
-  analysis_accuracy_order.csv: the paired correct-rate difference vs native
+- accuracy: per (dataset, cap, scheme), from accuracy_paired.py's
+  analysis_accuracy_scheme.csv: the paired correct-rate difference vs native
   with reads as the independent unit -- per read, d_i = (mean over the
-  order's seeds of correct_i) - native correct_i (all seeds share one native
+  scheme's seeds of correct_i) - native correct_i (all seeds share one native
   run and one read set, so seeds are not independent replicates and are never
   pooled as n * n_seeds pairs); mean(d), SE = sd(d) / sqrt(n), its 90% CI
   (t, df = n - 1) and TOST at +-0.1 percentage point (equivalent iff that CI
   lies inside [-0.001, 0.001]); p from the paired t-test on d over reads, or
-  the exact McNemar test for a single-run (seed-independent) order; Holm over
-  the orders of each (dataset, cap, subset) block. Datasets without truth
+  the exact McNemar test for a single-run (seed-independent) scheme; Holm over
+  the schemes of each (dataset, cap, subset) block. Datasets without truth
   (D3, real reads) have no accuracy rows.
 """
 from __future__ import annotations
@@ -38,23 +38,23 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
-from order_names import ID_FIELDS, parse_order_dir  # noqa: E402
+from scheme_names import ID_FIELDS, parse_scheme_dir  # noqa: E402
 from units import gb_from_bytes  # noqa: E402
 
-# A "variant" is an order's run-directory name (order_names.order_dir_name):
+# A "variant" is a scheme's run-directory name (scheme_names.scheme_dir_name):
 # `native`, `xor`, `greedymini/k15_at1-cg0`, `mod-minimizer-xor/t9`, ... Its
 # files under analysis/ use the name with "/" as "__"; every output row gets
-# the separate identity columns (order, gm_k, projection, gm_table, mod_t).
+# the separate identity columns (scheme, gm_k, projection, gm_table, mod_t).
 CANONICAL = ["native", "xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor"]
 
 
 def variant_key(variant: str) -> tuple:
-    order = variant.split("/")[0]
-    return (CANONICAL.index(order) if order in CANONICAL else len(CANONICAL), variant)
+    scheme = variant.split("/")[0]
+    return (CANONICAL.index(scheme) if scheme in CANONICAL else len(CANONICAL), variant)
 
 
 def id_cols(variant: str) -> dict:
-    d = parse_order_dir(variant)
+    d = parse_scheme_dir(variant)
     return {f: d[f] for f in ID_FIELDS}
 
 
@@ -114,14 +114,14 @@ def r4(v):
 def mechanism(adir: Path, ds: str) -> list[dict]:
     rows = []
     for cap_dir in sorted((adir / ds / "seeds").glob("*")):
-        for order in variants_in(cap_dir, r"(.+)\.csv"):
-            f = cap_dir / f"{label(order)}.csv"
+        for scheme in variants_in(cap_dir, r"(.+)\.csv"):
+            f = cap_dir / f"{label(scheme)}.csv"
             rr = read_csv(f)
             kb = sum(int(r["qlen"]) for r in rr) / 1000
             seeds = sum(int(r["n_seeds"]) for r in rr)
             anchors = [int(r["anchors"]) for r in rr]
             rows.append({
-                "dataset": ds, **id_cols(order), "mid_occ_cap": cap_dir.name, "n_reads": len(rr),
+                "dataset": ds, **id_cols(scheme), "mid_occ_cap": cap_dir.name, "n_reads": len(rr),
                 "seeds_per_kb": round(seeds / kb, 2),
                 "frac_seeds_filtered": round(sum(int(r["n_filtered"]) for r in rr) / seeds, 5),
                 "anchors_per_read_mean": round(statistics.mean(anchors), 1),
@@ -131,7 +131,7 @@ def mechanism(adir: Path, ds: str) -> list[dict]:
                 "km_cap_gb_mean": gb_from_bytes(statistics.mean(int(r["km_cap_bytes"]) for r in rr), 6),
                 "km_cap_gb_max": gb_from_bytes(max(int(r["km_cap_bytes"]) for r in rr), 6),
             })
-    base = {(r["mid_occ_cap"]): r for r in rows if r["order"] == "native"}
+    base = {(r["mid_occ_cap"]): r for r in rows if r["scheme"] == "native"}
     for r in rows:
         b = base.get(r["mid_occ_cap"])
         r["anchors_ratio"] = round(r["anchors_per_kb"] / b["anchors_per_kb"], 4) if b else None
@@ -144,29 +144,29 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
         cap = cap_dir.name
         totals: dict[str, list[float]] = {}
         per_read: dict[str, dict[str, float]] = {}
-        for order in variants_in(cap_dir, r"(.+)\.r\d+\.csv"):
-            reps = sorted(cap_dir.glob(f"{label(order)}.r*.csv"))
+        for scheme in variants_in(cap_dir, r"(.+)\.r\d+\.csv"):
+            reps = sorted(cap_dir.glob(f"{label(scheme)}.r*.csv"))
             acc: dict[str, list[float]] = {}
             for f in reps:
                 rr = read_csv(f)
-                totals.setdefault(order, []).append(sum(float(r["time_sec"]) for r in rr))
+                totals.setdefault(scheme, []).append(sum(float(r["time_sec"]) for r in rr))
                 for r in rr:
                     acc.setdefault(r["read"], []).append(float(r["time_sec"]))
-            per_read[order] = {k: statistics.mean(v) for k, v in acc.items()}
+            per_read[scheme] = {k: statistics.mean(v) for k, v in acc.items()}
         if "native" not in totals:
             continue
         nat = [math.log(v) for v in totals["native"]]
         block = []
-        for order in sorted(totals, key=variant_key):
-            if order not in totals:
+        for scheme in sorted(totals, key=variant_key):
+            if scheme not in totals:
                 continue
-            lx = [math.log(v) for v in totals[order]]
+            lx = [math.log(v) for v in totals[scheme]]
             row = {
-                "dataset": ds, **id_cols(order), "mid_occ_cap": cap, "n_reps": len(lx),
-                "sample_wall_s_mean": round(statistics.mean(totals[order]), 2),
-                "sample_wall_s_std": round(statistics.stdev(totals[order]), 2) if len(lx) > 1 else None,
+                "dataset": ds, **id_cols(scheme), "mid_occ_cap": cap, "n_reps": len(lx),
+                "sample_wall_s_mean": round(statistics.mean(totals[scheme]), 2),
+                "sample_wall_s_std": round(statistics.stdev(totals[scheme]), 2) if len(lx) > 1 else None,
             }
-            if order != "native" and len(lx) > 1 and len(nat) > 1:
+            if scheme != "native" and len(lx) > 1 and len(nat) > 1:
                 d, se, df, p = welch(lx, nat)
                 tq = t_quantile(0.95, df) if math.isfinite(df) else 1.645
                 lo, hi = math.exp(d - tq * se), math.exp(d + tq * se)
@@ -175,10 +175,10 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
                     "welch_p": p,
                     "tost_equivalent_5pct": lo >= 1 - TIME_MARGIN and hi <= 1 / (1 - TIME_MARGIN),
                 })
-                # paired per read: log2(order / native), averaged over replicates per read
-                common = [k for k in per_read[order] if k in per_read["native"]]
-                lr = [math.log2(per_read[order][k] / per_read["native"][k]) for k in common
-                      if per_read[order][k] > 0 and per_read["native"][k] > 0]
+                # paired per read: log2(scheme / native), averaged over replicates per read
+                common = [k for k in per_read[scheme] if k in per_read["native"]]
+                lr = [math.log2(per_read[scheme][k] / per_read["native"][k]) for k in common
+                      if per_read[scheme][k] > 0 and per_read["native"][k] > 0]
                 if lr:  # no reads timed in both runs: leave the per-read columns blank
                     med = statistics.median(lr)
                     boots = sorted(statistics.median(rng.choices(lr, k=len(lr))) for _ in range(500))
@@ -192,23 +192,23 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
             r["welch_p_holm"] = round(adj, 6)
             r["welch_p"] = round(r["welch_p"], 6)
         rows.extend(block)
-        # per-read mechanism: log anchors vs log time, within order
-        for order in per_read:
-            sf = adir / ds / "seeds" / cap / f"{label(order)}.csv"
+        # per-read mechanism: log anchors vs log time, within scheme
+        for scheme in per_read:
+            sf = adir / ds / "seeds" / cap / f"{label(scheme)}.csv"
             if not sf.is_file():
                 continue
             anchors = {r["read"]: int(r["anchors"]) for r in read_csv(sf)}
             xs, ys = [], []
-            for k, t in per_read[order].items():
+            for k, t in per_read[scheme].items():
                 if k in anchors and anchors[k] > 0 and t > 0:
                     xs.append(math.log(anchors[k])); ys.append(math.log(t))
-            per_read_rows.append({"dataset": ds, **id_cols(order), "mid_occ_cap": cap,
+            per_read_rows.append({"dataset": ds, **id_cols(scheme), "mid_occ_cap": cap,
                                   "n_reads": len(xs), "pearson_log_anchors_log_time": r4(pearson(xs, ys))})
     return rows, per_read_rows
 
 
 def accuracy(results: Path) -> list[dict]:
-    f = results / "csvs" / "analysis_accuracy_order.csv"
+    f = results / "csvs" / "analysis_accuracy_scheme.csv"
     if not f.is_file():
         if (results / "csvs" / "analysis_accuracy_paired.csv").is_file():
             print(f"warning: no {f.name}; rerun analysis/accuracy_paired.py (the per-seed "
@@ -216,7 +216,7 @@ def accuracy(results: Path) -> list[dict]:
         return []
     out = []
     for r in read_csv(f):
-        if r["order"] == "native" or not r.get("diff_correct_rate") or not r.get("p"):
+        if r["scheme"] == "native" or not r.get("diff_correct_rate") or not r.get("p"):
             continue  # native itself, or an empty subset (no in-repeat reads)
         d, se, df = float(r["diff_correct_rate"]), float(r["diff_se"]), int(r["df"])
         tq = t_quantile(0.95, df) if df > 0 else 1.645
@@ -235,7 +235,7 @@ def accuracy(results: Path) -> list[dict]:
             r["p_holm"] = round(adj, 6)
             r["p"] = round(r["p"], 6)
     return sorted(out, key=lambda r: (r["dataset"], r["mid_occ_cap"], r["subset"],
-                                      CANONICAL.index(r["order"]) if r["order"] in CANONICAL else len(CANONICAL),
+                                      CANONICAL.index(r["scheme"]) if r["scheme"] in CANONICAL else len(CANONICAL),
                                       r["gm_k"], r["projection"], r["mod_t"]))
 
 

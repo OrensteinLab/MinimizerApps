@@ -12,7 +12,7 @@ COMMANDS = {
     "density": ("scripts.density", "Expected / particular GreedyMini density"),
     "expected-density": (
         "scripts.expected_density",
-        "Theoretical expected density_factor per signature-order scheme (any order)",
+        "Theoretical expected density_factor per scheme (any scheme)",
     ),
     "meta": ("scripts.meta", "Write run meta.json from META_* env"),
     "make-readlen-dataset": (

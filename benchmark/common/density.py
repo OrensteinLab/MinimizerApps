@@ -18,9 +18,9 @@ algorithm:
     its own, unshared, hash construction).
   - the GreedyMini rank's *packing* into a return value: kraken2/kmc/sshash
     fold Extend-k + a gamma tiebreak below the UHS primary (see
-    common/minimizer-orders/greedymini_rank.h's own doc comment and
+    common/minimizer-schemes/greedymini_rank.h's own doc comment and
     orders/README.md's "Extend-k" section); minimap2's simplified ranker
-    (minimap2/order.cpp) instead packs a PCG-scrambled tiebreak with no
+    (minimap2/scheme.cpp) instead packs a PCG-scrambled tiebreak with no
     Extend-k, since it never needs the result to double as an index key.
     Build each app's own greedymini_hash on top of the bit-math primitives
     below, matching that app's actual ranker.
@@ -78,7 +78,7 @@ def sliding_runs(keys: list[int], w: int) -> tuple[int, int, int]:
 
 
 # ---------------------------------------------------------------------------
-# .gm file I/O (matches common/minimizer-orders/greedymini_rank.h exactly)
+# .gm file I/O (matches common/minimizer-schemes/greedymini_rank.h exactly)
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +101,7 @@ def gm_k_from_table(gm_ranks: list[int]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Bit helpers (Python port of common/minimizer-orders/greedymini_rank.h,
+# Bit helpers (Python port of common/minimizer-schemes/greedymini_rank.h,
 # assuming the traditional ACGT=0,1,2,3 packing every app in this repo builds
 # with)
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ def gm_extract_dna_tb_atcg(atcg: int, l: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Order hash functions (pure-Python ports of common/minimizer-orders/
+# Order hash functions (pure-Python ports of common/minimizer-schemes/
 # pcg_rxs_m_xs.h; xor-hash and xor-pcg-hash are identical across every app)
 # ---------------------------------------------------------------------------
 
@@ -205,7 +205,7 @@ def xor_pcg_hash(value: int, seed: int) -> int:
 
 # ---------------------------------------------------------------------------
 # GreedyMini centre extension, injective packing (port of
-# common/minimizer-orders/greedymini_centre.h gm_centre::Order with
+# common/minimizer-schemes/greedymini_centre.h gm_centre::Order with
 # injective=true and TwoBitPlanes<true>, i.e. the ACGT = 0..3 encoding that
 # kraken2 and minimap2 use; benchmark/sshash/scripts/density.py has the same
 # order on sshash's own encoding). l = gm_k + 2i; first base = most
@@ -262,7 +262,7 @@ def rolling_values(dna_stream: list[int], length: int) -> list[int]:
 def mod_centre_selections(ranks: list[int], w: int, T: int, le_rc) -> list[int]:
     """The k-mer position each window selects under the strand-symmetric
     mod-minimizer of the kraken2, minimap2 and sshash forks
-    (common/minimizer-orders/mod_minimizer_rule.h). `ranks` holds one
+    (common/minimizer-schemes/mod_minimizer_rule.h). `ranks` holds one
     strand-invariant rank per t-mer position; window s holds the T t-mers
     ranks[s:s+T] (T = w + k - t, t == k mod w). Every minimal t-mer x offers
     the offset x mod w; the offset closest to the centre (w-1)/2 wins, and
@@ -291,7 +291,7 @@ def mod_sampling_density(
 ) -> tuple[int, int]:
     """(n_kmers, n_selected) of the strand-symmetric mod-minimizer as
     minimap2's mod-minimizer-xor and kraken2's mod-minimizer define it
-    (minimap2/order.cpp, kraken2/src/mod_minimizer.h): windows of L = w+k-1
+    (minimap2/scheme.cpp, kraken2/src/mod_minimizer.h): windows of L = w+k-1
     bases, canonical t-mers ranked by hash_fn, the centre rule of
     mod_centre_selections with window <= its reverse complement compared
     lexicographically. The scheme is forward, so the distinct selected

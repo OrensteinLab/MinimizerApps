@@ -2,9 +2,9 @@
 """Greedymini runs with the flipped projection (kmc -oat1) are their own variant.
 
 lib/run.sh writes them to a separate ``greedymini/k9_at1-cg0/lut_binary`` run dir
-and meta.json records ``order=greedymini, projection=at1-cg0``; export must keep
-them out of the at0 row (summary aggregation keys on the full order identity --
-order, gm_k, projection, gm_table, gm_lut -- so a shared key would pool both
+and meta.json records ``scheme=greedymini, projection=at1-cg0``; export must keep
+them out of the at0 row (summary aggregation keys on the full scheme identity --
+scheme, gm_k, projection, gm_table, gm_lut -- so a shared key would pool both
 projections' seeds into one mean/std).
 """
 
@@ -46,7 +46,7 @@ def _write_run(runs_root: Path, scheme_dir: str, seed_idx: int, *, at1: bool, n_
         "strict_memory": False,
         "config_tag": "gzip_n512_t12_m12",
         "signature_len": 9,
-        "order": "greedymini",
+        "scheme": "greedymini",
         "gm_k": 9,
         "projection": "at1-cg0" if at1 else "at0-cg1",
         "gm_table": "w20_k9_canonical",
@@ -85,7 +85,7 @@ def _rows(tmp_path: Path) -> list[dict]:
 
 def test_at1_runs_get_their_own_projection(tmp_path):
     rows = _rows(tmp_path)
-    assert {r["order"] for r in rows} == {"greedymini"}
+    assert {r["scheme"] for r in rows} == {"greedymini"}
     proj = {r["run_id"].split("/")[-3]: r["projection"] for r in rows}
     assert proj == {"k9_at0-cg1": "at0-cg1", "k9_at1-cg0": "at1-cg0"}
     assert {r["gm_k"] for r in rows} == {9}
@@ -113,12 +113,12 @@ def test_export_layout(tmp_path):
         _write_run(runs_root, "greedymini/k9_at0-cg1/lut_binary", i, at1=False, n_super=100)
     csvs = results / "csvs"
     csvs.mkdir()
-    (csvs / "kmc3_density_expected_orders.csv").write_text(
-        "order,projection,k,w,L,n_seeds,density_factor_mean,density_factor_std\n"
+    (csvs / "kmc3_density_expected_schemes.csv").write_text(
+        "scheme,projection,k,w,L,n_seeds,density_factor_mean,density_factor_std\n"
         "greedymini,at0-cg1,9,20,28,5,1.7,0.01\n"
     )
     export.main(["--results-dir", str(results), "--paper-csv", str(tmp_path / "none.csv")])
-    for name in ("kmc3_runs.csv", "kmc3_summary.csv", "kmc3_orders.csv"):
+    for name in ("kmc3_runs.csv", "kmc3_summary.csv", "kmc3_schemes.csv"):
         assert (csvs / name).is_file()
     assert (results / "kmc3_results.xlsx").is_file()
     assert not list(results.glob("*.csv"))
