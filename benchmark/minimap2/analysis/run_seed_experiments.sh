@@ -5,9 +5,11 @@
 #   timing/<ds>/<cap>/<variant>.r<i>.csv  REPS passes without it (per-read time),
 #                                      variants shuffled within each replicate
 # A variant is a scheme's run-directory name (scheme_names.scheme_dir_name), e.g.
-# native, xor, greedymini/k15_at1-cg0, mod-minimizer-xor/t9; in file names "/"
-# is written "__". Every variant with a seed-0 index under the dataset's run
-# directory is used (greedymini once per projection).
+# native, xor, greedymini/k15_at1-cg0, mod-minimizer-xor/t9,
+# mod-minimizer-greedymini/k9_at0-cg1_t9; in file names "/" is written "__". Every
+# variant with a seed-0 index under the dataset's run directory is used (the
+# greedymini schemes once per projection). Existing outputs are kept, so a re-run
+# only adds the variants that lack them.
 # Usage: run_seed_experiments.sh <dataset> <n_reads> <reps> <cap|default>...
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -52,10 +54,12 @@ fi
 cond=$(cd "$RESULTS/runs/$ds" && ls -d k*_w* | grep -v _f | head -1)
 [ -n "$cond" ] || { echo "error: no runs under $RESULTS/runs/$ds" >&2; exit 1; }
 
-# schemes in canonical sequence first, then the parameter directory
+# schemes in canonical sequence first (stats.variant_key: scheme_names.sort_index), then the parameter directory
 VARIANTS=$(cd "$RESULTS/runs/$ds/$cond" && find . -path '*/0/index.mmi' | sed 's#^\./##; s#/0/index.mmi$##' \
-  | awk '{s=$0; sub("/.*","",s); r=(s=="native")?0:(s=="xor")?1:(s=="xor-pcg-hash")?2:(s=="greedymini")?3:(s=="mod-minimizer-xor")?4:5; print r" "$0}' \
-  | sort | cut -d' ' -f2)
+  | PYTHONPATH="$HERE/analysis" "$PY" -c '
+import sys
+from stats import variant_key
+print("\n".join(sorted(sys.stdin.read().split(), key=variant_key)))')
 [ -n "$VARIANTS" ] || { echo "error: no seed-0 indexes under $RESULTS/runs/$ds/$cond" >&2; exit 1; }
 
 for cap in "$@"; do

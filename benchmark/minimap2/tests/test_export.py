@@ -146,3 +146,22 @@ def test_schemes_sh_dirs_and_flags():
     flags = _sh("PROJECTION=at1-cg0; build_scheme_flags greedymini 7 0; echo \"${SCHEME_FLAGS[*]}\"")
     assert "--scheme greedymini" in flags and "--gm-projection at1-cg0" in flags
     assert _sh("scheme_is_known greedymini-at1 && echo yes || echo no") == "no"
+    assert _sh("PROJECTION=at1-cg0; scheme_dir_name mod-minimizer-greedymini 9") == "mod-minimizer-greedymini/k9_at1-cg0_t9"
+    flags = _sh("PROJECTION=at1-cg0; build_scheme_flags mod-minimizer-greedymini 7 9; echo \"${SCHEME_FLAGS[*]}\"").split()
+    assert flags[:4] == ["--scheme", "mod-minimizer-greedymini", "--order-seed", "7"]
+    assert flags[5].endswith("/w20_k9_canonical.gm") and flags[4] == "--greedymini-file"
+    assert flags[6:] == ["--gm-projection", "at1-cg0", "--mod-t", "9"]
+
+
+def test_schemes_mod_greedymini_only_where_t_is_gm_k():
+    """mod-minimizer-greedymini (a table of 9-mers) gets a schemes row at t = 9 (k=19), none at t = 5 (k=15)."""
+    datasets = [{"dataset": "A", "k": 19, "w": 10, "mod_t": 9, "preset": "map-pb"},
+                {"dataset": "B", "k": 15, "w": 10, "mod_t": None, "preset": "map-ont"}]
+    ident = {"gm_k": 9, "projection": "at0-cg1", "gm_table": "w20_k9_canonical"}
+    summary = [{"dataset": "A", "scheme": "mod-minimizer-greedymini", **ident, "mid_occ_cap": export.DEFAULT_MID_OCC_CAP,
+                "k": 19, "w": 10, "mod_t": 9, "density_factor_mean": 1.4, "density_factor_std": 0.01}]
+    exp = {(19, 10, 9): {("mod-minimizer-greedymini", "at0-cg1"): {"density_factor_mean": "1.45", "density_factor_std": "0.01"}}}
+    rows = export.schemes_rows(summary, datasets, exp)
+    assert [(r["scheme"], r["k"], r["mod_t"]) for r in rows] == [("mod-minimizer-greedymini", 19, 9)]
+    assert "w20_k9_canonical.gm" in rows[0]["cli"] and "--mod-t 9" in rows[0]["cli"]
+    export.check_schemes_complete(rows, datasets)

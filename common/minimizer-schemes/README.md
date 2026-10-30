@@ -201,17 +201,15 @@ apps require t == k (mod w) (kraken2 `t = 4 + (l-4) mod w`; minimap2 `--mod-t` a
 offsets are mirror-symmetric. The centre rule is applied to them: the candidate closest to the
 window centre (w-1)/2, and between the two equally close mirror candidates p and w-1-p, the
 left if v <= RC(v), else the right. RC(v) then samples the mirror k-mer (canonical), and the
-chosen offset never moves backwards as the window slides (forward). This replaced the G/T-strand
-rule of SimdMinimizers (Groot Koerkamp & Martayan, bioRxiv 2025.01.27.634998: the leftmost
-minimum on the strand with more G/T bases), which is canonical but not forward and needs a
-strand decision in every window; the centre rule does extra work only on a tied minimum, and
-compares v with RC(v) only on an exact two-way tie. The native plain rules do not carry over:
+chosen offset never moves backwards as the window slides (forward). The centre rule does extra
+work only on a tied minimum, and compares v with RC(v) only on an exact two-way tie. The native plain rules do not carry over:
 leftmost (kraken2) is not canonical for the mod-minimizer, keeping every tied k-mer (minimap2)
 inflates density at small t, and kmc has no mod-minimizer. v <= RC(v) is lexicographic in
 kraken2 and minimap2 (`le_revcomp_planes`, O(1) on two bit planes) and sshash's packed-word
 comparison `!(kmer_rc < kmer)` in sshash, the one its plain rule uses; both are total orders,
-which is all canonicity needs. Indexes built with the G/T rule are refused (kraken2
-`opts.k2d` `mod_tie_rule`, minimap2 `.mmi` order section, sshash index version 15).
+which is all canonicity needs. Indexes built with the earlier G/T-strand tie rule are refused
+(kraken2 `opts.k2d` `mod_tie_rule`, minimap2 `.mmi` order section, sshash index version 15):
+rebuild them.
 
 **Tie rules, plain minimizers.** Each application keeps its native rule for breaking ties
 between equal-rank positions, because each rule serves how that application uses the

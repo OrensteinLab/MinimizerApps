@@ -30,3 +30,11 @@ configs:
     gm_table: w10_k15_canonical
     projection: at1-cg0
   - scheme: mod-minimizer-xor
+  # mod-minimizer-greedymini: a table of t-mers (t = gm_k = 9: k=19, w=10 only;
+  # skipped at map-ont's k=15, t=5), one run/row per projection
+  - scheme: mod-minimizer-greedymini
+    gm_table: w20_k9_canonical
+    projection: at0-cg1
+  - scheme: mod-minimizer-greedymini
+    gm_table: w20_k9_canonical
+    projection: at1-cg0

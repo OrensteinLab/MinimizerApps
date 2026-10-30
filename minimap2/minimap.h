@@ -89,7 +89,8 @@ typedef enum {
 	MM_SCHEME_XOR = 1,           // kmer ^ seed
 	MM_SCHEME_XOR_PCG_HASH = 2,  // pcg_rxs_m_xs64(kmer ^ seed)
 	MM_SCHEME_GREEDYMINI = 3,    // GreedyMini UHS rank table (binary alphabet + projection)
-	MM_SCHEME_MOD_XOR = 6        // strand-symmetric mod-minimizer, O_t = xor (scheme.cpp)
+	MM_SCHEME_MOD_XOR = 6,       // strand-symmetric mod-minimizer, O_t = xor (scheme.cpp)
+	MM_SCHEME_MOD_GREEDYMINI = 7 // strand-symmetric mod-minimizer, O_t = a GreedyMini table of t-mers
 } mm_scheme_kind_t;
 
 // GreedyMini DNA -> binary projection polarity (Sigma plane = {A,T} vs {C,G}),
@@ -101,12 +102,13 @@ typedef enum {
 
 typedef struct {
 	mm_scheme_kind_t kind;
-	uint64_t seed;                // xor / xor-pcg-hash / mod-minimizer-xor O_t seed
+	uint64_t seed;                // xor / xor-pcg-hash / mod-minimizer-xor O_t seed; greedymini schemes: the Gamma toggle
 	const char *greedymini_file;  // path to a .gm table; only read at mm_scheme_init() time
-	mm_gm_projection_t gm_projection; // greedymini only
+	mm_gm_projection_t gm_projection; // greedymini schemes only
 	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
-	int k;                        // the minimizer length this order is used with (validated
-	                               // against the GreedyMini table's own gm_k at init time)
+	int k;                        // the minimizer length this order is used with; the GreedyMini
+	                               // table must fit the ranked length (k, or t for
+	                               // MOD_GREEDYMINI: gm_k + 2i), checked at init time
 	int w;                        // the window (k-mer count) it is used with: a mod-minimizer
 	                               // order needs t == k (mod w)
 } mm_scheme_conf_t;

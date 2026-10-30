@@ -20,6 +20,15 @@ Public API
 ----------
   is_greedymini(scheme) -> bool        greedymini or mod-minimizer-greedymini
   is_mod_minimizer(scheme) -> bool
+  gm_centre_fits(length, gm_k) -> bool
+      whether a gm_k table can rank a `length`-mer: length = gm_k + 2i (the
+      centre extension, common/minimizer-schemes/greedymini_centre.h).
+  gm_table_fits(scheme, gm_k, k, mod_t) -> bool
+      gm_centre_fits for the length the scheme ranks (the k-mer, or the
+      mod-minimizer's t-mer); True for schemes without a table.
+  sort_index(scheme, baselines=('native',)) -> int
+      position in baselines + CANONICAL (unknown schemes last): the one
+      scheme order of the tables and analyses.
   validate_scheme(scheme, baselines=()) -> scheme   (ValueError if unknown)
   projection_from_flag(flag) -> 'at0-cg1' | 'at1-cg0'
       flag: True/False (True = at1), 'at1'/'at0', 'at1-cg0'/'at0-cg1', 1/0.
@@ -68,6 +77,26 @@ def is_greedymini(scheme):
 
 def is_mod_minimizer(scheme):
     return scheme in MOD_SCHEMES
+
+
+def gm_centre_fits(length, gm_k):
+    """Whether a table of gm_k-mers can rank a `length`-mer: the centre extension
+    (common/minimizer-schemes/greedymini_centre.h) needs length = gm_k + 2i, i >= 0."""
+    return int(length) >= int(gm_k) and (int(length) - int(gm_k)) % 2 == 0
+
+
+def gm_table_fits(scheme, gm_k, k, mod_t=None):
+    """Whether a table of gm_k-mers can rank what `scheme` ranks: the k-mer
+    (greedymini) or the t-mer (mod-minimizer-greedymini). True for the other schemes."""
+    if not is_greedymini(scheme):
+        return True
+    return gm_centre_fits(int(mod_t) if is_mod_minimizer(scheme) else int(k), gm_k)
+
+
+def sort_index(scheme, baselines=("native",)):
+    """Position of `scheme` in baselines + CANONICAL; unknown schemes sort last."""
+    order = list(baselines) + list(CANONICAL)
+    return order.index(scheme) if scheme in order else len(order)
 
 
 def validate_scheme(scheme, baselines=()):

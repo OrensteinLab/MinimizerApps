@@ -25,9 +25,10 @@ Same scheme menu as the other three apps (see
 the cross-app CLI-flag table): `xor`, `xor-pcg-hash`, `greedymini`
 (binary alphabet + on-the-fly projection only, no DNA-alphabet backend;
 a `gm_k` table is centre-extended to `-k = gm_k + 2i`, as in kraken2 and
-sshash; either AT/CG projection polarity, `--gm-projection`, as in sshash), and
-`mod-minimizer-xor` (strand-symmetric mod-sampling with `xor` as the t-mer
-order; see below).
+sshash; either AT/CG projection polarity, `--gm-projection`, as in sshash),
+`mod-minimizer-xor` and `mod-minimizer-greedymini` (strand-symmetric
+mod-sampling with `xor`, respectively a GreedyMini table of t-mers, as the
+t-mer order; see below).
 
 ```bash
 ./minimap2 -a ref.fa reads.fq                                                    # native, unchanged
@@ -40,6 +41,10 @@ order; see below).
 
 # strand-symmetric mod-minimizer, xor as O_t
 ./minimap2 -a --scheme mod-minimizer-xor --order-seed 42 --mod-t 5 ref.fa reads.fq
+# strand-symmetric mod-minimizer, a GreedyMini table of t-mers as O_t (t = gm_k + 2i;
+# the w20_k9 table at -k 19 -w 10, t = 9)
+./minimap2 -a --scheme mod-minimizer-greedymini --order-seed 42 --mod-t 9 -k 19 -w 10 \
+    --greedymini-file ../orders/GreedyMini/w20_k9_canonical.gm ref.fa reads.fq
 ```
 
 Long-only flags (`--scheme`, `--order-seed`, `--greedymini-file`,
@@ -83,7 +88,7 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   even and `-k <= 23` (the packed value must stay below UINT64_MAX).
   `validate_greedymini.py` checks the compiled rank and sketch against two
   independent Python versions.
-- `mod-minimizer-xor` is a strand-symmetric variant of mod-sampling (Groot
+- `mod-minimizer-xor` / `mod-minimizer-greedymini` are a strand-symmetric variant of mod-sampling (Groot
   Koerkamp & Pibiri, WABI 2024), with the rule shared with kraken2 and sshash
   in `common/minimizer-schemes/mod_minimizer_rule.h`: `--mod-t` must satisfy
   t == k (mod w) (t = 9 at k = 19, t = 5 at k = 15, w = 10); a unique minimal
@@ -92,12 +97,18 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   window of `w+k-1` bases is lexicographically <= its reverse complement (the
   centre rule of Cologni & Pibiri, as in SSHash). A read and its reverse
   complement thus select the same loci, and the selection never moves back.
+  The order on t-mers is a template parameter of the one scan
+  (`sketch_mod_minimizer<Kind>`, `TmerRank`): xor ranks the canonical t-mer
+  XOR the seed; the GreedyMini order is `RankState<MM_SCHEME_GREEDYMINI>` at
+  length t (the shared centre-extension order, built for t, with the same
+  projection and `--order-seed` Gamma toggle as `greedymini`), stored in the
+  `.mmi` with its table and length.
   The scan keeps the window minimum and its leftmost/rightmost t-mers by
   conditional moves and rescans only when the minimum leaves the window (as
   native `mm_sketch()` does), and emits a selected k-mer when it leaves the
-  window (output stays in position order); an index built with the retired
-  G/T-strand rule is refused; `validate_mod_minimizer.py`
-  checks it against a brute force of the definition. A window whose sampled
+  window (output stays in position order); an index built with the earlier
+  G/T-strand tie rule is refused (rebuild it); `validate_mod_minimizer.py`
+  checks it, with both orders on t-mers, against a brute force of the definition. A window whose sampled
   k-mer is its own reverse complement (even `-k` only), or spans 256 or more
   bases under `-H`, emits no minimizer; native minimap2 instead skips such a
   k-mer and lets the window pick another. Indexes built with the earlier

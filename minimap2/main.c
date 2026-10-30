@@ -371,8 +371,8 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		if (gm_projection) {
-			if (ipt.scheme_conf.kind != MM_SCHEME_GREEDYMINI) {
-				fprintf(stderr, "[ERROR] --gm-projection only applies to --scheme greedymini\n");
+			if (ipt.scheme_conf.kind != MM_SCHEME_GREEDYMINI && ipt.scheme_conf.kind != MM_SCHEME_MOD_GREEDYMINI) {
+				fprintf(stderr, "[ERROR] --gm-projection only applies to --scheme greedymini / mod-minimizer-greedymini\n");
 				return 1;
 			}
 			if (strcmp(gm_projection, "at0-cg1") == 0) ipt.scheme_conf.gm_projection = MM_GM_PROJ_AT0_CG1;
@@ -408,12 +408,14 @@ int main(int argc, char *argv[])
 		fprintf(fp_help, "    -I NUM       split index for every ~NUM input bases [8G]\n");
 		fprintf(fp_help, "    -d FILE      dump index to FILE []\n");
 		fprintf(fp_help, "    --scheme STR           scheme used to pick each window's minimizer: native (default),\n");
-		fprintf(fp_help, "                 xor, xor-pcg-hash, greedymini, mod-minimizer-xor\n");
-		fprintf(fp_help, "    --order-seed INT       seed for xor/xor-pcg-hash/mod-minimizer-xor; for greedymini\n");
+		fprintf(fp_help, "                 xor, xor-pcg-hash, greedymini, mod-minimizer-xor,\n");
+		fprintf(fp_help, "                 mod-minimizer-greedymini\n");
+		fprintf(fp_help, "    --order-seed INT       seed for xor/xor-pcg-hash/mod-minimizer-xor; for the greedymini schemes\n");
 		fprintf(fp_help, "                           the Gamma tie-break toggle [0]\n");
-		fprintf(fp_help, "    --greedymini-file FILE .gm rank table for greedymini (-k = gm_k + 2i, -k <= 23)\n");
-		fprintf(fp_help, "    --gm-projection STR    greedymini AT/CG projection: at0-cg1 (default) or at1-cg0\n");
-		fprintf(fp_help, "    --mod-t INT            t-mer length for mod-minimizer-xor (0 < t < -k)\n");
+		fprintf(fp_help, "    --greedymini-file FILE .gm rank table for greedymini (-k = gm_k + 2i, -k <= 23) or\n");
+		fprintf(fp_help, "                           mod-minimizer-greedymini (--mod-t = gm_k + 2i)\n");
+		fprintf(fp_help, "    --gm-projection STR    GreedyMini AT/CG projection: at0-cg1 (default) or at1-cg0\n");
+		fprintf(fp_help, "    --mod-t INT            t-mer length for the mod-minimizer schemes (0 < t < -k, t == k mod w)\n");
 		fprintf(fp_help, "  Mapping:\n");
 		fprintf(fp_help, "    -f FLOAT     filter out top FLOAT fraction of repetitive minimizers [%g]\n", opt.mid_occ_frac);
 		fprintf(fp_help, "    -g NUM       stop chain enlongation if there are no minimizers in INT-bp [%d]\n", opt.max_gap);

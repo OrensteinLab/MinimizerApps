@@ -1,9 +1,9 @@
 # minimap2 benchmark harness
 
 Compares minimap2's minimizer schemes (native, xor, xor-pcg-hash,
-greedymini and mod-minimizer-xor; greedymini's AT/CG projection
-(`--gm-projection at0-cg1|at1-cg0`) and GreedyMini table (`gm_table`, whose k
-is `gm_k`) are separate parameters, not part of the scheme name, and each
+greedymini, mod-minimizer-xor and mod-minimizer-greedymini; the greedymini
+schemes' AT/CG projection (`--gm-projection at0-cg1|at1-cg0`) and GreedyMini
+table (`gm_table`, whose k is `gm_k`) are separate parameters, not part of the scheme name, and each
 projection is its own set of runs/rows; see
 [`orders/README.md`](../../orders/README.md)) the way Jain et al. 2020
 ("Weighted minimizer sampling improves long read mapping" -- Winnowmap,
@@ -76,7 +76,10 @@ Table 1), built and evaluated the way the paper describes:
 k is each preset's own default, as the paper ran minimap2 with `-cx map-pb`
 / `-cx map-ont` (`lib/constants.sh:preset_default_k`; `K=` overrides); every
 scheme uses that k (GreedyMini's k15 table is centre-extended to k=19), and
-mod-minimizer's t = 4 + (k-4) % w (9 at k=19, 5 at k=15). Each dataset's
+mod-minimizer's t = 4 + (k-4) % w (9 at k=19, 5 at k=15).
+mod-minimizer-greedymini ranks the t-mers by KMC3's `w20_k9` table (`MOD_GM_TABLE`;
+k = t = 9, w = T = w + k - t = 20), so it runs only on the k=19 datasets (D1, D2);
+at k=15 (D3, t=5) `run` skips it (`scheme_table_fits`). Each dataset's
 preset is a one-word `data/<dataset>/preset` file (absent = `map-pb`;
 `$PRESET` overrides it), recorded in every run's `meta.json`.
 
@@ -142,7 +145,7 @@ never clobbered by `.env`.
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `run <scheme> [seed] [seed_idx]`, `sweep [schemes...]`, `export [--datasets a,b]`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
 | `lib/constants.sh` | Defaults (k = the dataset preset's own via `preset_default_k`, `w=10`, mod_t = 4 + (k-4) % w; `$PYTHON` resolution; optional `MID_OCC` = fixed map-time `-f` cap, results under `k<k>_w<w>_f<cap>/`) + `config.yaml` seed loading (`$ALL_SEEDS`) |
-| `lib/schemes.sh` | Scheme name -> CLI flags (`ALL_SCHEMES` == `DEFAULT_SCHEMES`; `--scheme`, `--order-seed`, ...); `sweep` runs every scheme across the full seed list, `native` included (its repeats build identical indexes and give the baseline replicates; greedymini's seed toggles its Gamma tie-break). greedymini's parameters are `GM_TABLE` (default `w10_k15_canonical`) and `PROJECTION` (`at0-cg1`/`at1-cg0`, for a single `run`); `sweep` runs greedymini once per projection in `PROJECTIONS` (default both). Run-dir names come from `scheme_names.scheme_dir_name` |
+| `lib/schemes.sh` | Scheme name -> CLI flags (`ALL_SCHEMES` == `DEFAULT_SCHEMES`; `--scheme`, `--order-seed`, ...); `sweep` runs every scheme across the full seed list, `native` included (its repeats build identical indexes and give the baseline replicates; greedymini's seed toggles its Gamma tie-break). The greedymini schemes' parameters are the table, `GM_TABLE` (greedymini, default `w10_k15_canonical`) / `MOD_GM_TABLE` (mod-minimizer-greedymini, default `w20_k9_canonical`), and `PROJECTION` (`at0-cg1`/`at1-cg0`, for a single `run`); `sweep` runs them once per projection in `PROJECTIONS` (default both). `scheme_table_fits` (`scheme_names.gm_table_fits`) says whether a table fits the length it ranks. Run-dir names come from `scheme_names.scheme_dir_name` |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | Single (scheme, seed, seed_idx) run: build, map, score, `meta.json` (results land under `runs/<dataset>/k<k>_w<w>/<scheme>[/<params>]/<seed_idx>/`, `<params>` = `k<gm_k>_<projection>` for greedymini, `t<mod_t>` for mod-minimizer, e.g. `greedymini/k15_at1-cg0`; `meta.json` carries the separate `scheme, gm_k, projection, gm_table, mod_t` fields) |
 | `lib/score_accuracy.py` | PAF vs. `truth.tsv` accuracy/identity scoring (mapped fraction only for real reads) |
@@ -209,7 +212,8 @@ the per-locus canonical orders, and the scheme is forward.
 G/T-strand variant and simd-minimizers' canonical minimizer (density, strand
 agreement).
 
-`minimap2/scheme.cpp`'s `sketch_mod_minimizer` uses kraken2's single
-monotone deque over all live t-mers; `minimap2/validate_mod_minimizer.py`
+`minimap2/scheme.cpp`'s `sketch_mod_minimizer` keeps the window's t-mer ranks
+in a ring buffer with the leftmost/rightmost minimum, rescanning only when the
+leftmost minimum leaves the window; `minimap2/validate_mod_minimizer.py`
 (run by `make -C minimap2 test`) checks the compiled sketch against a brute
 force, including N gaps and palindromic k-mers.

@@ -80,12 +80,12 @@ struct mm_scheme_s {
 	mm_scheme_kind_t kind;
 	uint64_t seed;
 	int t;
-	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI only
-	// GREEDYMINI only, built once at init/deserialize for the index's k
-	// (read-only afterwards, so shared by all sketching threads and by
+	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI and MOD_GREEDYMINI only
+	// GREEDYMINI / MOD_GREEDYMINI only, built once at init/deserialize for the
+	// index's k, respectively the mod-minimizer's t (read-only afterwards, so shared by all sketching threads and by
 	// mm_scheme_clone's copies): the centre-extension order of the gm_k table
-	// at length k (k = gm_k + 2i), and the Sigma/Gamma planes of minimap2's
-	// ACGT=0123 k-mers. --gm-projection at1-cg0 complements Sigma (sshash's
+	// at length l = k or t (l = gm_k + 2i), and the Sigma/Gamma planes of
+	// minimap2's ACGT=0123 l-mers. --gm-projection at1-cg0 complements Sigma (sshash's
 	// custom_scheme_hasher.hpp does the same on its own encoding).
 	int gm_l = 0;
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
@@ -102,16 +102,21 @@ void set_err(char *errbuf, size_t n, const char *msg) {
 }
 
 bool is_mod_kind(mm_scheme_kind_t k) {
-	return k == MM_SCHEME_MOD_XOR;
+	return k == MM_SCHEME_MOD_XOR || k == MM_SCHEME_MOD_GREEDYMINI;
 }
 
 bool valid_kind(uint32_t k) {
 	return k == MM_SCHEME_NATIVE || k == MM_SCHEME_XOR || k == MM_SCHEME_XOR_PCG_HASH ||
-	       k == MM_SCHEME_GREEDYMINI || k == MM_SCHEME_MOD_XOR;
+	       k == MM_SCHEME_GREEDYMINI || k == MM_SCHEME_MOD_XOR || k == MM_SCHEME_MOD_GREEDYMINI;
 }
 
 bool needs_gm_kind(mm_scheme_kind_t k) {
-	return k == MM_SCHEME_GREEDYMINI;
+	return k == MM_SCHEME_GREEDYMINI || k == MM_SCHEME_MOD_GREEDYMINI;
+}
+
+// The length the GreedyMini order ranks: the k-mer, or the mod-minimizer's t-mer.
+int gm_length(mm_scheme_kind_t kind, int k, int t) {
+	return kind == MM_SCHEME_MOD_GREEDYMINI ? t : k;
 }
 
 // GreedyMini rank of a k-mer: the shared centre extension
@@ -183,6 +188,29 @@ template <> struct RankState<MM_SCHEME_GREEDYMINI> {
 		gamma_r = (gamma_r >> 1) | ((g ^ 1ULL) << (k - 1));
 	}
 	uint64_t rank(uint64_t) const { return order.value_of_both_strands(sigma_f, gamma_f, sigma_r, gamma_r); }
+};
+
+// Rank of the t-mer ending at the last pushed base, for the mod-minimizer
+// sketch (one specialisation per O_t). xor: the canonical t-mer XOR the seed.
+// GreedyMini: RankState<MM_SCHEME_GREEDYMINI> on t-mers (ord->gm_order is
+// built for length t), the same strand-invariant injective order, so equal
+// ranks mean equal canonical t-mers, as with xor.
+template <int Kind> struct TmerRank;
+
+template <> struct TmerRank<MM_SCHEME_MOD_XOR> {
+	uint64_t seed, mask, shift1, fwd = 0, rc = 0;
+	TmerRank(const mm_scheme_t *ord, int t)
+		: seed(ord->seed), mask((1ULL << (2 * t)) - 1), shift1((uint64_t)(2 * (t - 1))) {}
+	void push(int c) {
+		fwd = ((fwd << 2) | (uint64_t)c) & mask;
+		rc = (rc >> 2) | (((uint64_t)(3 ^ c)) << shift1);
+	}
+	uint64_t rank() const { return (fwd < rc ? fwd : rc) ^ seed; }
+};
+
+template <> struct TmerRank<MM_SCHEME_MOD_GREEDYMINI> : RankState<MM_SCHEME_GREEDYMINI> {
+	TmerRank(const mm_scheme_t *ord, int t) : RankState<MM_SCHEME_GREEDYMINI>(ord, t) {}
+	uint64_t rank() const { return RankState<MM_SCHEME_GREEDYMINI>::rank(0); }
 };
 
 // ---------------------------------------------------------------------------
@@ -306,12 +334,14 @@ void sketch_single_window(const mm_scheme_t *ord, void *km, const char *str, int
 }
 
 // ---------------------------------------------------------------------------
-// mod-minimizer-xor: strand-symmetric (canonical) mod-sampling with O_t = xor.
+// mod-minimizer-xor / mod-minimizer-greedymini: strand-symmetric (canonical)
+// mod-sampling with O_t = xor, respectively a GreedyMini table of t-mers
+// (TmerRank above).
 //
 // mod-sampling (Groot Koerkamp & Pibiri, WABI 2024) in minimap2's notation: k
 // is the sampled k-mer length, w the window's k-mer count, the window spans
 // L = w + k - 1 bases (mm_sketch()'s own first-output condition) and holds
-// T = w + k - t t-mers, ranked as canonical t-mers XOR the seed. Plain
+// T = w + k - t t-mers, ranked by O_t (strand invariant). Plain
 // mod-sampling picks the k-mer at offset x_L mod w (x_L = leftmost minimal
 // t-mer); that is not reverse-complement symmetric (reducing the winner's
 // position mod w does not commute with mirroring the window), so a read and
@@ -340,6 +370,7 @@ void sketch_single_window(const mm_scheme_t *ord, void *km, const char *str, int
 // in its residue slot and emitted when it leaves the window (no later window
 // can select it): output stays in position order, each k-mer once, no sort.
 // ---------------------------------------------------------------------------
+template <int Kind>
 void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int len,
                           int w, int k, uint32_t rid, int is_hpc, mm128_v *p)
 {
@@ -347,9 +378,8 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 	assert(t > 0 && t < k);
 	assert(w > 0 && w < 256); // same bound native mm_sketch() itself asserts
 	const int tmer_span = w + k - t;
-	const uint64_t t_mask = (1ULL << (2 * t)) - 1, t_shift1 = (uint64_t)(2 * (t - 1));
 	const uint64_t k_mask = (1ULL << (2 * k)) - 1, k_shift1 = (uint64_t)(2 * (k - 1));
-	const uint64_t seed = ord->seed;
+	TmerRank<Kind> tr(ord, t);
 
 	// The window's tmer_span t-mers, by ordinal: rank and residue class.
 	uint32_t cap = 1;
@@ -370,7 +400,7 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 	struct LEntry { uint64_t kmer; uint32_t span; uint64_t y; int valid; };
 	std::vector<LEntry> lring(w); // indexed by k-mer ordinal mod w
 
-	uint64_t tmer_fwd = 0, tmer_rc = 0, kmer[2] = { 0, 0 };
+	uint64_t kmer[2] = { 0, 0 };
 	ssize_t run_pos = -1;   // bases seen since the last reset (0-indexed once >= 0)
 	int t_cls = 0;          // (next t-mer ordinal) mod w
 	int l_cls = 0;          // (next k-mer ordinal) mod w
@@ -428,8 +458,7 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 		}
 		++run_pos;
 
-		tmer_fwd = ((tmer_fwd << 2) | (uint64_t)c) & t_mask;
-		tmer_rc = (tmer_rc >> 2) | (((uint64_t)(3 ^ c)) << t_shift1);
+		tr.push(c);
 		kmer[0] = ((kmer[0] << 2) | (uint64_t)c) & k_mask;
 		kmer[1] = (kmer[1] >> 2) | (((uint64_t)(3 ^ c)) << k_shift1);
 		win_hi = (win_hi << 1) | (uint64_t)(c >> 1);
@@ -437,7 +466,7 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 
 		const ssize_t ot = run_pos - t + 1; // ordinal of the t-mer ending here
 		if (ot >= 0) {
-			const uint64_t rank = (tmer_fwd < tmer_rc ? tmer_fwd : tmer_rc) ^ seed;
+			const uint64_t rank = tr.rank();
 			trank[(size_t)(ot & rmask)] = rank;
 			tcls[(size_t)(ot & rmask)] = (uint8_t)t_cls;
 			if (++t_cls == w) t_cls = 0;
@@ -504,7 +533,8 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 
 namespace {
 
-// Max k for greedymini: the injective packing takes 16 + 2k bits, and a
+// Max ranked length for the greedymini schemes (k, or t for
+// mod-minimizer-greedymini): the injective packing takes 16 + 2l bits, and a
 // value must stay below UINT64_MAX (sketch_single_window's "no candidate").
 const int kGmMaxK = 23;
 
@@ -516,7 +546,7 @@ bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	if (!ord->gm) return true;
 	if (l > kGmMaxK) {
 		char msg[160];
-		std::snprintf(msg, sizeof msg, "greedymini supports -k up to %d (got %d)", kGmMaxK, l);
+		std::snprintf(msg, sizeof msg, "the greedymini schemes rank lengths up to %d (-k, or --mod-t for mod-minimizer-greedymini; got %d)", kGmMaxK, l);
 		set_err(errbuf, errbuf_len, msg);
 		return false;
 	}
@@ -559,7 +589,7 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 	std::shared_ptr<const GreedyMiniTable> gm;
 	if (needs_gm_kind(conf->kind)) {
 		if (!conf->greedymini_file || !*conf->greedymini_file) {
-			set_err(errbuf, errbuf_len, "greedymini scheme requires --greedymini-file");
+			set_err(errbuf, errbuf_len, "greedymini schemes require --greedymini-file");
 			return nullptr;
 		}
 		try {
@@ -577,7 +607,7 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 		return nullptr;
 	}
 	if (conf->gm_projection != MM_GM_PROJ_AT0_CG1 && !needs_gm_kind(conf->kind)) {
-		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini scheme");
+		set_err(errbuf, errbuf_len, "--gm-projection only applies to the greedymini schemes");
 		return nullptr;
 	}
 	mm_scheme_t *ord = new (std::nothrow) mm_scheme_t();
@@ -587,7 +617,7 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 	ord->t = conf->t;
 	ord->gm = gm;
 	ord->gm_projection = conf->gm_projection;
-	if (!build_gm_order(ord, conf->k, errbuf, errbuf_len) || mm_scheme_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
+	if (!build_gm_order(ord, gm_length(conf->kind, conf->k, conf->t), errbuf, errbuf_len) || mm_scheme_validate(ord, conf->k, conf->w, errbuf, errbuf_len) != 0) {
 		delete ord;
 		return nullptr;
 	}
@@ -613,8 +643,9 @@ extern "C" int mm_scheme_validate(const mm_scheme_t *ord, int k, int w, char *er
 		                                                     : "GreedyMini table given for a scheme that does not use one");
 		return -1;
 	}
-	if (ord->gm && (!ord->gm_order || ord->gm_l != k)) {
-		std::snprintf(msg, sizeof msg, "GreedyMini order built for k = %d, index k = %d", ord->gm_l, k);
+	const int l = gm_length(ord->kind, k, ord->t);
+	if (ord->gm && (!ord->gm_order || ord->gm_l != l)) {
+		std::snprintf(msg, sizeof msg, "GreedyMini order built for length %d, the scheme ranks length %d", ord->gm_l, l);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
 	}
@@ -626,6 +657,7 @@ extern "C" int mm_scheme_matches_conf(const mm_scheme_t *ord, const mm_scheme_co
 	if (!ord || !conf || ord->kind != conf->kind) return 0;
 	if (needs_gm_kind(ord->kind)) {
 		if (ord->gm_projection != conf->gm_projection || ord->seed != conf->seed) return 0;
+		if (is_mod_kind(ord->kind) && ord->t != conf->t) return 0;
 		if (conf->greedymini_file && *conf->greedymini_file) {
 			try {
 				const std::shared_ptr<const GreedyMiniTable> gm = load_gm_table(conf->greedymini_file);
@@ -664,7 +696,10 @@ extern "C" void mm_sketch_scheme(const mm_scheme_t *ord, void *km, const char *s
 			sketch_single_window<MM_SCHEME_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		case MM_SCHEME_MOD_XOR:
-			sketch_mod_minimizer(ord, km, str, len, w, k, rid, is_hpc, p);
+			sketch_mod_minimizer<MM_SCHEME_MOD_XOR>(ord, km, str, len, w, k, rid, is_hpc, p);
+			return;
+		case MM_SCHEME_MOD_GREEDYMINI:
+			sketch_mod_minimizer<MM_SCHEME_MOD_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		default:
 			assert(0 && "mm_sketch_scheme: MM_SCHEME_NATIVE should call mm_sketch() directly");
@@ -820,6 +855,7 @@ extern "C" const char *mm_scheme_kind_name(mm_scheme_kind_t kind)
 		case MM_SCHEME_XOR_PCG_HASH:      return "xor-pcg-hash";
 		case MM_SCHEME_GREEDYMINI:        return "greedymini";
 		case MM_SCHEME_MOD_XOR:           return "mod-minimizer-xor";
+		case MM_SCHEME_MOD_GREEDYMINI:    return "mod-minimizer-greedymini";
 	}
 	return "unknown";
 }
@@ -834,6 +870,7 @@ extern "C" int mm_scheme_parse_kind(const char *s, mm_scheme_kind_t *out)
 		{ "xor-pcg-hash",               MM_SCHEME_XOR_PCG_HASH },
 		{ "greedymini",                 MM_SCHEME_GREEDYMINI },
 		{ "mod-minimizer-xor",          MM_SCHEME_MOD_XOR },
+		{ "mod-minimizer-greedymini",   MM_SCHEME_MOD_GREEDYMINI },
 	};
 	for (const Entry &e : table)
 		if (std::strcmp(s, e.name) == 0) { *out = e.kind; return 0; }
