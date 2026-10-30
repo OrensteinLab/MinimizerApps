@@ -38,19 +38,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
-from scheme_names import ID_FIELDS, parse_scheme_dir  # noqa: E402
+from scheme_names import ID_FIELDS, parse_scheme_dir, sort_index  # noqa: E402
 from units import gb_from_bytes  # noqa: E402
 
 # A "variant" is a scheme's run-directory name (scheme_names.scheme_dir_name):
-# `native`, `xor`, `greedymini/k15_at1-cg0`, `mod-minimizer-xor/t9`, ... Its
+# `native`, `xor`, `greedymini/k15_at1-cg0`, `mod-minimizer-xor/t9`,
+# `mod-minimizer-greedymini/k9_at0-cg1_t9`, ... Its
 # files under analysis/ use the name with "/" as "__"; every output row gets
 # the separate identity columns (scheme, gm_k, projection, gm_table, mod_t).
-CANONICAL = ["native", "xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor"]
-
-
 def variant_key(variant: str) -> tuple:
-    scheme = variant.split("/")[0]
-    return (CANONICAL.index(scheme) if scheme in CANONICAL else len(CANONICAL), variant)
+    return (sort_index(variant.split("/")[0]), variant)
 
 
 def id_cols(variant: str) -> dict:
@@ -235,7 +232,7 @@ def accuracy(results: Path) -> list[dict]:
             r["p_holm"] = round(adj, 6)
             r["p"] = round(r["p"], 6)
     return sorted(out, key=lambda r: (r["dataset"], r["mid_occ_cap"], r["subset"],
-                                      CANONICAL.index(r["scheme"]) if r["scheme"] in CANONICAL else len(CANONICAL),
+                                      sort_index(r["scheme"]),
                                       r["gm_k"], r["projection"], r["mod_t"]))
 
 

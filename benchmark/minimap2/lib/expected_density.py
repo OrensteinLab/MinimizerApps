@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Theoretical expected density_factor for every minimap2 scheme (native,
-xor, xor-pcg-hash, greedymini in each projection, mod-minimizer-xor), via
+xor, xor-pcg-hash, greedymini and mod-minimizer-greedymini in each projection,
+mod-minimizer-xor), via
 Monte Carlo simulation on an i.i.d.
 uniform-random DNA stream -- not measured on any real dataset. Thin adapter over
 benchmark/common/expected_density_driver.py (loop, mean/std, cache, CLI):
 this file only has minimap2's variants, order hash functions (minimap2/scheme.cpp:
-mm_hash64 'native', the GreedyMini centre hash, mod-minimizer-xor) and HPC
+mm_hash64 'native', the GreedyMini centre hash, the mod-minimizer's O_t) and HPC
 compression, on benchmark/common/density.py's shared primitives.
 
 xor/xor-pcg-hash/mod-minimizer-xor are seed-dependent, so this reports mean and std across the benchmark's
@@ -19,7 +20,8 @@ it's independent of any actual benchmark run (a pure function of k/w/t/HPC,
 the GreedyMini table, the seed list and the Monte Carlo sizes) and each
 simulation costs real Monte Carlo time. Every cached row carries a
 cache_key over everything but k/w/t/HPC (which are in the file name): the
-GreedyMini table's path and content hash, the seeds, n_bases/mod_n_bases
+GreedyMini tables' paths and content hashes (greedymini's table and
+mod-minimizer-greedymini's, which applies only where it fits t = gm_k + 2i), the seeds, n_bases/mod_n_bases
 and the Monte Carlo RNG seed, so changing any of them recomputes the cache.
 (Both GreedyMini projections get their own rows: each row carries its
 projection, gm_k and gm_table columns.) A cache
@@ -38,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "common"))
 import expected_density_driver as shared  # noqa: E402
-from scheme_names import gm_fields, projection_from_flag  # noqa: E402
+from scheme_names import MOD_SCHEMES, gm_fields, gm_table_fits, is_greedymini, projection_from_flag  # noqa: E402
 from density import (  # noqa: E402
     canonical_mmer,
     gm_k_from_table,
@@ -61,17 +63,19 @@ VARIANTS = [
     ("native", None), ("xor", None), ("xor-pcg-hash", None),
     ("greedymini", "at0-cg1"), ("greedymini", "at1-cg0"),
     ("mod-minimizer-xor", None),
+    ("mod-minimizer-greedymini", "at0-cg1"), ("mod-minimizer-greedymini", "at1-cg0"),
 ]
-MOD_SCHEMES = frozenset({"mod-minimizer-xor"})
 
-# Which base order each scheme uses as its hash/rank function --
-# mod-minimizer-xor ranks t-mers by xor, as scheme.cpp's sketch_mod_minimizer.
+# Which base order each scheme uses as its hash/rank function -- the
+# mod-minimizer ranks t-mers by xor / the GreedyMini order, as scheme.cpp's
+# sketch_mod_minimizer (TmerRank).
 _BASE_ORDER = {
     "native": "native",
     "xor": "xor",
     "xor-pcg-hash": "xor-pcg-hash",
     "greedymini": "greedymini",
     "mod-minimizer-xor": "xor",
+    "mod-minimizer-greedymini": "greedymini",
 }
 
 
@@ -98,8 +102,9 @@ def mm_hash64(key: int, mask: int) -> int:
 
 
 def greedymini_hash(lmer: int, l: int, gm_ranks: list[int], seed: int, flip: bool = False) -> int:
-    """scheme.cpp's RankState<MM_SCHEME_GREEDYMINI>: the shared GreedyMini centre extension
-    of the gm_k table to length l (l = gm_k + 2i), injective packing --
+    """scheme.cpp's RankState<MM_SCHEME_GREEDYMINI> (k-mers; TmerRank for the mod-minimizer's
+    t-mers): the shared GreedyMini centre extension of the gm_k table to length l
+    (l = gm_k + 2i), injective packing --
     benchmark/common/density.py greedymini_centre_hash, checked against the
     compiled order by minimap2/validate_greedymini.py. `seed` = --order-seed,
     the Gamma tie-break toggle. `flip` = --gm-projection at1-cg0."""
@@ -163,36 +168,49 @@ def expected_density_factor(
     return shared.window_density(keys, w, ROUNDING)
 
 
+def variants_for(mod_t: int, mod_gm_file: Path | None) -> list[tuple[str, str | None]]:
+    """VARIANTS that apply at this t: mod-minimizer-greedymini only where its table of
+    t-mers fits t (scheme_names.gm_table_fits; the w20_k9 table at k=19, w=10), as
+    lib/run.sh runs it."""
+    fits = mod_gm_file is not None and gm_table_fits(
+        "mod-minimizer-greedymini", gm_fields(table=mod_gm_file.name)["gm_k"], None, mod_t)
+    return [v for v in VARIANTS if v[0] != "mod-minimizer-greedymini" or fits]
+
+
 def compute_all_schemes(
     k: int,
     w: int,
     seeds: list[int],
     *,
     gm_file: Path | None = None,
+    mod_gm_file: Path | None = None,
     n_bases: int = DEFAULT_N_BASES,
     mod_n_bases: int = DEFAULT_MOD_N_BASES,
     mod_t: int = 5,
     is_hpc: bool = True,
 ) -> list[dict]:
-    gm_ranks = read_gm_ranks(gm_file) if gm_file and gm_file.is_file() else None
-    gm_info = gm_fields(table=gm_file.name, projection=None) if gm_file else {"gm_k": None, "gm_table": None}
+    files = {"greedymini": gm_file, "mod-minimizer-greedymini": mod_gm_file}
+    ranks = {s: read_gm_ranks(f) if f and f.is_file() else None for s, f in files.items()}
+    info = {s: gm_fields(table=f.name) if f else {"gm_k": None, "gm_table": None} for s, f in files.items()}
 
     def row_id(v):
         scheme, projection = v
-        needs_gm = _BASE_ORDER[scheme] == "greedymini"
+        gm = info[scheme] if is_greedymini(scheme) else {"gm_k": None, "gm_table": None}
         return {
-            "scheme": scheme, "gm_k": gm_info["gm_k"] if needs_gm else None, "projection": projection,
-            "gm_table": gm_info["gm_table"] if needs_gm else None, "mod_t": mod_t if scheme in MOD_SCHEMES else None,
+            "scheme": scheme, "gm_k": gm["gm_k"], "projection": projection,
+            "gm_table": gm["gm_table"], "mod_t": mod_t if scheme in MOD_SCHEMES else None,
             "k": k, "w": w, "L": k + w - 1,
         }
 
     def prepare(v):
-        if _BASE_ORDER[v[0]] == "greedymini" and gm_ranks is None:
+        if not is_greedymini(v[0]):
+            return None
+        if ranks[v[0]] is None:
             raise shared.Unavailable  # no table: n_seeds 0
-        return gm_ranks
+        return ranks[v[0]]
 
     return shared.compute_rows(
-        VARIANTS,
+        variants_for(mod_t, mod_gm_file),
         seeds_of=lambda v: seeds,
         prepare=prepare,
         sample=lambda v, ranks, seed: expected_density_factor(
@@ -211,26 +229,30 @@ def expected_cache_key(
     seeds: list[int],
     *,
     gm_file: Path | None,
+    mod_gm_file: Path | None = None,
     n_bases: int,
     mod_n_bases: int,
     rng_seed: int = DEFAULT_SEED,
 ) -> str:
     """Identity of every cache input not already in the file name (k, w, t,
-    HPC): the GreedyMini table (resolved path + content sha256; 'missing' when
-    absent, so building the table later invalidates a cache computed without
+    HPC): the GreedyMini tables (resolved path + content sha256; 'missing' when
+    absent, so building a table later invalidates a cache computed without
     it), the seed list, the Monte Carlo sizes and RNG seed, and a version of
     the order hashes."""
-    gm = "none"
-    if gm_file is not None:
-        gm_path = Path(gm_file).resolve()
-        digest = hashlib.sha256(gm_path.read_bytes()).hexdigest() if gm_path.is_file() else "missing"
-        gm = f"{gm_path}:{digest}"
+    def table_id(f: Path | None) -> str:
+        if f is None:
+            return "none"
+        path = Path(f).resolve()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+        return f"{path}:{digest}"
+
     ident = {
         # bump when an order's hash or the row layout changes (2: greedymini --order-seed
         # toggles Gamma; 3: projection/gm_k/gm_table columns; 4: mod_t and L columns;
-        # 5: the mod-minimizer's centre tie rule replaces the G/T-strand rule)
-        "hash_version": 5,
-        "gm": gm,
+        # 5: the mod-minimizer's centre tie rule; 6: mod-minimizer-greedymini)
+        "hash_version": 6,
+        "gm": table_id(gm_file),
+        "mod_gm": table_id(mod_gm_file),
         "seeds": [hex(s) for s in seeds],
         "n_bases": n_bases,
         "mod_n_bases": mod_n_bases,
@@ -263,6 +285,7 @@ def ensure_expected_schemes(
     seeds: list[int],
     *,
     gm_file: Path | None = None,
+    mod_gm_file: Path | None = None,
     force: bool = False,
     n_bases: int = DEFAULT_N_BASES,
     mod_n_bases: int = DEFAULT_MOD_N_BASES,
@@ -274,15 +297,15 @@ def ensure_expected_schemes(
     'particular' (measured) and 'expected' (this function) density_factor
     to be a fair comparison: map-pb datasets use the HPC value, map-ont ones
     the non-HPC one; each is cached in its own file."""
-    key = expected_cache_key(seeds, gm_file=gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases)
+    key = expected_cache_key(seeds, gm_file=gm_file, mod_gm_file=mod_gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases)
     return shared.ensure_cache(
         expected_schemes_csv_path(results, k, w, mod_t, is_hpc),
         EXPECTED_SCHEMES_FIELDS,
-        VARIANTS,
+        variants_for(mod_t, mod_gm_file),
         key_of_variant=lambda v: (v[0], v[1] or ""),
         key_of_row=_row_key,
         load=lambda: load_expected_schemes(results, k, w, mod_t, is_hpc),
-        compute=lambda _todo: compute_all_schemes(k, w, seeds, gm_file=gm_file, n_bases=n_bases,
+        compute=lambda _todo: compute_all_schemes(k, w, seeds, gm_file=gm_file, mod_gm_file=mod_gm_file, n_bases=n_bases,
                                                  mod_n_bases=mod_n_bases, mod_t=mod_t, is_hpc=is_hpc),
         accept=lambda cached: all(r.get("cache_key") == key for r in cached.values()),
         stamp={"cache_key": key},
@@ -303,7 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--w", type=int, default=10)
     ap.add_argument("--mod-t", type=int, default=None, help="default 4 + (k-4) %% w")
     ap.add_argument("--no-hpc", action="store_true", help="raw k-mers (map-ont) instead of HPC (map-pb)")
-    ap.add_argument("--gm-file", default=None)
+    ap.add_argument("--gm-file", default=None, help="greedymini's table of k-mers")
+    ap.add_argument("--mod-gm-file", default=None, help="mod-minimizer-greedymini's table (gm_k-mers, t = gm_k + 2i)")
     ap.add_argument("--mod-n-bases", type=int, default=DEFAULT_MOD_N_BASES)
     ap.add_argument("--seeds", default="0x2545F4914F6CDD1D,0x9E3779B97F4A7C15,0xDEADBEEFCAFEBABE,0x1234567890ABCDEF,0xA5A5A5A5A5A5A5A5")
     args = ap.parse_args(argv)
@@ -312,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = ensure_expected_schemes(
         Path(args.results_dir), args.k, args.w, seeds,
         gm_file=Path(args.gm_file) if args.gm_file else None,
+        mod_gm_file=Path(args.mod_gm_file) if args.mod_gm_file else None,
         force=args.force, n_bases=args.n_bases, mod_n_bases=args.mod_n_bases,
         mod_t=args.mod_t if args.mod_t is not None else 4 + (args.k - 4) % args.w,
         is_hpc=not args.no_hpc,

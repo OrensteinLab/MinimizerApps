@@ -18,8 +18,21 @@ run_one() {
   preset=$(dataset_preset)
   k=${K:-$(preset_default_k "$preset")}
   t=${MOD_T:-$(( 4 + (k - 4) % W ))}
-  if [[ "$scheme" == mod-minimizer-* ]] && { [ "$t" -le 0 ] || [ "$t" -ge "$k" ]; }; then
+  if scheme_is_mod "$scheme" && { [ "$t" -le 0 ] || [ "$t" -ge "$k" ]; }; then
     echo "error: mod-minimizer needs 0 < t < k (k=$k w=$W gives t=$t); set MOD_T" >&2
+    return 1
+  fi
+  # A GreedyMini table ranks length gm_k + 2i: the k-mer (greedymini) or the t-mer
+  # (mod-minimizer-greedymini; w20_k9: k=19, w=10, t=9). Where mod-minimizer-greedymini's
+  # table does not fit t (map-ont's k=15, t=5) the scheme does not apply and is skipped;
+  # a greedymini table that does not fit k, or a table that cannot be read, is an error.
+  local fits=0
+  scheme_table_fits "$scheme" "$k" "$t" || fits=$?
+  if [ "$fits" = 1 ] && [ "$scheme" = mod-minimizer-greedymini ]; then
+    echo "== [$scheme] skip: its table $(scheme_gm_table "$scheme") does not fit t=$t (k=$k w=$W) ==" >&2
+    return 0
+  elif [ "$fits" != 0 ]; then
+    echo "error: [$scheme] table $(scheme_gm_table "$scheme") does not fit k=$k t=$t, or cannot be read" >&2
     return 1
   fi
   local cond="k${k}_w${W}" map_extra=()
@@ -33,9 +46,9 @@ run_one() {
   local sdir gm_k="" proj="" gm_table=""
   sdir=$(scheme_dir_name "$scheme" "$t") || return 1
   if scheme_needs_gm "$scheme"; then
-    gm_k=$(scheme_gm_k) || return 1
+    gm_k=$(scheme_gm_k "$scheme") || return 1
     proj=$(scheme_projection) || return 1
-    gm_table="$GM_TABLE"
+    gm_table=$(scheme_gm_table "$scheme")
   fi
   local run_dir="$MINIMAP2_RESULTS_DIR/runs/$DATASET/$cond/$sdir/$seed_idx"
   local meta_json="$run_dir/meta.json"

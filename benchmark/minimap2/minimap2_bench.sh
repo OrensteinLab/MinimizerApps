@@ -23,14 +23,16 @@ Commands:
                                 $PBSIM1, built by setup.sh). depth defaults
                                 to 5 (D1; D2 uses 0.5).
   run <scheme> [seed] [seed_idx] Run one scheme (see lib/schemes.sh ALL_SCHEMES);
-                                greedymini uses PROJECTION (at0-cg1 default or
-                                at1-cg0) and GM_TABLE (w10_k15_canonical)
+                                the greedymini schemes use PROJECTION (at0-cg1
+                                default or at1-cg0) and GM_TABLE (greedymini,
+                                w10_k15_canonical) / MOD_GM_TABLE
+                                (mod-minimizer-greedymini, w20_k9_canonical)
   sweep [schemes...]           Run every default scheme (or the given list);
                                 every scheme (native too: its repeats
                                 give the baseline replicates) is swept across
                                 config.yaml's full seed list;
-                                greedymini runs once per projection in
-                                PROJECTIONS (at0-cg1,at1-cg0), each its own run
+                                the greedymini schemes run once per projection
+                                in PROJECTIONS (at0-cg1,at1-cg0), each its own run
   export [--datasets a,b]      Aggregate runs/**/meta.json -> results/csvs/*.csv + results/minimap2_results.xlsx
   list                         List schemes sweep would run
 EOF
@@ -86,7 +88,7 @@ cmd_list() {
   local s p
   for s in ${DEFAULT_SCHEMES//,/ }; do
     if scheme_needs_gm "$s"; then
-      for p in ${PROJECTIONS//,/ }; do echo "$s --gm-projection $p ($GM_TABLE)"; done
+      for p in ${PROJECTIONS//,/ }; do echo "$s --gm-projection $p ($(scheme_gm_table "$s"))"; done
     else
       echo "$s"
     fi

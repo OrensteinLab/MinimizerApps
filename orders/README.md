@@ -52,13 +52,13 @@ kmc uses a table only at its own length: the signature length `-p` must equal th
 
 ## DNA -> binary projection polarity (all four apps)
 
-The binary backend classifies every base into {A,T} vs {C,G} (the Sigma plane) and uses the Gamma plane as tie-break. The polarity of Sigma is a free choice: `at0-cg1` (default, the historical behaviour, bit-identical hashes) maps A,T->0 and C,G->1; `at1-cg0` flips every Sigma bit (Gamma untouched). The two are the same order up to a relabelling of table keys, so on i.i.d. uniform DNA the expected density is the same, but a table is not symmetric under key complement, so the *particular* density on a real (AT/CG-skewed) collection can differ. sshash: `sshash build --gm-projection {at0-cg1,at1-cg0}` (stored in the index, `sshash query --verbose` prints it), implemented in `sshash/include/custom_scheme_hasher.hpp`. minimap2: `--gm-projection {at0-cg1,at1-cg0}` with `--scheme greedymini` (stored in the `.mmi`), implemented in `minimap2/scheme.cpp` through the shared header's `TwoBitPlanes` flip. kraken2: `k2 build --gm-projection {at0-cg1,at1-cg0}` (`build_db`/`estimate_capacity` `-P`; stored in `opts.k2d`, so `classify` follows the database), for `--order greedymini` with either sketching, implemented in `src/minimizer_rankers.h` (the `TwoBitPlanes` flip in the centre extension, a complemented table key when `l == gm_k`). kmc: `-oat1` with `-co` and a binary `.gm` (kmc ranks by the binary key and breaks ties on the DNA, so the flip is a one-time permutation `rank'[key] = rank[~key]` of the binary table, which the sidecar stores; a DNA `_dna.gm` table is refused). `sshash/test/test_gm_centre.cpp` checks that `hash()` stays injective in the m-mer and reverse-complement invariant for both polarities; kraken2's `test_scheme_rankers` checks that the flipped order of x equals the default order of x with the bases relabelled A<->C, G<->T (which complements Sigma and keeps Gamma).
+The binary backend classifies every base into {A,T} vs {C,G} (the Sigma plane) and uses the Gamma plane as tie-break. The polarity of Sigma is a free choice: `at0-cg1` (default, the historical behaviour, bit-identical hashes) maps A,T->0 and C,G->1; `at1-cg0` flips every Sigma bit (Gamma untouched). The two are the same order up to a relabelling of table keys, so on i.i.d. uniform DNA the expected density is the same, but a table is not symmetric under key complement, so the *particular* density on a real (AT/CG-skewed) collection can differ. sshash: `sshash build --gm-projection {at0-cg1,at1-cg0}` (stored in the index, `sshash query --verbose` prints it), implemented in `sshash/include/custom_scheme_hasher.hpp`. minimap2: `--gm-projection {at0-cg1,at1-cg0}` with `--scheme greedymini` or `mod-minimizer-greedymini` (stored in the `.mmi`), implemented in `minimap2/scheme.cpp` through the shared header's `TwoBitPlanes` flip. kraken2: `k2 build --gm-projection {at0-cg1,at1-cg0}` (`build_db`/`estimate_capacity` `-P`; stored in `opts.k2d`, so `classify` follows the database), for `--order greedymini` with either sketching, implemented in `src/minimizer_rankers.h` (the `TwoBitPlanes` flip in the centre extension, a complemented table key when `l == gm_k`). kmc: `-oat1` with `-co` and a binary `.gm` (kmc ranks by the binary key and breaks ties on the DNA, so the flip is a one-time permutation `rank'[key] = rank[~key]` of the binary table, which the sidecar stores; a DNA `_dna.gm` table is refused). `sshash/test/test_gm_centre.cpp` checks that `hash()` stays injective in the m-mer and reverse-complement invariant for both polarities; kraken2's `test_scheme_rankers` checks that the flipped order of x equals the default order of x with the bases relabelled A<->C, G<->T (which complements Sigma and keeps Gamma).
 
 ### sshash: centre extension of the table to the m-mer
 
 sshash's `--scheme greedymini` (binary-alphabet tables only) extends an explicit canonical (mirror-symmetric) table of `gm_k`-mers to `m = gm_k + 2i`: write the m-mer as `xyz` with `|x| = |z| = i` and `|y| = gm_k`, rank the **binary projection of `y`** by the table (one lookup; strand invariant since `rc` maps `y` to its mirror and `rank[key] == rank[reverse(key)]`), then break ties by the lexicographic minimum of the projection of `xyz` and its reversal, and finally by the Gamma plane (so the hash stays injective on canonical m-mers). It needs `m - gm_k` even (at `m = 21` only the odd-`gm_k` tables `w11_k13` and `w11_k15`; an even `gm_k` is rejected with a clear error), the binary alphabet and a mirror-symmetric table (checked at configure time). On i.i.d. DNA at `m = 21, w = 11` it gives the tables' designed densities (1.592 / 1.524). The harness runs it as `greedymini` once per (table, projection) variant, e.g. `w11_k13` / `w11_k15` x `at0-cg1` / `at1-cg0` (`gm_k` = 13 / 15 in the run directory, not in the order name). sshash's `--scheme mod-minimizer-greedymini` ranks the k-mer's t-mers with a table of t-mers by the same hash (`t = gm_k + 2i`, in practice `t = gm_k`, so an even `gm_k` such as `w22_k10` is fine there).
 
-minimap2's `--scheme greedymini` uses the same centre order on the k-mer (`-k = gm_k + 2i`, `-k <= 23`), in the injective packing, on minimap2's ACGT = 0123 encoding (`TwoBitPlanes<true>`), with `--order-seed` toggling the Gamma tie-break as kraken2's and sshash's greedymini seeds do (it reorders only k-mers with equal rank and Sigma plane: ~1% of the minimizer positions of a real genome at `-k 19`); the `w10_k15` table at minimap2's `-k 19` keeps its designed density (1.52 on i.i.d. DNA; ~1.55 under homopolymer compression, `map-pb`'s `-H`, which makes the projected bit sequence non-i.i.d.).
+minimap2's `--scheme greedymini` uses the same centre order on the k-mer (`-k = gm_k + 2i`, `-k <= 23`), in the injective packing, on minimap2's ACGT = 0123 encoding (`TwoBitPlanes<true>`), with `--order-seed` toggling the Gamma tie-break as kraken2's and sshash's greedymini seeds do (it reorders only k-mers with equal rank and Sigma plane: ~1% of the minimizer positions of a real genome at `-k 19`); the `w10_k15` table at minimap2's `-k 19` keeps its designed density (1.52 on i.i.d. DNA; ~1.55 under homopolymer compression, `map-pb`'s `-H`, which makes the projected bit sequence non-i.i.d.). minimap2's `--scheme mod-minimizer-greedymini` ranks the t-mers by the same order at length t (`t = gm_k + 2i`; the benchmark uses kmc's `w20_k9` table at `-k 19 -w 10`, t = 9, T = w + k - t = 20, the table's own w), the t-mer analogue of sshash's.
 
 ## Usage
 
@@ -122,9 +122,12 @@ default: config.yaml's).
 ./minimap2 -a --scheme greedymini --gm-projection at1-cg0 \
     --greedymini-file orders/GreedyMini/w10_k15_canonical.gm ref.fa reads.fq       # flipped AT/CG projection (see above)
 
-# mod-minimizer: O_t is xor + --mod-t (minimap2's own -k/-w already match
-# the paper's m/w notation directly).
+# mod-minimizer: O_t is xor, or a GreedyMini table of t-mers (t = gm_k + 2i;
+# the benchmark uses w20_k9 at -k 19 -w 10, t = 9), + --mod-t (minimap2's own
+# -k/-w already match the paper's k/w notation directly).
 ./minimap2 -a --scheme mod-minimizer-xor --order-seed SEED --mod-t T ref.fa reads.fq
+./minimap2 -a --scheme mod-minimizer-greedymini --greedymini-file orders/GreedyMini/w20_k9_canonical.gm \
+    [--gm-projection at1-cg0] [--order-seed SEED] -k 19 -w 10 --mod-t 9 ref.fa reads.fq
 ```
 
 ### CLI flag mapping
@@ -135,8 +138,8 @@ default: config.yaml's).
 | xor | `--sketching minimizer --order xor` (default) | `-or xor -ol<label> [-os<seed>]` | `--scheme xor -s<seed>` | `--scheme xor --order-seed SEED` |
 | xor-pcg-hash | `--sketching minimizer --order xor-pcg-hash` | `-or xor-pcg-hash -ol<label> [-os<seed>]` | `--scheme xor-pcg-hash -s<seed>` | `--scheme xor-pcg-hash --order-seed SEED` |
 | greedymini | `--sketching minimizer --order greedymini --greedymini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` | `-co FILE.gm -ol<label> [-os<seed>] [-ode] [-oat1]` | `--scheme greedymini --greedy-mini-file FILE.gm [--gm-projection at0-cg1\|at1-cg0]` (binary alphabet only) | `--scheme greedymini --greedymini-file FILE.gm [--order-seed SEED] [--gm-projection at0-cg1\|at1-cg0]` (binary alphabet only; centre extension to `-k = gm_k + 2i`; the seed toggles the Gamma tie-break) |
-| mod-minimizer-xor (strand-symmetric, see below) | `--sketching mod-minimizer --order xor` | (n/a — kmc has no analogous two-stage scheme) | `--scheme mod-minimizer-xor --mod-t T -s<seed>` | `--scheme mod-minimizer-xor --order-seed SEED --mod-t T` (O_t = xor only) |
-| mod-minimizer-greedymini | `--sketching mod-minimizer --order greedymini --greedymini-file FILE.gm [--gm-projection ...]` | (n/a) | `--scheme mod-minimizer-greedymini --greedy-mini-file FILE.gm --mod-t T [--gm-projection ...]` (a table of t-mers) | (n/a) |
+| mod-minimizer-xor (strand-symmetric, see below) | `--sketching mod-minimizer --order xor` | (n/a — kmc has no analogous two-stage scheme) | `--scheme mod-minimizer-xor --mod-t T -s<seed>` | `--scheme mod-minimizer-xor --order-seed SEED --mod-t T` |
+| mod-minimizer-greedymini | `--sketching mod-minimizer --order greedymini --greedymini-file FILE.gm [--gm-projection ...]` | (n/a) | `--scheme mod-minimizer-greedymini --greedy-mini-file FILE.gm --mod-t T [--gm-projection ...]` (a table of t-mers) | `--scheme mod-minimizer-greedymini --greedymini-file FILE.gm --mod-t T [--order-seed SEED] [--gm-projection ...]` (a table of t-mers, t = gm_k + 2i) |
 
 ### Run directories and result columns
 
@@ -173,51 +176,9 @@ t == m (mod w) its density is mod-sampling's; any other `t` is rejected (for suc
 candidate offsets of a window and its reverse complement are not mirror images; sshash, k=31,
 m=21: a t=11 GreedyMini table gave ~2.2 against 1.46 at t=10 with `w22_k10`).
 
-**Tie rules, plain minimizers.** Each application keeps its native rule for breaking ties
-between equal-rank positions, because each rule serves how that application uses the
-minimizer. In every order we use, the rank is a total order on canonical k-mers (a hash of
-kappa(x) = min(x, rc(x)), or GreedyMini's injective packing; in kraken2 the packing is not
-injective on its own and the strand-invariant key `dna_hash_key ^ toggle` completes it), so
-equal ranks occur only when the same canonical k-mer appears more than once in a window.
-kraken2 keeps the leftmost tied position (its monotone deque); it uses only the minimizer's
-value, as the hash-table key whose LCA it looks up, so the rule does not change its output.
-kmc moves the signature to the newest equal occurrence: a super-k-mer ends when its
-signature's position leaves the k-mer, so keeping the newest occurrence keeps the signature
-longest, giving the longest super-k-mers and the least bin I/O; bins are chosen by the
-canonical value, so counts do not depend on the tie position (at the level of values this is
-robust winnowing, Schleimer, Wilkerson & Aiken, SIGMOD 2003, Definition 3; the KMC 2 and
-KMC 3 papers do not discuss ties). minimap2 emits every tied position (standard winnowing;
-Winnowmap, Jain et al. 2020, replaces it by robust winnowing) and skips k-mers equal to their
-reverse complement, which is strand-symmetric without a tie rule; it is also the upstream
-baseline. sshash stores super-k-mers by minimizer and offset, so the position matters: the
-scheme must be canonical (a k-mer and its reverse complement find the same minimizer
-occurrence) and forward (its builder checks it), which no leftmost/rightmost-by-strand rule
-achieves; it uses the centre rule of Cologni and Pibiri (SSHash v6.0.0, PR 93): the tied
-position closest to the centre of the k-mer, and between two equally close ones the left if
-v <= RC(v), else the right. GreedyMini changes only the rank, so every app applies its native
-rule to it.
-
-**Tie rule, mod-minimizer** (`common/minimizer-schemes/mod_minimizer_rule.h`, shared by
-kraken2 `ModSampler`, minimap2 `sketch_mod_minimizer` and sshash `compute_mod_minimizer` /
-`mod_minimizer_iterator`). Here the tie rule changes the output in every app: the window
-minimum is over t-mers, and the k-mer sampled for the minimal t-mer at x is the one at offset
-p = x mod w, so equal-rank t-mers in different residue classes select different k-mers. All
-apps require t == k (mod w) (kraken2 `t = 4 + (l-4) mod w`; minimap2 `--mod-t` and sshash
-`--mod-t` are checked), so the mirror of x in RC(v) lies in class w-1-p and the candidate
-offsets are mirror-symmetric. The centre rule is applied to them: the candidate closest to the
-window centre (w-1)/2, and between the two equally close mirror candidates p and w-1-p, the
-left if v <= RC(v), else the right. RC(v) then samples the mirror k-mer (canonical), and the
-chosen offset never moves backwards as the window slides (forward). This replaced the G/T-strand
-rule of SimdMinimizers (Groot Koerkamp & Martayan, bioRxiv 2025.01.27.634998: the leftmost
-minimum on the strand with more G/T bases), which is canonical but not forward and needs a
-strand decision in every window; the centre rule does extra work only on a tied minimum, and
-compares v with RC(v) only on an exact two-way tie. The native plain rules do not carry over:
-leftmost (kraken2) is not canonical for the mod-minimizer, keeping every tied k-mer (minimap2)
-inflates density at small t, and kmc has no mod-minimizer. v <= RC(v) is lexicographic in
-kraken2 and minimap2 (`le_revcomp_planes`, O(1) on two bit planes) and sshash's packed-word
-comparison `!(kmer_rc < kmer)` in sshash, the one its plain rule uses; both are total orders,
-which is all canonicity needs. Indexes built with the G/T rule are refused (kraken2
-`opts.k2d` `mod_tie_rule`, minimap2 `.mmi` order section, sshash index version 15).
+The tie rules (each app's native rule for plain minimizers, the centre rule for the
+mod-minimizer) are described next to their code, in
+[`common/minimizer-schemes/README.md`](../common/minimizer-schemes/README.md).
 
 ## Regenerating a `.gm` table
 

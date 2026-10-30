@@ -31,7 +31,7 @@ an accuracy metric. The workbook layout (category band, merges, dividers,
 colour scales, footer rows) is entirely xlsx_book's.
 
 Scheme identity is five separate columns (benchmark/common/scheme_names.py):
-scheme, gm_k, projection, gm_table, mod_t. greedymini runs with each AT/CG
+scheme, gm_k, projection, gm_table, mod_t. greedymini and mod-minimizer-greedymini runs with each AT/CG
 projection are separate rows (and run directories).
 
 datasets: one row per dataset, describing what it actually is (genome size,
@@ -43,7 +43,7 @@ summary: one row per (dataset, k, w, scheme, gm_k, projection, gm_table, mod_t) 
 metric across seeds (native doesn't depend on its seed: its runs are repeats of the baseline, which
 give it a mean/std like every other scheme).
 
-schemes: one row per (scheme variant, k, w, L) -- greedymini once per projection, each scheme once per (k, w, L) the
+schemes: one row per (scheme variant, k, w, L) -- the greedymini schemes once per projection, each scheme once per (k, w, L) the
 datasets were run with (L = k + w - 1; layout: benchmark/common/schemes_sheet.py) -- with the expected (theoretical,
 for that row's own k, w, mod_t) density_factor, then per dataset its particular (measured) density_factor on the rows
 of its own (k, w, mod_t); export fails if an applicable cell is empty. expected_density.py
@@ -80,7 +80,7 @@ import step_record  # noqa: E402
 from correlation import correlation_rows  # noqa: E402
 import density_effect  # noqa: E402
 import significance  # noqa: E402
-from scheme_names import BASELINES, ID_FIELDS, make_id  # noqa: E402
+from scheme_names import BASELINES, ID_FIELDS, MOD_SCHEMES, gm_table_fits, is_greedymini, make_id, sort_index  # noqa: E402
 from schemes_sheet import EXPECTED_FIELDS, missing_cells, schemes_fields, particular_fields, span_length, with_klw  # noqa: E402
 from units import gb_from_blocks, gb_from_bytes, gb_from_kib  # noqa: E402
 from xlsx_book import DATA_START_ROW, write_book  # noqa: E402
@@ -132,7 +132,6 @@ RUN_FIELDS = [
 # for every scheme in a fixed-cap block, per-index in a default block -- so a fixed-cap
 # control never gets compared against the other condition's native.
 DEFAULT_MID_OCC_CAP = "default"
-MOD_SCHEMES = frozenset({"mod-minimizer-xor"})
 
 
 SUMMARY_METRICS = (
@@ -177,9 +176,6 @@ HIGHER_IS_BETTER = frozenset({
 assert LOWER_IS_BETTER | HIGHER_IS_BETTER == set(SUMMARY_METRICS)
 assert not (LOWER_IS_BETTER & HIGHER_IS_BETTER)
 
-SCHEME_SORT = [
-    "native", "xor", "xor-pcg-hash", "greedymini", "mod-minimizer-xor",
-]
 PROJECTION_SORT = ["at0-cg1", "at1-cg0"]
 
 SCHEME_DESCRIPTIONS = {
@@ -202,6 +198,10 @@ SCHEME_DESCRIPTIONS = {
     "mod-minimizer-xor": {
         "description": "Strand-symmetric mod-minimizer (mod-sampling, WABI 2024, with the centre tie rule of Cologni & Pibiri as in SSHash; this repo): ranks t-mers by xor, t == k mod w; the minimal t-mer at x samples the k-mer at offset x mod w, a tie the offset closest to the window centre (two equally close ones: the left if the window <= its reverse complement), so a sequence and its reverse complement select the same loci and the scheme is forward",
         "cli": "--scheme mod-minimizer-xor --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
+    },
+    "mod-minimizer-greedymini": {
+        "description": "The strand-symmetric mod-minimizer of mod-minimizer-xor with the GreedyMini table gm_table of gm_k-mers as O_t, centre-extended to t = gm_k + 2i (same projection and --order-seed Gamma toggle as greedymini); run only where the table fits t = 4 + (k-4) % w (w20_k9: k = 19, w = 10, t = gm_k = 9)",
+        "cli": "--scheme mod-minimizer-greedymini --greedymini-file orders/GreedyMini/<gm_table>.gm --gm-projection <projection> --order-seed SEED --mod-t T (T = 4 + (k-4) % w)",
     },
 }
 
@@ -453,11 +453,7 @@ def _variant(row: dict) -> tuple:
 
 def _scheme_rank(row: dict) -> tuple:
     """Sort key: canonical scheme position, then gm_k, projection, gm_table, mod_t."""
-    scheme = row.get("scheme") or ""
-    try:
-        o = SCHEME_SORT.index(scheme)
-    except ValueError:
-        o = len(SCHEME_SORT)
+    o = sort_index(row.get("scheme") or "")
     proj = row.get("projection")
     p = PROJECTION_SORT.index(proj) if proj in PROJECTION_SORT else len(PROJECTION_SORT)
     return (o, row.get("gm_k") or 0, p, row.get("gm_table") or "", row.get("mod_t") or 0)
@@ -640,7 +636,7 @@ def _variant_cli(row: dict) -> str:
     projection are its own parameters, not part of the scheme name)."""
     info = SCHEME_DESCRIPTIONS.get(row["scheme"], {"cli": ""})
     cli = info["cli"]
-    if row["scheme"] == "greedymini" and row.get("gm_table"):
+    if is_greedymini(row["scheme"]) and row.get("gm_table"):
         cli = cli.replace("<gm_table>", row["gm_table"]).replace("<projection>", row.get("projection") or "at0-cg1")
     return cli
 
@@ -694,6 +690,8 @@ def schemes_rows(summary: list[dict], datasets: list[dict],
         info = SCHEME_DESCRIPTIONS.get(ident["scheme"], {"description": "", "cli": ""})
         seen_klw = set()
         for c in combos:
+            if ident["gm_k"] and not gm_table_fits(ident["scheme"], ident["gm_k"], c["k"], c["mod_t"]):
+                continue  # mod-minimizer-greedymini's table of t-mers does not fit this t
             if ident["scheme"] not in MOD_SCHEMES:  # no mod_t: one row per (k, w, L)
                 if (c["k"], c["w"]) in seen_klw:
                     continue
@@ -807,13 +805,13 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("all", "dataset", "the Winnowmap paper's datasets (Jain et al. 2020): chm13_chrX = D1 (CHM13 chrX v0.7) and grch38_wg = D2 (GRCh38 whole genome), PacBio CLR reads simulated with PBSIM 1.0.3 as in the paper (10% error, 15 kb mean, lengths 100-25,000), mapped with -x map-pb; chm13_rel3_ont = D3, 1,000 real CHM13 rel3 ultra-long ONT reads (random sample, >= 1 kbp) mapped to GRCh38 with -x map-ont, no ground truth (see datasets sheet)"),
         row("summary/runs", "n_reads / n_reads_in_repeat", "reads in the dataset / of those, simulated reads whose true origin overlaps repeats.bed (chm13_chrX: the DXZ1 centromeric array, the paper's Table 3; grch38_wg: a chr9 segmental duplication pair, our addition; chm13_rel3_ont: none)"),
         row("all", "k / w / L", "minimizer length k, window size w and L = k + w - 1 (the span of a window; derived, right after w in every sheet that has k and w -- datasets, summary, runs, schemes): each preset's own default, as the paper ran minimap2 (map-pb k=19, map-ont k=15; w=10); HPC (homopolymer-compressed) k-mers on for map-pb, off for map-ont (datasets sheet: preset, k, w, L)"),
-        row("all", "scheme", "minimizer scheme (canonical names): native (minimap2's own hash, the baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor -- see schemes sheet. The next four columns are the scheme's parameters, separate from its name; blank when they do not apply"),
-        row("all", "gm_k / gm_table", "greedymini only: the GreedyMini table stem (orders/GreedyMini/<gm_table>.gm, e.g. w10_k15_canonical) and its k (gm_k = 15 here; at -k 19 the table is centre-extended to k = gm_k + 2i)"),
-        row("all", "projection", "greedymini only: DNA -> binary projection, --gm-projection at0-cg1 (A,T -> 0, C,G -> 1, the default) or at1-cg0 (flipped: every table key complemented, as sshash). Each projection is a separate set of rows"),
+        row("all", "scheme", "minimizer scheme (canonical names): native (minimap2's own hash, the baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor | mod-minimizer-greedymini -- see schemes sheet. The next four columns are the scheme's parameters, separate from its name; blank when they do not apply"),
+        row("all", "gm_k / gm_table", "greedymini schemes only: the GreedyMini table stem (orders/GreedyMini/<gm_table>.gm) and its k -- greedymini: w10_k15_canonical, gm_k = 15, centre-extended at -k 19 to k = gm_k + 2i; mod-minimizer-greedymini: w20_k9_canonical, a table of t-mers, gm_k = t = 9"),
+        row("all", "projection", "greedymini schemes only: DNA -> binary projection, --gm-projection at0-cg1 (A,T -> 0, C,G -> 1, the default) or at1-cg0 (flipped: every table key complemented, as sshash). Each projection is a separate set of rows"),
         row("all", "mod_t", "mod-minimizer only: t-mer length of its inner order, t = 4 + (k-4) % w (9 at k=19, 5 at k=15); merged across each scheme's seeds"),
         row("summary/runs", "mid_occ_threshold", "effective repeat-filter threshold minimap2 mapped with (its own '[M::mm_mapopt_update] mid_occ = N' log line; summary: mean over seeds): any minimizer occurring more than this many times in the reference is skipped as a seed -- see 'mid_occ (algorithm)' below. In a default block (minimap2 picks it per index) it differs per scheme; in a fixed-cap block (-f <N> for every scheme, N = native's own default threshold) it is the same for all schemes. Each such block is its own group of rows: own native baseline, divider; the ratios are computed within it"),
         row("runs", "threads", "minimap2 -t for build and map (meta.json; older runs: the build log's CMD line)"),
-        row("runs", "seed / seed_idx", "order seed (XOR key; for greedymini the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so its seed_idx is just the repeat number"),
+        row("runs", "seed / seed_idx", "order seed (XOR key; for the greedymini schemes the Gamma tie-break toggle) and its index in config.yaml's shared seed list; native is seed-independent, so its seed_idx is just the repeat number"),
         row("summary", "n_repeats", "number of runs (repeats) aggregated into the row's mean/std; for the native baseline the repeats are identical-index runs that only measure timing noise"),
         # --- density
         row("summary/runs/schemes", "density_factor", "particular (measured) density on minimap2's own sketching scale: total minimizer occurrences (distinct_minimizers * avg_occurrences, from minimap2 -d) * (w+1) / n_sketch_kmers (datasets sheet): the k-mers minimap2 actually sketches, homopolymer-compressed under -x map-pb, raw under -x map-ont -- same scale as the schemes sheet's expected value of the matching kind; 1 = theoretical minimum, ~2 = random order"),
@@ -844,7 +842,7 @@ def overview_rows(runs: list[dict] | None = None) -> list[dict]:
         row("summary", "correlation with density / distinct minimizers", "two rows right under the table (sshash's layout): for every {metric}_ratio column, Excel CORREL (Pearson) between that column and density_factor_ratio / distinct_minimizers_ratio over all summary rows (ratios are scheme / native within one block, so rows are comparable); blank for a constant column. No colour scale"),
         row("summary/runs", "index_size_gb", "size of the built index (.mmi, decimal GB = 10^9 bytes): 16 B per distinct key (hash table) + 8 B per occurrence of a repeated key (position array) + the 4-bit packed genome"),
         # --- schemes / datasets
-        row("schemes", "description / cli", "what the scheme does and the minimap2 flags that select it; one row per (scheme variant, k, w, L) (greedymini once per projection)"),
+        row("schemes", "description / cli", "what the scheme does and the minimap2 flags that select it; one row per (scheme variant, k, w, L) (the greedymini schemes once per projection)"),
         row("schemes", "k / w / L / mod_t", "minimizer length k, window w (k-mers) and L = k + w - 1 (the span of a window), and the mod-minimizer t used at that (k, w, L), blank for the other schemes (t = 4 + (k-4) % w; 9 at k=19, 5 at k=15). Each scheme appears once per (k, w, L) the datasets were run with"),
         row("schemes", "expected_density_factor_mean/std", "theoretical density_factor for that row's own k, w, mod_t (HPC for map-pb datasets, raw for map-ont): Monte Carlo on i.i.d. random DNA, mean/std over the 5 seeds (std 0 for native) -- see lib/expected_density.py"),
         row("schemes", "{dataset}_particular_density_factor_mean/std", "measured density_factor on that dataset (default-cap runs; density doesn't depend on the map-time cap); filled on the rows of the (k, w, L, mod_t) the dataset was run with (native std 0), empty on rows of another (k, w, L)"),
@@ -954,7 +952,8 @@ def main(argv=None) -> int:
     ap.add_argument("--data-dir", type=Path, default=None, help="dataset root, for the 'datasets' sheet (default: $MINIMAP2_DATA_DIR or --results-dir/../data)")
     ap.add_argument("--samtools", default=None, help="samtools binary, for genome.fa.fai (falls back to $SAMTOOLS or 'samtools' on PATH)")
     ap.add_argument("--datasets", default=None, help="comma-separated datasets to export (default: all)")
-    ap.add_argument("--gm-file", type=Path, default=None, help="GreedyMini table, for the 'schemes' sheet's expected density (default: orders/GreedyMini/<gm_table>.gm of the dataset's greedymini runs, else w10_k15_canonical)")
+    ap.add_argument("--gm-file", type=Path, default=None, help="greedymini's table, for the 'schemes' sheet's expected density (default: orders/GreedyMini/<gm_table>.gm of the dataset's greedymini runs, else w10_k15_canonical)")
+    ap.add_argument("--mod-gm-file", type=Path, default=None, help="mod-minimizer-greedymini's table (gm_k-mers, t = gm_k + 2i), likewise (default: the dataset's mod-minimizer-greedymini runs' table, else w20_k9_canonical)")
     args = ap.parse_args(argv)
 
     runs = load_runs(args.results_dir, set(args.datasets.split(",")) if args.datasets else None)
@@ -978,10 +977,15 @@ def main(argv=None) -> int:
     import expected_density
     expected: dict[tuple, dict[tuple, dict]] = {}
     for c in dataset_combos(datasets):
-        tables = sorted({r["gm_table"] for r in runs if r["dataset"] in c["datasets"] and r.get("gm_table")})
-        gm_file = args.gm_file or gm_dir / f"{tables[0] if tables else 'w10_k15_canonical'}.gm"
+        def table_of(scheme: str, default: str) -> Path:
+            tables = sorted({r["gm_table"] for r in runs
+                             if r["dataset"] in c["datasets"] and r["scheme"] == scheme and r.get("gm_table")})
+            return gm_dir / f"{tables[0] if tables else default}.gm"
         expected[(c["k"], c["w"], c["mod_t"])] = expected_density.ensure_expected_schemes(
-            args.results_dir, c["k"], c["w"], seeds, gm_file=gm_file, mod_t=c["mod_t"], is_hpc=c["hpc"],
+            args.results_dir, c["k"], c["w"], seeds,
+            gm_file=args.gm_file or table_of("greedymini", "w10_k15_canonical"),
+            mod_gm_file=args.mod_gm_file or table_of("mod-minimizer-greedymini", "w20_k9_canonical"),
+            mod_t=c["mod_t"], is_hpc=c["hpc"],
         )
     schemes = schemes_rows(summary, datasets, expected)
     check_schemes_complete(schemes, datasets)

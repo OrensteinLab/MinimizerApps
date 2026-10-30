@@ -7,8 +7,10 @@ the underlying alignment problem is solvable), even though their minimizer
 counts and exact identity differ.
 
 greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15, matching
-this test's fixed -k 15 -w 10), in both AT/CG projections (--gm-projection
+this test's -k 15 -w 10), in both AT/CG projections (--gm-projection
 at0-cg1 / at1-cg0, a parameter of greedymini rather than a scheme of its own).
+mod-minimizer-greedymini uses w20_k9_canonical.gm, a table of 9-mers, so it
+runs at -k 19 --mod-t 9 (the benchmark's map-pb setting).
 
 Run with: python3.11 -m pytest benchmark/minimap2/tests -q
 (needs a python3 new enough for these type hints -- see lib/constants.sh's
@@ -29,8 +31,10 @@ MINIMAP2_BIN = REPO_ROOT / "minimap2" / "minimap2"
 DATA_DIR = HERE / "_test_data"
 
 GM_FILE = REPO_ROOT / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
+MOD_GM_FILE = REPO_ROOT / "orders" / "GreedyMini" / "w20_k9_canonical.gm"
 # (scheme, greedymini projection): a variant label is "<scheme>" or "<scheme>_<projection>"
-SCHEMES = ["native", "xor", "xor-pcg-hash", "greedymini_at0-cg1", "greedymini_at1-cg0", "mod-minimizer-xor"]
+SCHEMES = ["native", "xor", "xor-pcg-hash", "greedymini_at0-cg1", "greedymini_at1-cg0", "mod-minimizer-xor",
+           "mod-minimizer-greedymini_at0-cg1", "mod-minimizer-greedymini_at1-cg0"]
 
 
 @pytest.fixture(scope="module")
@@ -51,6 +55,9 @@ def _scheme_flags(label: str) -> list[str]:
         return []
     if scheme == "greedymini":
         return ["--scheme", "greedymini", "--greedymini-file", str(GM_FILE), "--gm-projection", projection]
+    if scheme == "mod-minimizer-greedymini":
+        return ["--scheme", scheme, "--greedymini-file", str(MOD_GM_FILE), "--gm-projection", projection,
+                "--order-seed", "42", "-k", "19", "--mod-t", "9"]
     flags = ["--scheme", scheme, "--order-seed", "42"]
     if scheme.startswith("mod-minimizer-"):
         flags += ["--mod-t", "5"]
@@ -60,7 +67,7 @@ def _scheme_flags(label: str) -> list[str]:
 def _build_and_map(dataset: Path, tmp_path: Path, scheme: str) -> tuple[dict, list[str]]:
     mmi = tmp_path / f"{scheme}.mmi"
     build = subprocess.run(
-        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", "10", *_scheme_flags(scheme), str(dataset / "genome.fa")],
+        [str(MINIMAP2_BIN), "-d", str(mmi), "-k", "15", "-w", "10", *_scheme_flags(scheme), str(dataset / "genome.fa")],  # a later -k wins
         capture_output=True, text=True,
     )
     assert build.returncode == 0, build.stderr

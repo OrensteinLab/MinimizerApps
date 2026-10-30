@@ -19,6 +19,10 @@ import struct
 from collections import deque
 from pathlib import Path
 
+# benchmark/common (on sys.path via scripts/__init__): the extension of a table to an
+# l-mer needs l = gm_k + 2i, the same number of extra bases on both sides
+from scheme_names import gm_centre_fits as gm_centre_valid  # noqa: F401
+
 MASK64 = (1 << 64) - 1
 EVENS64 = 0x5555555555555555
 ODDS64 = 0xAAAAAAAAAAAAAAAA
@@ -200,10 +204,6 @@ def native_hash(value: int, seed: int) -> int:
     magic = z ^ (z >> 31)
     return ((value * 0x517CC1B727220A95) ^ magic) & MASK64
 
-
-def gm_centre_valid(l: int, gm_k: int) -> bool:
-    """The extension of the table to the m-mer needs the same number of extra bases on both sides."""
-    return l >= gm_k and (l - gm_k) % 2 == 0
 
 
 def gm_table_mirror_symmetric(gm_ranks: list[int]) -> bool:

@@ -4,7 +4,8 @@
 // reference, so the check covers the compiled scheme.cpp, not a port of it.
 //
 // Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq.txt
-// (order: native, xor, xor-pcg-hash, greedymini, mod-minimizer-xor; HPC off;
+// (order: native, xor, xor-pcg-hash, greedymini, mod-minimizer-xor,
+// mod-minimizer-greedymini; HPC off;
 // t = 0 for non-mod orders)
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,7 @@ int main(int argc, char *argv[])
 	size_t cap = 0, len = 0, i;
 	int c, w, k;
 	if (argc < 6) {
-		fprintf(stderr, "Usage: sketch_dump <order> <w> <k> <seed> <t> < seq\n");
+		fprintf(stderr, "Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq\n");
 		return 1;
 	}
 	w = atoi(argv[2]), k = atoi(argv[3]);
