@@ -286,9 +286,9 @@ $BIN -d "$TMP/gms.mmi" $fs "$REF" >/dev/null 2>&1
 $BIN -a "$TMP/gms.mmi" "$QRY" > "$TMP/gms_r.sam" 2>/dev/null
 if [ -s "$TMP/gms.sam" ] && diff -q <(grep -v '^@PG' "$TMP/gms.sam") <(grep -v '^@PG' "$TMP/gms_r.sam") >/dev/null; then ok "seeded greedymini .mmi round-trip"; else bad "seeded greedymini .mmi round-trip"; fi
 grep -v '>' "$REF" | tr -d '\n' > "$TMP/ref.seq"
-n0=$(./sketch_dump greedymini 10 15 0 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
-n1=$(./sketch_dump greedymini 10 15 0x9E3779B97F4A7C15 0 "$GM_FILE" < "$TMP/ref.seq" | md5sum)
-if [ "$n0" != "$n1" ]; then ok "--order-seed changes the greedymini selection"; else bad "--order-seed did not change the greedymini selection"; fi
+./sketch_dump greedymini 10 15 0 0 "$GM_FILE" < "$TMP/ref.seq" > "$TMP/gs0.txt" && ./sketch_dump greedymini 10 15 0x9E3779B97F4A7C15 0 "$GM_FILE" < "$TMP/ref.seq" > "$TMP/gs1.txt"; rc=$?
+n0=$(md5sum < "$TMP/gs0.txt"); n1=$(md5sum < "$TMP/gs1.txt")
+if [ "$rc" = 0 ] && [ -s "$TMP/gs0.txt" ] && [ -s "$TMP/gs1.txt" ] && [ "$n0" != "$n1" ]; then ok "--order-seed changes the greedymini selection"; else bad "--order-seed did not change the greedymini selection"; fi
 $BIN -a --scheme greedymini --greedymini-file "$GM_FILE" --order-seed 7 "$TMP/gms.mmi" "$QRY" >/dev/null 2>"$TMP/gms_w.err"
 if grep -q 'Minimizer scheme options' "$TMP/gms_w.err"; then ok "a different greedymini seed than the prebuilt index's: warned"; else bad "no warning for a different greedymini seed"; fi
 
@@ -310,9 +310,9 @@ for proj in at0-cg1 at1-cg0; do
 done
 if [ -n "${mgd[at0-cg1]}" ] && [ "${mgd[at0-cg1]}" != "${mgd[at1-cg0]}" ]; then ok "--gm-projection at1-cg0 changes the selection (${mgd[at0-cg1]} vs ${mgd[at1-cg0]})"; else bad "--gm-projection did not change the mod-minimizer-greedymini selection"; fi
 grep -v '>' "$REF" | tr -d '\n' > "$TMP/ref.seq"
-n0=$(./sketch_dump mod-minimizer-greedymini 10 19 0 9 "$GM_MOD_FILE" < "$TMP/ref.seq" | md5sum)
-n1=$(./sketch_dump mod-minimizer-greedymini 10 19 0x9E3779B97F4A7C15 9 "$GM_MOD_FILE" < "$TMP/ref.seq" | md5sum)
-if [ "$n0" != "$n1" ]; then ok "--order-seed changes the selection"; else bad "--order-seed did not change the selection"; fi
+./sketch_dump mod-minimizer-greedymini 10 19 0 9 "$GM_MOD_FILE" < "$TMP/ref.seq" > "$TMP/ms0.txt" && ./sketch_dump mod-minimizer-greedymini 10 19 0x9E3779B97F4A7C15 9 "$GM_MOD_FILE" < "$TMP/ref.seq" > "$TMP/ms1.txt"; rc=$?
+n0=$(md5sum < "$TMP/ms0.txt"); n1=$(md5sum < "$TMP/ms1.txt")
+if [ "$rc" = 0 ] && [ -s "$TMP/ms0.txt" ] && [ -s "$TMP/ms1.txt" ] && [ "$n0" != "$n1" ]; then ok "--order-seed changes the selection"; else bad "--order-seed did not change the selection"; fi
 if $BIN -a --scheme mod-minimizer-greedymini --mod-t 9 -k 19 "$REF" "$QRY" >/dev/null 2>&1; then bad "without --greedymini-file should be rejected"; else ok "without --greedymini-file rejected"; fi
 if $BIN -a --scheme mod-minimizer-greedymini --greedymini-file "$GM_MOD_FILE" --mod-t 5 -k 15 "$REF" "$QRY" >/dev/null 2>&1; then bad "t = 5 with a gm_k = 9 table should be rejected"; else ok "t = 5 with a gm_k = 9 table rejected"; fi
 

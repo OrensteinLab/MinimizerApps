@@ -106,7 +106,8 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   The scan keeps the window minimum and its leftmost/rightmost t-mers by
   conditional moves and rescans only when the minimum leaves the window (as
   native `mm_sketch()` does), and emits a selected k-mer when it leaves the
-  window (output stays in position order); `validate_mod_minimizer.py`
+  window (output stays in position order); an index built with the earlier
+  G/T-strand tie rule is refused (rebuild it); `validate_mod_minimizer.py`
   checks it, with both orders on t-mers, against a brute force of the definition. A window whose sampled
   k-mer is its own reverse complement (even `-k` only), or spans 256 or more
   bases under `-H`, emits no minimizer; native minimap2 instead skips such a

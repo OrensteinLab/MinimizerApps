@@ -36,10 +36,13 @@ GM_MOD_FILE = Path(__file__).resolve().parent.parent / "orders" / "GreedyMini" /
 
 
 class Order:
-    """O_t: xor with a seed, or a GreedyMini table (seed = the Gamma toggle)."""
+    """O_t: xor with a seed, or the GreedyMini table at gm_file (seed = the Gamma toggle). The
+    brute force and sketch_dump read the same file."""
 
-    def __init__(self, seed: int, gm_ranks: list[int] | None = None, gm_k: int = 0, flip: bool = False):
-        self.seed, self.gm_ranks, self.gm_k, self.flip = seed, gm_ranks, gm_k, flip
+    def __init__(self, seed: int, gm_file: Path | None = None, flip: bool = False):
+        self.seed, self.gm_file, self.flip = seed, gm_file, flip
+        self.gm_ranks = read_gm_ranks(gm_file) if gm_file else None
+        self.gm_k = gm_k_from_table(self.gm_ranks) if gm_file else 0
 
     def ranks(self, seq: list[int], t: int) -> list[int]:
         if self.gm_ranks is None:
@@ -52,7 +55,7 @@ class Order:
         args = [str(w), str(k), hex(self.seed), str(t)]
         if self.gm_ranks is None:
             return ["mod-minimizer-xor", *args]
-        return ["mod-minimizer-greedymini", *args, str(GM_MOD_FILE), "at1-cg0" if self.flip else "at0-cg1"]
+        return ["mod-minimizer-greedymini", *args, str(self.gm_file), "at1-cg0" if self.flip else "at0-cg1"]
 
 
 def xor(value: int, seed: int) -> int:
@@ -223,8 +226,6 @@ def main() -> int:
                 failures.append(f"(w={w},k={k},t={t},seed={hex(seed)}): {msg}")
 
     # O_t = GreedyMini (w20_k9: t = gm_k = 9, and centre-extended t = gm_k + 2i), both projections
-    gm_ranks = read_gm_ranks(GM_MOD_FILE)
-    gm_k = gm_k_from_table(gm_ranks)
     gm_configs = [
         (10, 19, 9, 6000),   # the benchmark's k19_w10 with the w20_k9 table
         (5, 14, 9, 3000),
@@ -237,7 +238,7 @@ def main() -> int:
         for seed in (0, 0x2545F4914F6CDD1D):
             for flip in (False, True):
                 n_cases += 1
-                msg = run_case(rng, w, k, t, Order(seed, gm_ranks, gm_k, flip), seq_len)
+                msg = run_case(rng, w, k, t, Order(seed, GM_MOD_FILE, flip), seq_len)
                 if msg:
                     failures.append(f"greedymini (w={w},k={k},t={t},seed={hex(seed)},flip={flip}): {msg}")
 

@@ -207,7 +207,9 @@ leftmost (kraken2) is not canonical for the mod-minimizer, keeping every tied k-
 inflates density at small t, and kmc has no mod-minimizer. v <= RC(v) is lexicographic in
 kraken2 and minimap2 (`le_revcomp_planes`, O(1) on two bit planes) and sshash's packed-word
 comparison `!(kmer_rc < kmer)` in sshash, the one its plain rule uses; both are total orders,
-which is all canonicity needs.
+which is all canonicity needs. Indexes built with the earlier G/T-strand tie rule are refused
+(kraken2 `opts.k2d` `mod_tie_rule`, minimap2 `.mmi` order section, sshash index version 15):
+rebuild them.
 
 **Tie rules, plain minimizers.** Each application keeps its native rule for breaking ties
 between equal-rank positions, because each rule serves how that application uses the

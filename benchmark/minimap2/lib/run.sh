@@ -22,19 +22,6 @@ run_one() {
     echo "error: mod-minimizer needs 0 < t < k (k=$k w=$W gives t=$t); set MOD_T" >&2
     return 1
   fi
-  # A GreedyMini table ranks length gm_k + 2i: the k-mer (greedymini) or the t-mer
-  # (mod-minimizer-greedymini; w20_k9: k=19, w=10, t=9). Where mod-minimizer-greedymini's
-  # table does not fit t (map-ont's k=15, t=5) the scheme does not apply and is skipped;
-  # a greedymini table that does not fit k, or a table that cannot be read, is an error.
-  local fits=0
-  scheme_table_fits "$scheme" "$k" "$t" || fits=$?
-  if [ "$fits" = 1 ] && [ "$scheme" = mod-minimizer-greedymini ]; then
-    echo "== [$scheme] skip: its table $(scheme_gm_table "$scheme") does not fit t=$t (k=$k w=$W) ==" >&2
-    return 0
-  elif [ "$fits" != 0 ]; then
-    echo "error: [$scheme] table $(scheme_gm_table "$scheme") does not fit k=$k t=$t, or cannot be read" >&2
-    return 1
-  fi
   local cond="k${k}_w${W}" map_extra=()
   if [ -n "${MID_OCC:-}" ]; then
     cond="${cond}_f${MID_OCC}"
@@ -63,6 +50,20 @@ run_one() {
     # rerun: drop the old success marker first, so a failure below can't
     # leave the previous run's meta.json claiming success
     rm -f "$meta_json"
+  fi
+  # A GreedyMini table ranks length gm_k + 2i: the k-mer (greedymini) or the t-mer (a
+  # mod-minimizer with a table: w20_k9 at k=19, w=10, t=9). Where a mod-minimizer's table does
+  # not fit t (map-ont's k=15, t=5) the scheme does not apply and is skipped; a k-mer table that
+  # does not fit k, or a table that cannot be read, is an error. Checked after the complete-run
+  # skip above, so resuming a sweep starts no Python for finished runs.
+  local fits=0
+  scheme_table_fits "$scheme" "$k" "$t" || fits=$?
+  if [ "$fits" = 1 ] && scheme_is_mod "$scheme"; then
+    echo "== [$sdir] skip: its table $(scheme_gm_table "$scheme") does not fit t=$t (k=$k w=$W) ==" >&2
+    return 0
+  elif [ "$fits" != 0 ]; then
+    echo "error: [$sdir] table $(scheme_gm_table "$scheme") does not fit k=$k t=$t, or cannot be read" >&2
+    return 1
   fi
   mkdir -p "$run_dir"
 

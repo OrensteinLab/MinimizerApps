@@ -20,7 +20,8 @@ extern "C" {
 #endif
 
 // Materializes conf into a ready-to-use order context: loads the GreedyMini
-// table from disk when conf->kind is MM_SCHEME_GREEDYMINI, validates conf->t
+// table from disk for the greedymini schemes (MM_SCHEME_GREEDYMINI, and
+// MM_SCHEME_MOD_GREEDYMINI, whose table ranks the t-mers), validates conf->t
 // for MOD_* kinds. Returns NULL and writes a human-readable message into
 // errbuf (always NUL-terminated) on failure; conf->greedymini_file only
 // needs to stay valid for the duration of this call.

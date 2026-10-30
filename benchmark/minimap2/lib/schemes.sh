@@ -20,6 +20,11 @@ IFS=';' read -r ALL_SCHEMES _GM_SCHEMES _MOD_SCHEMES < <(
   PYTHONPATH="$REPO_ROOT/benchmark/common${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c '
 from scheme_names import CANONICAL, GREEDYMINI_SCHEMES, MOD_SCHEMES
 print(";".join(",".join(x) for x in (("native",) + CANONICAL, GREEDYMINI_SCHEMES, MOD_SCHEMES)))')
+# An empty list (no usable $PYTHON, scheme_names.py not importable) would make every sweep a silent no-op.
+if [ -z "$ALL_SCHEMES" ] || [ -z "$_GM_SCHEMES" ] || [ -z "$_MOD_SCHEMES" ]; then
+  echo "error: could not read the scheme lists from benchmark/common/scheme_names.py (PYTHON=$PYTHON)" >&2
+  exit 1
+fi
 DEFAULT_SCHEMES="$ALL_SCHEMES"
 
 # GreedyMini table stems under $GM_DIR (their k, gm_k, is parsed from the name):
@@ -42,9 +47,10 @@ scheme_is_known() { _in_list "$1" "$ALL_SCHEMES"; }
 
 scheme_needs_gm() { _in_list "$1" "$_GM_SCHEMES"; }
 
-# The GreedyMini table stem of a scheme (only meaningful when scheme_needs_gm).
+# The GreedyMini table stem of a scheme (only meaningful when scheme_needs_gm): a mod-minimizer
+# ranks t-mers (MOD_GM_TABLE), any other scheme k-mers (GM_TABLE).
 scheme_gm_table() {
-  if [ "$1" = mod-minimizer-greedymini ]; then echo "$MOD_GM_TABLE"; else echo "$GM_TABLE"; fi
+  if scheme_is_mod "$1"; then echo "$MOD_GM_TABLE"; else echo "$GM_TABLE"; fi
 }
 
 scheme_is_mod() { _in_list "$1" "$_MOD_SCHEMES"; }

@@ -168,13 +168,17 @@ def expected_density_factor(
     return shared.window_density(keys, w, ROUNDING)
 
 
-def variants_for(mod_t: int, mod_gm_file: Path | None) -> list[tuple[str, str | None]]:
-    """VARIANTS that apply at this t: mod-minimizer-greedymini only where its table of
-    t-mers fits t (scheme_names.gm_table_fits; the w20_k9 table at k=19, w=10), as
-    lib/run.sh runs it."""
-    fits = mod_gm_file is not None and gm_table_fits(
-        "mod-minimizer-greedymini", gm_fields(table=mod_gm_file.name)["gm_k"], None, mod_t)
-    return [v for v in VARIANTS if v[0] != "mod-minimizer-greedymini" or fits]
+def variants_for(k: int, mod_t: int, gm_file: Path | None, mod_gm_file: Path | None) -> list[tuple[str, str | None]]:
+    """VARIANTS that apply at this (k, t), as lib/run.sh runs them: a scheme with a GreedyMini
+    table only where its table fits what it ranks (scheme_names.gm_table_fits: greedymini's
+    table the k-mer, mod-minimizer-greedymini's the t-mer; w20_k9 at k=19, w=10, t=9). A scheme
+    whose table is not given stays (its rows get n_seeds 0)."""
+    files = {"greedymini": gm_file, "mod-minimizer-greedymini": mod_gm_file}
+
+    def applies(scheme: str) -> bool:
+        f = files.get(scheme)
+        return f is None or gm_table_fits(scheme, gm_fields(table=f.name)["gm_k"], k, mod_t)
+    return [v for v in VARIANTS if applies(v[0])]
 
 
 def compute_all_schemes(
@@ -210,7 +214,7 @@ def compute_all_schemes(
         return ranks[v[0]]
 
     return shared.compute_rows(
-        variants_for(mod_t, mod_gm_file),
+        variants_for(k, mod_t, gm_file, mod_gm_file),
         seeds_of=lambda v: seeds,
         prepare=prepare,
         sample=lambda v, ranks, seed: expected_density_factor(
@@ -297,11 +301,16 @@ def ensure_expected_schemes(
     'particular' (measured) and 'expected' (this function) density_factor
     to be a fair comparison: map-pb datasets use the HPC value, map-ont ones
     the non-HPC one; each is cached in its own file."""
-    key = expected_cache_key(seeds, gm_file=gm_file, mod_gm_file=mod_gm_file, n_bases=n_bases, mod_n_bases=mod_n_bases)
+    variants = variants_for(k, mod_t, gm_file, mod_gm_file)
+    # a table is part of the key only where a variant uses it (the k=15 cache ignores w20_k9)
+    used = {v[0] for v in variants}
+    key = expected_cache_key(seeds, gm_file=gm_file if "greedymini" in used else None,
+                             mod_gm_file=mod_gm_file if "mod-minimizer-greedymini" in used else None,
+                             n_bases=n_bases, mod_n_bases=mod_n_bases)
     return shared.ensure_cache(
         expected_schemes_csv_path(results, k, w, mod_t, is_hpc),
         EXPECTED_SCHEMES_FIELDS,
-        variants_for(mod_t, mod_gm_file),
+        variants,
         key_of_variant=lambda v: (v[0], v[1] or ""),
         key_of_row=_row_key,
         load=lambda: load_expected_schemes(results, k, w, mod_t, is_hpc),

@@ -106,8 +106,9 @@ typedef struct {
 	const char *greedymini_file;  // path to a .gm table; only read at mm_scheme_init() time
 	mm_gm_projection_t gm_projection; // greedymini schemes only
 	int t;                        // mod-minimizer t-mer length (0 unless kind is MOD_*)
-	int k;                        // the minimizer length this order is used with (validated
-	                               // against the GreedyMini table's own gm_k at init time)
+	int k;                        // the minimizer length this order is used with; the GreedyMini
+	                               // table must fit the ranked length (k, or t for
+	                               // MOD_GREEDYMINI: gm_k + 2i), checked at init time
 	int w;                        // the window (k-mer count) it is used with: a mod-minimizer
 	                               // order needs t == k (mod w)
 } mm_scheme_conf_t;
