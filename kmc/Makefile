@@ -1,3 +1,4 @@
+# Modified by the Orenstein Lab, 2026: build changes (dynamic link by default, Python autodetect, raduls flags) and the custom signature orders. See MODIFICATIONS.md.
 dummy := $(shell git submodule update --init --recursive)
 
 UNAME_S := $(shell uname -s)

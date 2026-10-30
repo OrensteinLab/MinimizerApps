@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: passing a custom signature order to a run. See kmc/MODIFICATIONS.md.
 
 #ifndef _KMC_H
 #define _KMC_H

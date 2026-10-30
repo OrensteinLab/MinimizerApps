@@ -1,3 +1,4 @@
+// Modified by the Orenstein Lab, 2026: command-line options for custom signature orders (-or, -co, -os, -ol, -ode, -oat1). See kmc/MODIFICATIONS.md.
 #define _CRT_SECURE_NO_WARNINGS
 #include "../kmc_core/kmc_runner.h"
 #include "../kmc_api/custom_order.h"

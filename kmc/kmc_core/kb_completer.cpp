@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: storing the custom signature order with the database. See kmc/MODIFICATIONS.md.
 #include <algorithm>
 #include <numeric>
 #include "kb_completer.h"

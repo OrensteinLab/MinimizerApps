@@ -1,3 +1,4 @@
+// Added by the Orenstein Lab, 2026, as part of this modified KMC (GNU GPL 3): custom signature orders (xor, xor-pcg-hash, GreedyMini). See kmc/MODIFICATIONS.md.
 #include "custom_order.h"
 #include "mmer.h"
 #include "../../common/minimizer-schemes/pcg_rxs_m_xs.h"

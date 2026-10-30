@@ -6,6 +6,7 @@
   or random PCG (xor seed then RXS-M-XS scramble). Default KMC lex order
   is unchanged until Install().
 */
+// Added by the Orenstein Lab, 2026, as part of this modified KMC (GNU GPL 3): custom signature orders (xor, xor-pcg-hash, GreedyMini). See kmc/MODIFICATIONS.md.
 
 #ifndef _CUSTOM_ORDER_H
 #define _CUSTOM_ORDER_H
