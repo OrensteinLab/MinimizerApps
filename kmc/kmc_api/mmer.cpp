@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: ranking signatures by a custom order. See kmc/MODIFICATIONS.md.
 
 #include "../kmc_api/mmer.h"
 

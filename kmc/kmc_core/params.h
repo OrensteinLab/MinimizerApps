@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: custom signature order parameters. See kmc/MODIFICATIONS.md.
 
 #ifndef _PARAMS_H
 #define _PARAMS_H

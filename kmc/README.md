@@ -1,5 +1,7 @@
 KMC
 =
+
+> This copy of KMC 3.2.4 is modified by the Orenstein Lab (2026) to support custom signature orders; see [MODIFICATIONS.md](MODIFICATIONS.md). It is distributed under the GNU GPL 3, as the original ([LICENSE](LICENSE)).
 [![GitHub downloads](https://img.shields.io/github/downloads/refresh-bio/kmc/total.svg?style=flag&label=GitHub%20downloads)](https://github.com/refresh-bio/KMC/releases)
 [![Bioconda downloads](https://img.shields.io/conda/dn/bioconda/kmc.svg?style=flag&label=Bioconda%20downloads)](https://anaconda.org/bioconda/kmc)
 [![Biocontainer downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fmmseqs.com%2Fbiocontainer.php%3Fcontainer%3Dkmc)](https://biocontainers.pro/tools/kmc)

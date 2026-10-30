@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: API for custom signature orders. See kmc/MODIFICATIONS.md.
 
 #ifndef _KMC_RUNNER
 #define _KMC_RUNNER

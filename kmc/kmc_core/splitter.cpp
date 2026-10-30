@@ -7,6 +7,7 @@ Authors: Sebastian Deorowicz, Agnieszka Debudaj-Grabysz, Marek Kokot
 Version: 3.2.4
 Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: custom signature orders; superwindow statistics. See kmc/MODIFICATIONS.md.
 
 #include "splitter.h"
 

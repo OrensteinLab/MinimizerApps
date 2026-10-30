@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: signature mapping with a custom order. See kmc/MODIFICATIONS.md.
 
 #ifndef _S_MAPPER_H
 #define _S_MAPPER_H

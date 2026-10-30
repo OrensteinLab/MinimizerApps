@@ -7,6 +7,7 @@
   Version: 3.2.4
   Date   : 2024-02-09
 */
+// Modified by the Orenstein Lab, 2026: reading the custom signature order stored with a database. See kmc/MODIFICATIONS.md.
 
 #include "mmer.h"
 #include "kmc_file.h"
