@@ -187,7 +187,7 @@ done
 echo "== 11. mod-minimizer selection: brute-force cross-validation (Python port + compiled sketch_dump) =="
 PY=/usr/bin/python3.11
 command -v "$PY" >/dev/null 2>&1 || PY=python3
-if "$PY" validate_mod_minimizer.py >"$TMP/validate_mod_minimizer.out" 2>&1; then
+if "$PY" ../benchmark/minimap2/tests/test_mod_minimizer_sketch.py >"$TMP/validate_mod_minimizer.out" 2>&1; then
 	ok "sketch_mod_minimizer matches brute-force reference ($($PY --version 2>&1))"
 else
 	bad "brute-force validation failed -- see $TMP/validate_mod_minimizer.out"
@@ -212,7 +212,7 @@ for badk in 16 25; do
 		ok "greedymini -k $badk rejected"
 	fi
 done
-if "$PY" validate_greedymini.py >"$TMP/validate_greedymini.out" 2>&1; then
+if "$PY" ../benchmark/minimap2/tests/test_greedymini_sketch.py >"$TMP/validate_greedymini.out" 2>&1; then
 	ok "greedymini rank and sketch match the Python references (k=15..23, both projections)"
 else
 	bad "greedymini validation failed -- see $TMP/validate_greedymini.out"

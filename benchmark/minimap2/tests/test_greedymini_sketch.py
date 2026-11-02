@@ -9,11 +9,10 @@ independent Python implementations:
   min over both strands of (Sigma << l | Gamma), the reverse complement
   reversing both planes and complementing Gamma; --gm-projection at1-cg0
   complements Sigma.
-- benchmark/common/density.py greedymini_centre_hash (the bit-plane port used
-  for the expected-density Monte Carlo); checked equal to the reference on
-  every k-mer, so the Monte Carlo ranks what minimap2 ranks.
+- benchmark/common/density.py greedymini_centre_hash (the shared bit-plane
+  port); checked equal to the reference on every k-mer.
 
-The compiled sketch (sketch_dump driver, `make sketch_dump`) is compared with
+The compiled sketch (minimap2/sketch_dump driver, `make sketch_dump` in minimap2/) is compared with
 - on N-free sequences, a brute-force minimizer scan over the reference
   values: per window of w k-mers, every position holding the window's
   minimum is selected (minimap2's robust winnowing keeps all tied minima);
@@ -33,15 +32,26 @@ import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SKETCH_DUMP = HERE / "sketch_dump"
-GM_FILE = HERE.parent / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
-sys.path.insert(0, str(HERE.parent / "benchmark" / "common"))
-sys.path.insert(0, str(HERE.parent / "benchmark" / "minimap2" / "lib"))
+REPO = Path(__file__).resolve().parents[3]
+SKETCH_DUMP = REPO / "minimap2" / "sketch_dump"
+GM_FILE = REPO / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
+sys.path.insert(0, str(REPO / "benchmark" / "common"))
 from density import greedymini_centre_hash, gm_k_from_table, read_gm_ranks  # noqa: E402
-from expected_density import mm_hash64  # noqa: E402
 
 COMP = {0: 3, 1: 2, 2: 1, 3: 0}
+
+
+def mm_hash64(key: int, mask: int) -> int:
+    """Port of sketch.c's mm_hash64 (Thomas Wang's 64-bit integer mix), the
+    native order; `(~key) & mask` gives C's fixed-width `~key` for any mask."""
+    key = (~key + (key << 21)) & mask
+    key = key ^ (key >> 24)
+    key = ((key + (key << 3)) + (key << 8)) & mask
+    key = key ^ (key >> 14)
+    key = ((key + (key << 2)) + (key << 4)) & mask
+    key = key ^ (key >> 28)
+    key = (key + (key << 31)) & mask
+    return key
 
 
 def bits_to_int(bits: list[int]) -> int:
@@ -238,6 +248,15 @@ def main() -> int:
         return 1
     print("all match")
     return 0
+
+
+def test_greedymini_sketch():
+    import pytest
+
+    for f in (SKETCH_DUMP, GM_FILE):
+        if not f.is_file():
+            pytest.skip(f"{f} not built (make sketch_dump in minimap2/, the .gm tables in orders/GreedyMini/)")
+    assert main() == 0
 
 
 if __name__ == "__main__":

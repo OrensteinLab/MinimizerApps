@@ -64,7 +64,7 @@ extra:all $(PROG_EXTRA)
 test:all sketch_dump
 		./test_scheme.sh
 
-# Test-only driver for validate_mod_minimizer.py (see sketch_dump.c).
+# Test-only driver for benchmark/minimap2/tests/test_{greedymini,mod_minimizer}_sketch.py (see sketch_dump.c).
 sketch_dump:sketch_dump.o libminimap2.a
 		$(CC) $(CFLAGS) sketch_dump.o -o $@ -L. -lminimap2 $(LIBS)
 

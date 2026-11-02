@@ -214,6 +214,6 @@ agreement).
 
 `minimap2/scheme.cpp`'s `sketch_mod_minimizer` keeps the window's t-mer ranks
 in a ring buffer with the leftmost/rightmost minimum, rescanning only when the
-leftmost minimum leaves the window; `minimap2/validate_mod_minimizer.py`
+leftmost minimum leaves the window; `tests/test_mod_minimizer_sketch.py`
 (run by `make -C minimap2 test`) checks the compiled sketch against a brute
 force, including N gaps and palindromic k-mers.
