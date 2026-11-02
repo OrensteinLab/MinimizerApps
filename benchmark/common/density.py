@@ -29,7 +29,6 @@ algorithm:
 from __future__ import annotations
 
 import struct
-from collections import deque
 from pathlib import Path
 
 MASK64 = (1 << 64) - 1
@@ -42,39 +41,6 @@ def density_factor(n_selected: int, n_kmers: int, w: int, decimals: int = 6) -> 
     if n_kmers <= 0 or n_selected <= 0:
         return None
     return round(n_selected / n_kmers * (w + 1), decimals)
-
-
-def sliding_runs(keys: list[int], w: int) -> tuple[int, int, int]:
-    """Slide a length-w window over `keys` (one hash value per m-mer
-    position); return (n_windows, n_super, n_selected_positions). n_super
-    counts how many times the window's argmin *value* changes (super-k-mer
-    boundaries) -- the generic "particular density" building block,
-    re-derivable from any (dataset or simulated) key stream, independent of
-    which order produced `keys`."""
-    n = len(keys)
-    n_win = max(0, n - w + 1)
-    dq: deque[int] = deque()
-    n_super = 0
-    n_sel = 0
-    prev_key = None
-    prev_pos = None
-    for i in range(n):
-        while dq and keys[dq[-1]] >= keys[i]:
-            dq.pop()
-        dq.append(i)
-        if dq[0] <= i - w:
-            dq.popleft()
-        if i + 1 < w:
-            continue
-        pos = dq[0]
-        min_key = keys[pos]
-        if prev_key is None or min_key != prev_key:
-            n_super += 1
-            prev_key = min_key
-        if prev_pos != pos:
-            n_sel += 1
-            prev_pos = pos
-    return n_win, n_super, n_sel
 
 
 # ---------------------------------------------------------------------------

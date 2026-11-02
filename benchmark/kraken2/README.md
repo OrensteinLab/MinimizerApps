@@ -422,7 +422,10 @@ configuration (ℓ = 31, k = 35 so w = 5, minimizer spaces s = 7, greedymini tab
 
 - **expected** (`dens_expected`, `fac_expected`) — random i.i.d. ACGT of
   `-N` bases (default 100 Mbp in the script; the tool is Monte Carlo, so it varies
-  slightly with the RNG seed `--seed`);
+  slightly with the RNG seed `--seed`); the export replaces it by the count of
+  `expected_density.py` (the `kraken2` tool of `benchmark/common/expected_density/`:
+  the same scanner and counting, 10^9 bases, a string of its own per seed), as for
+  the other apps;
 - **particular** (`dens_particular`, `fac_particular`) — the library FASTAs of
   the shared DB (`db/<lib>/library/**/*.f{na,a,asta}`), read in full (8.7 GB, ~9.3
   Gbp for `strain_exclusion`), no sampling;

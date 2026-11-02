@@ -226,4 +226,5 @@ minimizers" stamp).
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |
-| `scheme_names.py`, `schemes_sheet.py`, `density.py`, `expected_density_driver.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |
+| `expected_density_driver.py`, `expected_density/` | the expected density of every app's schemes: one C++ tool per app that counts the selected k-mers of 10^9 random bases per seed with the app's own selection code (its tie rule and its own count), and the Python driver that runs it and caches the results (`expected_density/README.md`) |
+| `scheme_names.py`, `schemes_sheet.py`, `density.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |

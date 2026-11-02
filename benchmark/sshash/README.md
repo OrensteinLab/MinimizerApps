@@ -113,7 +113,7 @@ benchmark/sshash/
 | `scripts/meta.py` | Per-run `meta.json` writer |
 | `scripts/common.py` | Shared helpers (`.env` loading, `die()`) |
 | `scripts/density.py` | Sliding-window "particular" density + pure-Python re-implementations of sshash's order formulas |
-| `scripts/expected_density.py` | Monte Carlo theoretical `density_factor` per scheme (feeds the `schemes` xlsx sheet); thin adapter over the shared `benchmark/common/expected_density_driver.py` (variant x seed loop, mean/std, cache) |
+| `scripts/expected_density.py` | Theoretical `density_factor` per scheme, counted on uniformly random DNA by sshash's own minimizer iterators (the `sshash` tool of `benchmark/common/expected_density/`; feeds the `schemes` xlsx sheet); thin adapter over the shared `benchmark/common/expected_density_driver.py` (tool, variant x seed loop, mean/std, cache) |
 | `scripts/experiments.py` | Load/expand `experiments/*.yaml` (shared engine in `benchmark/common/experiments_lib.py`) |
 | `data/` | Dataset catalog (`datasets.csv`) + committed sanity-test query sets (`queries/`) |
 | `experiments/*.yaml` | Multi-config sweep definitions |
@@ -361,7 +361,7 @@ GreedyMini).
   `all`; `--regular` does not apply to them. With
   t = m mod w (both here) the scheme is forward, which the build checks; any other t makes the
   two strands' offset rules disagree (a t=11 table gave density ~2.2, worse than native).
-  The schemes sheet's expected density is the Monte Carlo on i.i.d. DNA (equal for both polarities
+  The schemes sheet's expected density is counted on uniformly random DNA (equal for both polarities
   up to sampling noise by symmetry); the particular density per dataset is what can differ.
 - The built `.sshash` index is deleted after each run's check/bench/query/equivalence steps
   finish (to keep disk usage bounded across cod/kestrel/human x 9 schemes x N seeds x up to 2

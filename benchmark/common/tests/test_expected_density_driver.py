@@ -27,13 +27,6 @@ def test_compute_rows_unavailable():
     assert rows[1]["n_seeds"] == 0 and rows[1]["density_factor_mean"] is None
 
 
-def test_random_dna_is_deterministic_and_keys_length():
-    s = d.random_dna(100)
-    assert s == d.random_dna(100) and set(s) <= {0, 1, 2, 3}
-    keys = d.canonical_keys(s, 5, lambda v, seed: v ^ seed, lambda x, l: x, 7)
-    assert len(keys) == 96
-
-
 def test_ensure_cache_exact_and_merge(tmp_path):
     path = tmp_path / "c.csv"
     fields = ("scheme", *d.STAT_FIELDS)
