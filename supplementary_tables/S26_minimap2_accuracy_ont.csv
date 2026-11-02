@@ -1,0 +1,6 @@
+block,scheme,order,mapped (%) mean,mapped (%) std,mean identity (%) mean,mean identity (%) std
+"ONT reads on GRCh38, occurrence threshold 728 (that of the default scheme)",minimizer,invertible integer hash (default),98.10,,92.92,
+"ONT reads on GRCh38, occurrence threshold 728 (that of the default scheme)",minimizer,xor,98.14,0.05,92.91,0.02
+"ONT reads on GRCh38, occurrence threshold 728 (that of the default scheme)",minimizer,xor-pcg-hash,98.10,,92.91,0.01
+"ONT reads on GRCh38, occurrence threshold 728 (that of the default scheme)",minimizer,GreedyMini,98.10,,92.90,0.01
+"ONT reads on GRCh38, occurrence threshold 728 (that of the default scheme)",mod-minimizer,xor,98.12,0.04,92.91,0.005

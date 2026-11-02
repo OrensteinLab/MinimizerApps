@@ -1,0 +1,31 @@
+block,scheme,order,index size (bits per L-mer),saved (bits per L-mer),tags (% of saved),MPHF (% of saved),strings (% of saved),skew index (% of saved),other (% of saved)
+cod,minimizer,xor,9.166,-0.803,81.4,7.0,0.0,-0.2,11.9
+cod,minimizer,xor-pcg-hash,8.377,-0.014,0.2,25.5,0.0,54.8,19.4
+cod,minimizer,GreedyMini,7.043,1.319,86.0,8.5,0.0,1.9,3.6
+cod,mod-minimizer,xor,7.192,1.171,87.1,8.0,0.0,1.1,3.7
+cod,mod-minimizer,GreedyMini,6.833,1.530,85.9,8.4,0.0,1.1,4.7
+kestrel,minimizer,xor,8.924,-0.944,88.1,7.9,0.0,0.6,3.3
+kestrel,minimizer,xor-pcg-hash,7.992,-0.012,57.5,31.8,0.0,5.5,5.2
+kestrel,minimizer,GreedyMini,6.654,1.326,91.6,8.0,0.0,-0.2,0.6
+kestrel,mod-minimizer,xor,6.768,1.212,91.4,8.1,0.0,-0.1,0.6
+kestrel,mod-minimizer,GreedyMini,6.441,1.539,91.4,7.9,0.0,-0.2,0.9
+human,minimizer,xor,9.784,-0.993,73.0,6.2,0.0,6.3,14.6
+human,minimizer,xor-pcg-hash,8.803,-0.012,48.8,4.9,0.0,24.4,21.8
+human,minimizer,GreedyMini,7.454,1.336,88.6,7.5,0.0,-1.9,5.8
+human,mod-minimizer,xor,7.560,1.231,87.9,7.6,0.0,-1.3,5.9
+human,mod-minimizer,GreedyMini,7.222,1.568,87.1,7.5,0.0,-1.5,6.8
+NCBI viruses,minimizer,xor,8.900,-0.708,77.1,8.6,0.0,0.0,14.2
+NCBI viruses,minimizer,xor-pcg-hash,8.196,-0.004,29.1,-79.7,0.0,0.9,149.7
+NCBI viruses,minimizer,GreedyMini,6.947,1.245,90.5,7.8,0.0,0.0,1.8
+NCBI viruses,mod-minimizer,xor,7.036,1.155,90.0,7.9,0.0,0.0,2.1
+NCBI viruses,mod-minimizer,GreedyMini,6.724,1.467,89.1,8.1,0.0,0.0,2.8
+S. enterica,minimizer,xor,11.271,-1.008,52.2,4.5,0.0,6.1,37.3
+S. enterica,minimizer,xor-pcg-hash,10.273,-0.010,-74.1,-18.3,0.0,65.1,127.3
+S. enterica,minimizer,GreedyMini,8.909,1.354,79.2,7.1,0.0,-2.8,16.5
+S. enterica,mod-minimizer,xor,9.043,1.220,79.5,7.0,0.0,-3.2,16.6
+S. enterica,mod-minimizer,GreedyMini,8.677,1.587,77.3,6.8,0.0,-1.6,17.6
+HPRC,minimizer,xor,11.939,-1.278,56.6,3.7,0.0,8.2,31.6
+HPRC,minimizer,xor-pcg-hash,10.679,-0.018,-9.9,-3.2,0.0,32.5,80.6
+HPRC,minimizer,GreedyMini,9.302,1.360,85.6,7.1,0.0,-3.4,10.7
+HPRC,mod-minimizer,xor,9.408,1.254,84.3,7.0,0.0,-1.7,10.4
+HPRC,mod-minimizer,GreedyMini,9.039,1.623,81.6,6.8,0.0,-1.7,13.3

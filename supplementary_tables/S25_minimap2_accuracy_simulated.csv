@@ -1,0 +1,13 @@
+block,scheme,order,mapped (%),correct (%) mean,correct (%) std,wrong (%) mean,wrong (%) std,correct in repeats (% of repeat reads) mean,correct in repeats (% of repeat reads) std,correct with >=50% overlap (%) mean,correct with >=50% overlap (%) std,mean identity (%)
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",minimizer,invertible integer hash (default),100.00,99.84,,0.160,,96.1,,99.83,,91.82
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",minimizer,xor,100.00,99.85,0.01,0.150,0.007,95.9,0.4,99.85,0.01,91.82
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",minimizer,xor-pcg-hash,100.00,99.85,0.02,0.154,0.019,95.6,0.6,99.84,0.02,91.82
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",minimizer,GreedyMini,100.00,99.85,0.01,0.146,0.006,96.5,0.1,99.85,0.005,91.82
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",mod-minimizer,xor,100.00,99.85,0.01,0.146,0.011,96.1,0.5,99.85,0.01,91.82
+"CHM13 chrX, occurrence threshold 159 (that of the default scheme)",mod-minimizer,GreedyMini,100.00,99.86,0.01,0.142,0.008,96.1,0.3,99.86,0.01,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",minimizer,invertible integer hash (default),100.00,98.13,,1.870,,100.0,,98.13,,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",minimizer,xor,100.00,98.13,0.01,1.862,0.011,100.0,,98.13,0.01,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",minimizer,xor-pcg-hash,100.00,98.14,0.02,1.854,0.018,100.0,,98.14,0.02,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",minimizer,GreedyMini,100.00,98.15,,1.850,,100.0,,98.15,,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",mod-minimizer,xor,100.00,98.12,0.01,1.876,0.009,100.0,,98.12,0.01,91.82
+"GRCh38, occurrence threshold 495 (that of the default scheme)",mod-minimizer,GreedyMini,100.00,98.12,0.02,1.878,0.013,100.0,,98.12,0.02,91.82

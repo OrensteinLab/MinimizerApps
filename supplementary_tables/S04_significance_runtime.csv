@@ -1,0 +1,150 @@
+method,metric,dataset,k,w,scheme,order,ratio to the default,95% CI of the ratio,p-value (Bonferroni),verdict
+Kraken2,build wall time,strain-exclusion library,31,5,minimizer,xor-pcg-hash,0.983,"[0.921, 1.050]",1.000,inconclusive
+Kraken2,build wall time,strain-exclusion library,31,5,minimizer,GreedyMini,0.859,"[0.825, 0.895]",0.002,lower
+Kraken2,build wall time,strain-exclusion library,31,5,mod-minimizer,xor,0.700,"[0.668, 0.735]",<0.001,lower
+Kraken2,build wall time,strain-exclusion library,31,5,mod-minimizer,GreedyMini,0.706,"[0.654, 0.762]",<0.001,lower
+Kraken2,classification processing time,strain-exclusion,31,5,minimizer,xor-pcg-hash,1.088,"[1.046, 1.131]",0.016,higher
+Kraken2,classification processing time,strain-exclusion,31,5,minimizer,GreedyMini,0.905,"[0.843, 0.971]",0.068,inconclusive
+Kraken2,classification processing time,strain-exclusion,31,5,mod-minimizer,xor,1.022,"[0.985, 1.061]",0.720,inconclusive
+Kraken2,classification processing time,strain-exclusion,31,5,mod-minimizer,GreedyMini,0.967,"[0.897, 1.043]",1.000,inconclusive
+Kraken2,classification processing time,CAMI II,31,5,minimizer,xor-pcg-hash,1.047,"[1.006, 1.089]",0.131,inconclusive
+Kraken2,classification processing time,CAMI II,31,5,minimizer,GreedyMini,0.885,"[0.855, 0.916]",0.002,lower
+Kraken2,classification processing time,CAMI II,31,5,mod-minimizer,xor,0.947,"[0.917, 0.978]",0.037,lower
+Kraken2,classification processing time,CAMI II,31,5,mod-minimizer,GreedyMini,0.908,"[0.872, 0.945]",0.011,lower
+Kraken2,classification processing time,FDA-ARGOS,31,5,minimizer,xor-pcg-hash,1.106,"[1.086, 1.127]",<0.001,higher
+Kraken2,classification processing time,FDA-ARGOS,31,5,minimizer,GreedyMini,0.929,"[0.886, 0.974]",0.051,inconclusive
+Kraken2,classification processing time,FDA-ARGOS,31,5,mod-minimizer,xor,1.024,"[0.954, 1.099]",1.000,inconclusive
+Kraken2,classification processing time,FDA-ARGOS,31,5,mod-minimizer,GreedyMini,0.956,"[0.932, 0.982]",0.036,lower
+Minimap2,build wall time,CHM13 chrX,19,10,minimizer,xor,0.943,"[0.913, 0.973]",0.033,lower
+Minimap2,build wall time,CHM13 chrX,19,10,minimizer,xor-pcg-hash,0.992,"[0.975, 1.010]",1.000,equivalent
+Minimap2,build wall time,CHM13 chrX,19,10,minimizer,GreedyMini,0.941,"[0.922, 0.961]",0.006,lower
+Minimap2,build wall time,CHM13 chrX,19,10,mod-minimizer,xor,0.927,"[0.912, 0.942]",<0.001,lower
+Minimap2,build wall time,CHM13 chrX,19,10,mod-minimizer,GreedyMini,0.988,"[0.960, 1.018]",1.000,equivalent
+Minimap2,build wall time,GRCh38,19,10,minimizer,xor,0.964,"[0.957, 0.971]",<0.001,lower
+Minimap2,build wall time,GRCh38,19,10,minimizer,xor-pcg-hash,0.994,"[0.988, 1.000]",0.312,equivalent
+Minimap2,build wall time,GRCh38,19,10,minimizer,GreedyMini,1.078,"[1.069, 1.087]",<0.001,higher
+Minimap2,build wall time,GRCh38,19,10,mod-minimizer,xor,1.093,"[1.028, 1.163]",0.079,inconclusive
+Minimap2,build wall time,GRCh38,19,10,mod-minimizer,GreedyMini,1.184,"[1.143, 1.227]",<0.001,higher
+Minimap2,build wall time,ONT reads on GRCh38,15,10,minimizer,xor,0.903,"[0.779, 1.046]",0.506,inconclusive
+Minimap2,build wall time,ONT reads on GRCh38,15,10,minimizer,xor-pcg-hash,0.917,"[0.838, 1.003]",0.219,inconclusive
+Minimap2,build wall time,ONT reads on GRCh38,15,10,minimizer,GreedyMini,1.005,"[0.928, 1.089]",1.000,inconclusive
+Minimap2,build wall time,ONT reads on GRCh38,15,10,mod-minimizer,xor,1.064,"[0.928, 1.220]",1.000,inconclusive
+Minimap2,mapping processing time,CHM13 chrX,19,10,minimizer,xor,1.005,"[0.995, 1.014]",1.000,equivalent
+Minimap2,mapping processing time,CHM13 chrX,19,10,minimizer,xor-pcg-hash,1.013,"[1.001, 1.025]",0.179,equivalent
+Minimap2,mapping processing time,CHM13 chrX,19,10,minimizer,GreedyMini,0.919,"[0.909, 0.929]",<0.001,lower
+Minimap2,mapping processing time,CHM13 chrX,19,10,mod-minimizer,xor,0.931,"[0.921, 0.941]",<0.001,lower
+Minimap2,mapping processing time,CHM13 chrX,19,10,mod-minimizer,GreedyMini,0.906,"[0.900, 0.913]",<0.001,lower
+Minimap2,mapping processing time,GRCh38,19,10,minimizer,xor,0.993,"[0.975, 1.012]",1.000,equivalent
+Minimap2,mapping processing time,GRCh38,19,10,minimizer,xor-pcg-hash,0.997,"[0.990, 1.004]",1.000,equivalent
+Minimap2,mapping processing time,GRCh38,19,10,minimizer,GreedyMini,0.906,"[0.900, 0.913]",<0.001,lower
+Minimap2,mapping processing time,GRCh38,19,10,mod-minimizer,xor,0.895,"[0.869, 0.921]",0.002,lower
+Minimap2,mapping processing time,GRCh38,19,10,mod-minimizer,GreedyMini,0.871,"[0.842, 0.900]",0.002,lower
+Minimap2,mapping processing time,ONT reads on GRCh38,15,10,minimizer,xor,1.038,"[0.968, 1.113]",0.861,inconclusive
+Minimap2,mapping processing time,ONT reads on GRCh38,15,10,minimizer,xor-pcg-hash,1.049,"[0.984, 1.118]",0.422,inconclusive
+Minimap2,mapping processing time,ONT reads on GRCh38,15,10,minimizer,GreedyMini,0.722,"[0.695, 0.750]",<0.001,lower
+Minimap2,mapping processing time,ONT reads on GRCh38,15,10,mod-minimizer,xor,0.791,"[0.760, 0.823]",<0.001,lower
+KMC3,total wall time,F. vesca,9,20,minimizer,xor,0.971,"[0.934, 1.010]",0.317,inconclusive
+KMC3,total wall time,F. vesca,9,20,minimizer,xor-pcg-hash,0.981,"[0.948, 1.015]",0.598,equivalent
+KMC3,total wall time,F. vesca,9,20,minimizer,GreedyMini,1.030,"[0.991, 1.071]",0.300,inconclusive
+KMC3,total wall time,G. gallus,9,20,minimizer,xor,1.001,"[0.901, 1.113]",1.000,inconclusive
+KMC3,total wall time,G. gallus,9,20,minimizer,xor-pcg-hash,1.007,"[0.870, 1.164]",1.000,inconclusive
+KMC3,total wall time,G. gallus,9,20,minimizer,GreedyMini,1.039,"[0.920, 1.174]",1.000,inconclusive
+KMC3,total wall time,M. balbisiana,9,20,minimizer,xor,0.976,"[0.880, 1.082]",1.000,inconclusive
+KMC3,total wall time,M. balbisiana,9,20,minimizer,xor-pcg-hash,0.943,"[0.844, 1.053]",0.639,inconclusive
+KMC3,total wall time,M. balbisiana,9,20,minimizer,GreedyMini,0.916,"[0.827, 1.014]",0.224,inconclusive
+KMC3,total wall time,H. sapiens 2,9,20,minimizer,xor,1.030,"[0.943, 1.125]",1.000,inconclusive
+KMC3,total wall time,H. sapiens 2,9,20,minimizer,xor-pcg-hash,1.042,"[1.017, 1.067]",0.027,higher
+KMC3,total wall time,H. sapiens 2,9,20,minimizer,GreedyMini,1.045,"[0.958, 1.140]",0.694,inconclusive
+KMC3,total wall time,H. sapiens 3,9,20,minimizer,xor,1.036,"[0.963, 1.115]",0.748,inconclusive
+KMC3,total wall time,H. sapiens 3,9,20,minimizer,xor-pcg-hash,1.021,"[0.949, 1.099]",1.000,inconclusive
+KMC3,total wall time,H. sapiens 3,9,20,minimizer,GreedyMini,1.023,"[0.935, 1.119]",1.000,inconclusive
+KMC3,stage 1 time,F. vesca,9,20,minimizer,xor,0.957,"[0.906, 1.012]",0.279,inconclusive
+KMC3,stage 1 time,F. vesca,9,20,minimizer,xor-pcg-hash,0.980,"[0.945, 1.015]",0.554,equivalent
+KMC3,stage 1 time,F. vesca,9,20,minimizer,GreedyMini,1.071,"[1.035, 1.108]",0.016,higher
+KMC3,stage 1 time,G. gallus,9,20,minimizer,xor,1.021,"[0.877, 1.188]",1.000,inconclusive
+KMC3,stage 1 time,G. gallus,9,20,minimizer,xor-pcg-hash,1.006,"[0.815, 1.241]",1.000,inconclusive
+KMC3,stage 1 time,G. gallus,9,20,minimizer,GreedyMini,1.081,"[0.889, 1.314]",0.993,inconclusive
+KMC3,stage 1 time,M. balbisiana,9,20,minimizer,xor,0.974,"[0.866, 1.094]",1.000,inconclusive
+KMC3,stage 1 time,M. balbisiana,9,20,minimizer,xor-pcg-hash,0.941,"[0.817, 1.084]",0.896,inconclusive
+KMC3,stage 1 time,M. balbisiana,9,20,minimizer,GreedyMini,0.920,"[0.810, 1.045]",0.428,inconclusive
+KMC3,stage 1 time,H. sapiens 2,9,20,minimizer,xor,1.040,"[0.900, 1.201]",1.000,inconclusive
+KMC3,stage 1 time,H. sapiens 2,9,20,minimizer,xor-pcg-hash,1.062,"[1.001, 1.127]",0.146,inconclusive
+KMC3,stage 1 time,H. sapiens 2,9,20,minimizer,GreedyMini,1.054,"[0.905, 1.227]",1.000,inconclusive
+KMC3,stage 1 time,H. sapiens 3,9,20,minimizer,xor,1.041,"[0.951, 1.140]",0.853,inconclusive
+KMC3,stage 1 time,H. sapiens 3,9,20,minimizer,xor-pcg-hash,1.024,"[0.913, 1.149]",1.000,inconclusive
+KMC3,stage 1 time,H. sapiens 3,9,20,minimizer,GreedyMini,1.057,"[0.965, 1.157]",0.502,inconclusive
+KMC3,stage 2 time,F. vesca,9,20,minimizer,xor,0.989,"[0.946, 1.035]",1.000,equivalent
+KMC3,stage 2 time,F. vesca,9,20,minimizer,xor-pcg-hash,0.983,"[0.951, 1.017]",0.715,equivalent
+KMC3,stage 2 time,F. vesca,9,20,minimizer,GreedyMini,0.975,"[0.931, 1.021]",0.604,inconclusive
+KMC3,stage 2 time,G. gallus,9,20,minimizer,xor,0.977,"[0.932, 1.023]",0.702,inconclusive
+KMC3,stage 2 time,G. gallus,9,20,minimizer,xor-pcg-hash,1.013,"[0.940, 1.093]",1.000,inconclusive
+KMC3,stage 2 time,G. gallus,9,20,minimizer,GreedyMini,0.982,"[0.936, 1.030]",1.000,inconclusive
+KMC3,stage 2 time,M. balbisiana,9,20,minimizer,xor,0.985,"[0.905, 1.072]",1.000,inconclusive
+KMC3,stage 2 time,M. balbisiana,9,20,minimizer,xor-pcg-hash,0.950,"[0.903, 1.000]",0.153,inconclusive
+KMC3,stage 2 time,M. balbisiana,9,20,minimizer,GreedyMini,0.906,"[0.852, 0.963]",0.032,lower
+KMC3,stage 2 time,H. sapiens 2,9,20,minimizer,xor,1.013,"[0.914, 1.123]",1.000,inconclusive
+KMC3,stage 2 time,H. sapiens 2,9,20,minimizer,xor-pcg-hash,1.010,"[0.956, 1.067]",1.000,inconclusive
+KMC3,stage 2 time,H. sapiens 2,9,20,minimizer,GreedyMini,1.033,"[0.990, 1.077]",0.314,inconclusive
+KMC3,stage 2 time,H. sapiens 3,9,20,minimizer,xor,1.028,"[0.972, 1.086]",0.730,inconclusive
+KMC3,stage 2 time,H. sapiens 3,9,20,minimizer,xor-pcg-hash,1.015,"[0.952, 1.082]",1.000,inconclusive
+KMC3,stage 2 time,H. sapiens 3,9,20,minimizer,GreedyMini,0.961,"[0.869, 1.063]",1.000,inconclusive
+SSHash,build wall time,cod,21,11,minimizer,xor,1.067,"[1.049, 1.085]",0.002,higher
+SSHash,build wall time,cod,21,11,minimizer,xor-pcg-hash,1.004,"[0.994, 1.014]",1.000,equivalent
+SSHash,build wall time,cod,21,11,minimizer,GreedyMini,0.870,"[0.864, 0.875]",<0.001,lower
+SSHash,build wall time,cod,21,11,mod-minimizer,xor,0.886,"[0.875, 0.898]",<0.001,lower
+SSHash,build wall time,cod,21,11,mod-minimizer,GreedyMini,0.866,"[0.862, 0.870]",<0.001,lower
+SSHash,build wall time,kestrel,21,11,minimizer,xor,1.217,"[1.188, 1.246]",<0.001,higher
+SSHash,build wall time,kestrel,21,11,minimizer,xor-pcg-hash,1.024,"[0.965, 1.086]",1.000,inconclusive
+SSHash,build wall time,kestrel,21,11,minimizer,GreedyMini,0.665,"[0.644, 0.686]",<0.001,lower
+SSHash,build wall time,kestrel,21,11,mod-minimizer,xor,0.692,"[0.628, 0.763]",0.002,lower
+SSHash,build wall time,kestrel,21,11,mod-minimizer,GreedyMini,0.635,"[0.625, 0.646]",<0.001,lower
+SSHash,build wall time,human,21,11,minimizer,xor,1.131,"[1.085, 1.179]",0.006,higher
+SSHash,build wall time,human,21,11,minimizer,xor-pcg-hash,1.012,"[0.969, 1.056]",1.000,equivalent
+SSHash,build wall time,human,21,11,minimizer,GreedyMini,0.792,"[0.771, 0.813]",<0.001,lower
+SSHash,build wall time,human,21,11,mod-minimizer,xor,0.842,"[0.789, 0.900]",0.010,lower
+SSHash,build wall time,human,21,11,mod-minimizer,GreedyMini,0.782,"[0.749, 0.816]",<0.001,lower
+SSHash,build wall time,NCBI viruses,21,11,minimizer,xor,1.062,"[1.043, 1.081]",0.004,higher
+SSHash,build wall time,NCBI viruses,21,11,minimizer,xor-pcg-hash,1.010,"[0.994, 1.026]",0.857,equivalent
+SSHash,build wall time,NCBI viruses,21,11,minimizer,GreedyMini,0.796,"[0.784, 0.807]",<0.001,lower
+SSHash,build wall time,NCBI viruses,21,11,mod-minimizer,xor,0.837,"[0.807, 0.868]",<0.001,lower
+SSHash,build wall time,NCBI viruses,21,11,mod-minimizer,GreedyMini,0.795,"[0.783, 0.807]",<0.001,lower
+SSHash,build wall time,S. enterica,21,11,minimizer,xor,1.136,"[1.117, 1.155]",<0.001,higher
+SSHash,build wall time,S. enterica,21,11,minimizer,xor-pcg-hash,1.004,"[0.969, 1.040]",1.000,equivalent
+SSHash,build wall time,S. enterica,21,11,minimizer,GreedyMini,0.774,"[0.760, 0.789]",<0.001,lower
+SSHash,build wall time,S. enterica,21,11,mod-minimizer,xor,0.801,"[0.763, 0.841]",0.001,lower
+SSHash,build wall time,S. enterica,21,11,mod-minimizer,GreedyMini,0.760,"[0.741, 0.780]",<0.001,lower
+SSHash,build wall time,HPRC,21,11,minimizer,xor,1.078,"[1.013, 1.148]",0.142,inconclusive
+SSHash,build wall time,HPRC,21,11,minimizer,xor-pcg-hash,1.003,"[0.954, 1.054]",1.000,equivalent
+SSHash,build wall time,HPRC,21,11,minimizer,GreedyMini,0.836,"[0.805, 0.870]",0.001,lower
+SSHash,build wall time,HPRC,21,11,mod-minimizer,xor,0.867,"[0.823, 0.913]",0.008,lower
+SSHash,build wall time,HPRC,21,11,mod-minimizer,GreedyMini,0.832,"[0.795, 0.872]",0.002,lower
+SSHash,streaming query processing time,cod,21,11,minimizer,xor,1.008,"[0.988, 1.027]",1.000,equivalent
+SSHash,streaming query processing time,cod,21,11,minimizer,xor-pcg-hash,1.031,"[1.014, 1.049]",0.037,higher
+SSHash,streaming query processing time,cod,21,11,minimizer,GreedyMini,0.908,"[0.891, 0.926]",<0.001,lower
+SSHash,streaming query processing time,cod,21,11,mod-minimizer,xor,1.014,"[1.000, 1.028]",0.240,equivalent
+SSHash,streaming query processing time,cod,21,11,mod-minimizer,GreedyMini,1.067,"[1.041, 1.093]",0.009,higher
+SSHash,streaming query processing time,kestrel,21,11,minimizer,xor,1.024,"[0.976, 1.074]",1.000,inconclusive
+SSHash,streaming query processing time,kestrel,21,11,minimizer,xor-pcg-hash,1.001,"[0.950, 1.055]",1.000,equivalent
+SSHash,streaming query processing time,kestrel,21,11,minimizer,GreedyMini,0.886,"[0.838, 0.938]",0.020,lower
+SSHash,streaming query processing time,kestrel,21,11,mod-minimizer,xor,0.966,"[0.911, 1.024]",0.889,inconclusive
+SSHash,streaming query processing time,kestrel,21,11,mod-minimizer,GreedyMini,0.982,"[0.927, 1.040]",1.000,inconclusive
+SSHash,streaming query processing time,human,21,11,minimizer,xor,1.020,"[1.007, 1.034]",0.063,equivalent
+SSHash,streaming query processing time,human,21,11,minimizer,xor-pcg-hash,1.004,"[0.988, 1.021]",1.000,equivalent
+SSHash,streaming query processing time,human,21,11,minimizer,GreedyMini,0.953,"[0.937, 0.969]",0.007,lower
+SSHash,streaming query processing time,human,21,11,mod-minimizer,xor,1.014,"[0.989, 1.041]",0.979,equivalent
+SSHash,streaming query processing time,human,21,11,mod-minimizer,GreedyMini,1.029,"[1.006, 1.052]",0.118,equivalent
+SSHash,streaming query processing time,NCBI viruses,21,11,minimizer,xor,1.054,"[0.941, 1.181]",1.000,inconclusive
+SSHash,streaming query processing time,NCBI viruses,21,11,minimizer,xor-pcg-hash,1.003,"[0.958, 1.050]",1.000,equivalent
+SSHash,streaming query processing time,NCBI viruses,21,11,minimizer,GreedyMini,0.951,"[0.889, 1.018]",0.551,inconclusive
+SSHash,streaming query processing time,NCBI viruses,21,11,mod-minimizer,xor,1.072,"[0.984, 1.168]",0.442,inconclusive
+SSHash,streaming query processing time,NCBI viruses,21,11,mod-minimizer,GreedyMini,1.122,"[1.067, 1.179]",0.016,higher
+SSHash,streaming query processing time,S. enterica,21,11,minimizer,xor,0.987,"[0.931, 1.046]",1.000,inconclusive
+SSHash,streaming query processing time,S. enterica,21,11,minimizer,xor-pcg-hash,0.978,"[0.928, 1.030]",1.000,inconclusive
+SSHash,streaming query processing time,S. enterica,21,11,minimizer,GreedyMini,0.968,"[0.918, 1.020]",0.799,inconclusive
+SSHash,streaming query processing time,S. enterica,21,11,mod-minimizer,xor,0.983,"[0.932, 1.037]",1.000,inconclusive
+SSHash,streaming query processing time,S. enterica,21,11,mod-minimizer,GreedyMini,0.988,"[0.907, 1.076]",1.000,inconclusive
+SSHash,streaming query processing time,HPRC,21,11,minimizer,xor,1.002,"[0.982, 1.023]",1.000,equivalent
+SSHash,streaming query processing time,HPRC,21,11,minimizer,xor-pcg-hash,1.006,"[0.986, 1.027]",1.000,equivalent
+SSHash,streaming query processing time,HPRC,21,11,minimizer,GreedyMini,0.964,"[0.952, 0.977]",0.007,lower
+SSHash,streaming query processing time,HPRC,21,11,mod-minimizer,xor,1.017,"[1.002, 1.033]",0.162,equivalent
+SSHash,streaming query processing time,HPRC,21,11,mod-minimizer,GreedyMini,1.019,"[1.005, 1.033]",0.099,equivalent

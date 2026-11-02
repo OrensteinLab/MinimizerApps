@@ -1,0 +1,11 @@
+block,scheme,order,ranking (ns per base) mean,ranking (ns per base) std,ranking and selection (ns per base) mean,ranking and selection (ns per base) std,"ranking and selection, ratio to the default",superwindows per kb
+F. vesca,minimizer,signature (default),1.12,0.05,12.82,0.07,1.000,93.6
+F. vesca,minimizer,GreedyMini,2.49,0.01,12.45,0.10,0.971,82.8
+G. gallus,minimizer,signature (default),1.09,0.10,12.65,0.05,1.000,92.8
+G. gallus,minimizer,GreedyMini,2.48,0.01,12.38,0.09,0.979,83.2
+M. balbisiana,minimizer,signature (default),1.14,0.06,13.97,0.35,1.000,93.4
+M. balbisiana,minimizer,GreedyMini,2.68,0.09,13.38,0.36,0.958,82.8
+H. sapiens 2,minimizer,signature (default),1.14,0.08,13.76,0.31,1.000,94.6
+H. sapiens 2,minimizer,GreedyMini,2.66,0.10,13.31,0.50,0.967,82.8
+H. sapiens 3,minimizer,signature (default),1.15,0.05,13.73,0.30,1.000,95.0
+H. sapiens 3,minimizer,GreedyMini,2.68,0.13,13.48,0.62,0.982,83.0

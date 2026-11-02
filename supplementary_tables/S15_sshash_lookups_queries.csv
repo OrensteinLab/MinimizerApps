@@ -1,0 +1,37 @@
+block,scheme,order,positive lookup (ns per L-mer) mean,positive lookup (ns per L-mer) std,negative lookup (ns per L-mer) mean,negative lookup (ns per L-mer) std,access (ns per L-mer) mean,access (ns per L-mer) std,streaming query processing time (s) mean,streaming query processing time (s) std
+cod,minimizer,mixer_64 (default),574,14,460,4,466,8,6.90,0.09
+cod,minimizer,xor,568,4,468,4,462,7,6.95,0.04
+cod,minimizer,xor-pcg-hash,599,8,509,25,467,5,7.11,0.01
+cod,minimizer,GreedyMini,581,40,482,27,467,5,6.26,0.04
+cod,mod-minimizer,xor,605,4,514,12,467,3,6.99,0.03
+cod,mod-minimizer,GreedyMini,624,23,501,6,466,4,7.36,0.06
+kestrel,minimizer,mixer_64 (default),602,21,514,32,489,17,47.68,4.04
+kestrel,minimizer,xor,605,21,513,22,491,14,48.72,2.40
+kestrel,minimizer,xor-pcg-hash,622,20,530,9,490,16,47.67,2.44
+kestrel,minimizer,GreedyMini,607,34,515,13,486,18,42.19,2.08
+kestrel,mod-minimizer,xor,653,33,562,23,487,20,45.97,1.82
+kestrel,mod-minimizer,GreedyMini,640,27,538,11,491,18,46.73,2.06
+human,minimizer,mixer_64 (default),713,88,555,67,702,153,165.46,1.67
+human,minimizer,xor,729,98,560,56,701,155,168.82,2.35
+human,minimizer,xor-pcg-hash,708,4,564,4,640,13,166.18,1.15
+human,minimizer,GreedyMini,677,10,539,4,635,10,157.64,0.83
+human,mod-minimizer,xor,728,14,576,9,640,11,167.87,3.71
+human,mod-minimizer,GreedyMini,788,86,601,63,639,12,170.27,2.99
+NCBI viruses,minimizer,mixer_64 (default),561,16,465,11,462,9,0.63,0.03
+NCBI viruses,minimizer,xor,576,19,471,17,450,20,0.66,0.04
+NCBI viruses,minimizer,xor-pcg-hash,594,18,505,16,449,20,0.63,0.01
+NCBI viruses,minimizer,GreedyMini,557,10,477,11,453,13,0.60,0.03
+NCBI viruses,mod-minimizer,xor,597,6,507,10,446,14,0.67,0.03
+NCBI viruses,mod-minimizer,GreedyMini,602,10,505,13,445,12,0.70,0.03
+S. enterica,minimizer,mixer_64 (default),774,26,507,11,670,31,200.97,8.54
+S. enterica,minimizer,xor,784,20,514,7,671,19,198.33,7.63
+S. enterica,minimizer,xor-pcg-hash,795,23,536,12,659,44,196.60,10.29
+S. enterica,minimizer,GreedyMini,782,29,514,14,671,39,194.63,12.34
+S. enterica,mod-minimizer,xor,821,29,551,13,672,32,197.62,9.59
+S. enterica,mod-minimizer,GreedyMini,831,29,548,14,662,36,198.66,10.35
+HPRC,minimizer,mixer_64 (default),806,4,560,2,800,15,210.89,1.85
+HPRC,minimizer,xor,815,9,566,5,795,25,211.45,4.24
+HPRC,minimizer,xor-pcg-hash,837,4,593,1,794,6,212.21,4.44
+HPRC,minimizer,GreedyMini,819,9,575,1,801,17,203.41,2.39
+HPRC,mod-minimizer,xor,868,14,610,2,805,14,214.55,0.74
+HPRC,mod-minimizer,GreedyMini,868,6,607,1,820,23,214.84,1.08

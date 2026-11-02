@@ -1,0 +1,7 @@
+metric,"r, all datasets",paired runs,"r, CHM13 chrX","r, GRCh38","r, ONT reads on GRCh38"
+build wall time,-0.43,70,+0.16,-0.88,-0.48
+build peak memory,+0.65,70,+0.98,+0.71,+0.99
+index size,+1.00,70,+1.00,+1.00,+1.00
+mapping processing time,+0.80,70,+0.98,+0.96,+0.97
+mapping total wall time,+0.86,70,+0.99,+0.97,+0.95
+mapping peak memory,+0.60,70,+0.08,+0.88,+0.83

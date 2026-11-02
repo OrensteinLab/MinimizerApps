@@ -1,0 +1,17 @@
+method,k,w,scheme,order,polarity,expected density factor mean,expected density factor std,reported in the paper
+Kraken2,31,5,minimizer,GreedyMini,at0-cg1,1.46624,0.000009,yes
+Kraken2,31,5,minimizer,GreedyMini,at1-cg0,1.46622,0.000009,
+Kraken2,31,5,mod-minimizer,GreedyMini,at0-cg1,1.35502,0.0002,yes
+Kraken2,31,5,mod-minimizer,GreedyMini,at1-cg0,1.35501,0.0002,
+Minimap2,19,10,minimizer,GreedyMini,at0-cg1,1.54707,0.00003,yes
+Minimap2,19,10,minimizer,GreedyMini,at1-cg0,1.54706,0.00002,
+Minimap2,19,10,mod-minimizer,GreedyMini,at0-cg1,1.46368,0.00003,yes
+Minimap2,19,10,mod-minimizer,GreedyMini,at1-cg0,1.46367,0.00003,
+Minimap2,15,10,minimizer,GreedyMini,at0-cg1,1.51761,0.00002,yes
+Minimap2,15,10,minimizer,GreedyMini,at1-cg0,1.51758,0.00006,
+KMC3,9,20,minimizer,GreedyMini,at0-cg1,1.71857,0.00007,yes
+KMC3,9,20,minimizer,GreedyMini,at1-cg0,1.71851,0.00009,
+SSHash,21,11,minimizer,GreedyMini,at0-cg1,1.52454,0.00002,yes
+SSHash,21,11,minimizer,GreedyMini,at1-cg0,1.52456,0.00002,
+SSHash,21,11,mod-minimizer,GreedyMini,at0-cg1,1.45789,0.00003,yes
+SSHash,21,11,mod-minimizer,GreedyMini,at1-cg0,1.45785,0.00003,

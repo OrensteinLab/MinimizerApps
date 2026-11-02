@@ -1,0 +1,16 @@
+dataset,scheme,order,processing time (s) mean,processing time (s) std,total wall time (s) mean,total wall time (s) std,database load time (s) mean,database load time (s) std,classification peak memory (GB) mean,classification peak memory (GB) std,classified reads (%) mean,classified reads (%) std,speed (Mreads/min) mean,speed (Mreads/min) std
+strain-exclusion,minimizer,xor (default),0.63,0.03,3.75,4.23,3.12,4.20,10.39,0.29,88.13,0.07,4.81,0.26
+strain-exclusion,minimizer,xor-pcg-hash,0.68,0.04,2.96,2.30,2.28,2.26,10.41,0.005,87.76,0.07,4.42,0.25
+strain-exclusion,minimizer,GreedyMini,0.57,0.01,6.06,6.84,5.49,6.84,7.67,0.0003,87.37,0.01,5.31,0.12
+strain-exclusion,mod-minimizer,xor,0.64,0.03,3.02,2.83,2.38,2.80,7.16,0.05,87.36,0.06,4.70,0.21
+strain-exclusion,mod-minimizer,GreedyMini,0.60,0.02,4.28,3.67,3.68,3.67,7.10,0.003,87.11,0.04,4.97,0.12
+CAMI II,minimizer,xor (default),6.17,0.20,8.70,0.27,2.53,0.08,10.58,0.29,73.23,0.09,2.43,0.08
+CAMI II,minimizer,xor-pcg-hash,6.45,0.06,9.00,0.06,2.54,0.05,10.59,0.01,72.81,0.02,2.32,0.02
+CAMI II,minimizer,GreedyMini,5.46,0.03,7.97,0.05,2.51,0.03,7.90,0.0004,72.24,0.001,2.75,0.01
+CAMI II,mod-minimizer,xor,5.84,0.09,8.25,0.15,2.41,0.07,7.37,0.05,72.06,0.08,2.57,0.04
+CAMI II,mod-minimizer,GreedyMini,5.60,0.04,7.96,0.02,2.36,0.03,7.31,0.003,71.88,0.01,2.68,0.02
+FDA-ARGOS,minimizer,xor (default),4.41,0.07,5.72,0.16,1.31,0.08,10.42,0.29,88.01,0.06,3.40,0.06
+FDA-ARGOS,minimizer,xor-pcg-hash,4.88,0.05,6.15,0.08,1.27,0.05,10.44,0.004,87.77,0.01,3.07,0.03
+FDA-ARGOS,minimizer,GreedyMini,4.10,0.16,5.17,0.21,1.07,0.07,7.69,0.001,87.39,0.002,3.66,0.13
+FDA-ARGOS,mod-minimizer,xor,4.52,0.22,5.57,0.23,1.05,0.05,7.19,0.05,87.25,0.03,3.32,0.15
+FDA-ARGOS,mod-minimizer,GreedyMini,4.22,0.04,5.25,0.08,1.03,0.06,7.12,0.005,87.08,0.01,3.55,0.03
