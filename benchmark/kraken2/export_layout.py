@@ -377,6 +377,8 @@ PROFILE_METRICS = [
     ("lookup_s", CAT_PROFILE, "lookup phase (GetBatch), sum of per-thread seconds", "lower", "lookup_s"),
     ("resolve_s", CAT_PROFILE, "resolve phase (token replay + ResolveTree), sum of per-thread seconds", "lower", "resolve_s"),
     ("scan_pct_of_phases", CAT_PROFILE, "scan phase as % of scan + lookup + resolve: the share of the processing spent computing the selected k-mers", "lower", "scan_pct"),
+    ("lookup_pct_of_phases", CAT_PROFILE, "lookup phase as % of scan + lookup + resolve: the share of the processing spent looking up the selected k-mers", None, "lookup_pct"),
+    ("resolve_pct_of_phases", CAT_PROFILE, "resolve phase as % of scan + lookup + resolve: the share of the processing spent resolving the hits", None, "resolve_pct"),
     ("ns_per_lookup", CAT_PROFILE, "lookup phase / lookups (ns per hash-table lookup)", "lower", "ns_per_lookup"),
     ("lookup_miss_pct", CAT_PROFILE, "% of hash-table lookups that found no taxon (a miss probes until an empty cell)", None, "miss_pct"),
     ("dup_key_hits_per_mbp", CAT_PROFILE, "consecutive identical minimizers per Mbp of reads, resolved without a hash lookup (TOK_REPEAT). Neutral: a workload count", None, "repeats_pm"),

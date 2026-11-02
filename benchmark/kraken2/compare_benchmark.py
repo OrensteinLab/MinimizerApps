@@ -604,10 +604,10 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
     cls_pct = 100.0 * n_class / n_reads if (n_reads and n_class is not None) else None
 
     nm = parse_profile_file(profile_path(out, dataset, mhg) or cf) or {}
-    scan_pct = ns_per_lookup = None
+    scan_pct = lookup_pct = resolve_pct = ns_per_lookup = None
     phases = [nm.get(k) for k in ("scan_s", "lookup_s", "resolve_s")]
     if all(v is not None for v in phases) and sum(phases) > 0:
-        scan_pct = 100.0 * phases[0] / sum(phases)
+        scan_pct, lookup_pct, resolve_pct = (100.0 * v / sum(phases) for v in phases)
     if nm.get("lookup_s") is not None and nm.get("lookups"):
         ns_per_lookup = 1e9 * nm["lookup_s"] / nm["lookups"]
 
@@ -669,6 +669,8 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "lookup_frac": nm.get("lookup_frac_pct"),
         "miss_pct": nm.get("lookup_miss_pct"),
         "scan_pct": scan_pct,
+        "lookup_pct": lookup_pct,
+        "resolve_pct": resolve_pct,
         "ns_per_lookup": ns_per_lookup,
         "mape_g": mape_g,
         "mape_s": mape_s,

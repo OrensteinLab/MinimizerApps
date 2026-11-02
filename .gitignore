@@ -7,3 +7,6 @@ __pycache__/
 
 # Profiling builds (benchmark/*/experiments/profile_run.sh)
 build-prof/
+
+# Figures written by paper-export/make_figures.py (default --out)
+paper-export/figures/

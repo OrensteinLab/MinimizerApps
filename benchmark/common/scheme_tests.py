@@ -10,7 +10,7 @@ variant, plus xor and xor-pcg-hash -- with
     its baseline is xor), and
   * xor, the random-order control (so a gain is not just "any non-default scheme");
 using Welch's t-test on log times over the seeds/repeats of each scheme (ratio = ratio of geometric
-means, 90% CI, p, Holm-adjusted over the candidates of a block, TOST equivalence at +-5%: the scheme
+means, 90% CI, p, Bonferroni-adjusted over the candidates of a block, TOST equivalence at +-5%: the scheme
 is "equivalent" iff the 90% CI of the ratio lies in [1/1.05, 1.05]). Groups need >= 2 runs; blocks
 with fewer are reported with n and no test. No scipy (common/stats_util.py).
 
@@ -19,7 +19,7 @@ n columns, and prefer the CPU-time rows to settle whether a wall-time difference
 work (both differ) or load/cache (only wall time differs). --exclude-cold-gb G drops runs whose
 step read more than G GB from disk (all four apps record it per step), a sensitivity check for the
 page-cache confound; only the affected step of a run is dropped. Zero or missing times are skipped.
-TOST equivalence is a separate test per comparison and is not Holm-adjusted.
+TOST equivalence is a separate test per comparison and is not adjusted.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from stats_util import holm, t_quantile, welch  # noqa: E402
+from stats_util import bonferroni, t_quantile, welch  # noqa: E402
 
 TOST_MARGIN = 1.05
 CANDIDATE_PREFIXES = ("greedymini", "mod-minimizer")
@@ -176,10 +176,10 @@ def compare(a, b):
     return math.exp(d), lo, hi, p
 
 
-def verdict(ratio, lo, hi, p_holm):
+def verdict(ratio, lo, hi, p_bonferroni):
     if lo >= 1 / TOST_MARGIN and hi <= TOST_MARGIN:
         return "equivalent (+-5%)"
-    if p_holm < 0.05:
+    if p_bonferroni < 0.05:
         return "faster" if ratio < 1 else "slower"
     return "not different"
 
@@ -217,16 +217,16 @@ def run(app, results, exclude_cold_gb, loaded=None):
                 else:
                     res.append((l, None, None, None, None))
             tested = [x for x in res if x[1] is not None]
-            adj = dict(zip([x[0] for x in tested], holm([x[4] for x in tested]))) if tested else {}
+            adj = dict(zip([x[0] for x in tested], bonferroni([x[4] for x in tested]))) if tested else {}
             for l, ratio, lo, hi, p in res:
                 row = {"app": app, "context": "/".join(ctx), "metric": metric, "scheme": l, "vs": ref,
                        "n_scheme": len(groups[(ctx, metric, l)]), "n_vs": len(groups[(ctx, metric, ref)])}
                 if ratio is None:
-                    row.update(ratio="", ci90_lo="", ci90_hi="", p="", p_holm="", verdict="n<2 (no test)")
+                    row.update(ratio="", ci90_lo="", ci90_hi="", p="", p_bonferroni="", verdict="n<2 (no test)")
                 else:
                     ph = adj[l]
                     row.update(ratio=round(ratio, 4), ci90_lo=round(lo, 4), ci90_hi=round(hi, 4), p=round(p, 6),
-                               p_holm=round(ph, 6), verdict=verdict(ratio, lo, hi, ph))
+                               p_bonferroni=round(ph, 6), verdict=verdict(ratio, lo, hi, ph))
                 out.append(row)
     return out, baseline
 
@@ -255,7 +255,7 @@ def main(argv=None):
     out, baseline = run(a.app, a.results_dir, a.exclude_cold_gb)
     dest = a.out or a.results_dir / "csvs" / ("scheme_tests_%s.csv" % a.app)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cols = ["app", "context", "metric", "scheme", "vs", "n_scheme", "n_vs", "ratio", "ci90_lo", "ci90_hi", "p", "p_holm", "verdict"]
+    cols = ["app", "context", "metric", "scheme", "vs", "n_scheme", "n_vs", "ratio", "ci90_lo", "ci90_hi", "p", "p_bonferroni", "verdict"]
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
