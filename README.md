@@ -1,21 +1,22 @@
 # MinimizerApps
 
-High-throughput sequencing methods such as Kraken2 (taxonomic classification),
-Minimap2 (read mapping), KMC3 (k-mer counting) and SSHash (k-mer indexing)
-sample k-mers with minimizers or mod-minimizers to reduce their runtime and
-memory usage. These sketching schemes depend on a k-mer order. Low-density
-orders such as GreedyMini produce smaller sketches, yet almost all methods rely
-on pseudo-random orders. Moreover, sketching schemes and their orders are
-defined on single-stranded sequences, while these methods run on double-stranded
-data and need canonical schemes.
+High-throughput sequencing analysis methods such as Kraken2 (taxonomic
+classification), Minimap2 (read mapping), KMC3 (k-mer counting) and SSHash
+(k-mer indexing) sample k-mers with minimizers or mod-minimizers, which depend
+on k-mer orders, to reduce their runtime and space usage (memory and storage).
+Recent tools such as GreedyMini produce k-mer orders that lead to smaller
+sketches, yet almost all of these methods rely on random orders, which produce
+much larger sketches. Moreover, selection schemes and their orders are defined
+on single-stranded DNA sequences, while these methods are applied to
+double-stranded DNA and thus require canonical selection schemes and orders.
 
-This repository closes both gaps. It provides canonical variants of GreedyMini
-and of the mod-minimizer, integrates them into the four methods, and benchmarks
-the methods end to end. The canonical variants give smaller sketches than
-pseudo-random minimizers. As a result, they reduce the runtime of every
-evaluated method, and reduce memory and disk usage in proportion with the
-sketch size. In Kraken2 and Minimap2, whose output depends on the sampled
-k-mers, accuracy changes only negligibly.
+This repository bridges both gaps. It provides canonical variants of GreedyMini
+and of the mod-minimizer, integrates them into the four methods, and evaluates
+the methods end to end. The canonical variants produce sketches up to 32%
+smaller than those of random minimizers, which led to reductions of up to 36%
+in runtime and to reductions in space usage that follow the sketch size. In
+Kraken2 and Minimap2, whose outputs depend on the sampled k-mers, accuracy was
+negligibly affected, and KMC3 and SSHash produced identical outputs.
 
 The schemes in each method:
 
@@ -37,6 +38,8 @@ scheme code and the benchmark harnesses.
 | `common/minimizer-schemes/` | The scheme code shared by all four methods: the GreedyMini tables, the PCG scramble and the mod-minimizer rule with its tie handling | [`common/minimizer-schemes/README.md`](common/minimizer-schemes/README.md) |
 | `benchmark/` | The shared measurement protocol, the full run of all four methods (`full_run_all.sh`), the exporters and the analyses | [`benchmark/README.md`](benchmark/README.md) |
 | `benchmark/<method>/` | Each method's harness: data, setup (`.env`), sweeps, outputs | [`kraken2`](benchmark/kraken2/README.md), [`kmc`](benchmark/kmc/README.md), [`sshash`](benchmark/sshash/README.md), [`minimap2`](benchmark/minimap2/README.md) |
+| `paper-export/` | The scripts that compute the paper's results tables, statistics and figures from the result sets, and draw the figures of its methods | [`paper-export/README.md`](paper-export/README.md) |
+| `supplementary_tables/` | The paper's supplementary tables, as CSV files | [`supplementary_tables/README.md`](supplementary_tables/README.md) |
 | `UPSTREAMS.md` | How each fork tracks and re-pulls its upstream | [`UPSTREAMS.md`](UPSTREAMS.md) |
 
 ## Getting started
@@ -59,6 +62,7 @@ its data and how to run it.
 - **The measurement protocol, the full benchmark run and the workbook columns:** [`benchmark/README.md`](benchmark/README.md).
 - **The analyses:** also in [`benchmark/README.md`](benchmark/README.md): significance tests of scheme differences, how closely each metric follows the density, the profiling runs, and the run-to-run stability of two result sets.
 - **Running one method's benchmark, its datasets and its outputs:** `benchmark/<method>/README.md`.
+- **The paper's tables, statistics and figures, and how to regenerate them:** [`paper-export/README.md`](paper-export/README.md).
 
 ## License
 

@@ -1,0 +1,6 @@
+metric,"r, all datasets",paired runs,"r, F. vesca","r, G. gallus","r, M. balbisiana","r, H. sapiens 2","r, H. sapiens 3"
+total wall time,-0.01,75,-0.65,-0.10,+0.39,-0.04,+0.09
+stage 1 time,-0.10,75,-0.83,-0.12,+0.30,-0.01,-0.11
+stage 2 time,+0.25,75,+0.29,+0.04,+0.63,-0.11,+0.52
+temporary disk,+1.00,75,+1.00,+1.00,+1.00,+1.00,+1.00
+peak memory,+0.39,75,-0.09,+0.84,+0.52,+0.76,+0.93

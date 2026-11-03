@@ -1,6 +1,6 @@
 // Test driver (not built by `make all`): runs one sketch over a sequence read
 // from stdin and prints each emitted minimizer's raw end position, one per
-// line. validate_mod_minimizer.py compares this against a brute-force
+// line. benchmark/minimap2/tests/test_mod_minimizer_sketch.py compares this against a brute-force
 // reference, so the check covers the compiled scheme.cpp, not a port of it.
 //
 // Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq.txt

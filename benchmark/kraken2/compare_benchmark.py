@@ -56,6 +56,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
 import units  # noqa: E402
 from xlsx_util import load_table  # noqa: E402
 import export_layout  # noqa: E402
+import expected_density  # noqa: E402
 
 
 DATASET_ORDER = {
@@ -604,10 +605,10 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
     cls_pct = 100.0 * n_class / n_reads if (n_reads and n_class is not None) else None
 
     nm = parse_profile_file(profile_path(out, dataset, mhg) or cf) or {}
-    scan_pct = ns_per_lookup = None
+    scan_pct = lookup_pct = resolve_pct = ns_per_lookup = None
     phases = [nm.get(k) for k in ("scan_s", "lookup_s", "resolve_s")]
     if all(v is not None for v in phases) and sum(phases) > 0:
-        scan_pct = 100.0 * phases[0] / sum(phases)
+        scan_pct, lookup_pct, resolve_pct = (100.0 * v / sum(phases) for v in phases)
     if nm.get("lookup_s") is not None and nm.get("lookups"):
         ns_per_lookup = 1e9 * nm["lookup_s"] / nm["lookups"]
 
@@ -669,6 +670,8 @@ def collect_run_metrics(run, min_abund, ref_by_seed, dataset, mhg):
         "lookup_frac": nm.get("lookup_frac_pct"),
         "miss_pct": nm.get("lookup_miss_pct"),
         "scan_pct": scan_pct,
+        "lookup_pct": lookup_pct,
+        "resolve_pct": resolve_pct,
         "ns_per_lookup": ns_per_lookup,
         "mape_g": mape_g,
         "mape_s": mape_s,
@@ -761,25 +764,29 @@ def load_density_rows(run_dir):
         if not os.path.isfile(path):
             continue
         with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                scheme = _scheme_base((row.get("scheme") or "").strip())
-                if not scheme:
+            raw = list(csv.DictReader(f))
+        lay = export_layout.resolve_layout(run_dir)
+        if lay:  # the expected density counted by expected_density.py, not the microbenchmark's
+            raw = expected_density.with_expected(raw, lay["results"])
+        for row in raw:
+            scheme = _scheme_base((row.get("scheme") or "").strip())
+            if not scheme:
+                continue
+            rec = {"scheme": scheme}
+            if "L" not in row and "l" in row:      # legacy header: l = minimizer length, k = k-mer length
+                row = {({"l": "k", "k": "L"}.get(k0, k0)): v0 for k0, v0 in row.items()}
+            for k, v in row.items():
+                if k in ("scheme", "toggle_hex", "variant", "context") or v in (None, ""):
                     continue
-                rec = {"scheme": scheme}
-                if "L" not in row and "l" in row:      # legacy header: l = minimizer length, k = k-mer length
-                    row = {({"l": "k", "k": "L"}.get(k0, k0)): v0 for k0, v0 in row.items()}
-                for k, v in row.items():
-                    if k in ("scheme", "toggle_hex", "variant", "context") or v in (None, ""):
-                        continue
-                    if k in scheme_names.ID_FIELDS:   # gm_k, projection, gm_table, mod_t
-                        rec[k] = int(v) if k in ("gm_k", "mod_t") else v
-                        continue
-                    try:
-                        rec[k] = int(v) if k == "seed_idx" else float(v)
-                    except ValueError:
-                        pass
-                if "fac_expected" in rec or "fac_particular" in rec:
-                    rows.append(rec)
+                if k in scheme_names.ID_FIELDS:   # gm_k, projection, gm_table, mod_t
+                    rec[k] = int(v) if k in ("gm_k", "mod_t") else v
+                    continue
+                try:
+                    rec[k] = int(v) if k == "seed_idx" else float(v)
+                except ValueError:
+                    pass
+            if "fac_expected" in rec or "fac_particular" in rec:
+                rows.append(rec)
         if rows:
             break
     have = set(r["scheme"] for r in rows)

@@ -64,6 +64,22 @@ SPEC = {
 # runs csv -> the rows of it that are paired (all rows when absent)
 ROWS = {"minimap2_runs.csv": lambda rows: [r for r, f in zip(rows, minimap2_fixed_block(rows)[0]) if f]}
 
+# The runs the paper does not report, left out of the correlations here and of the tests of significance.py: the
+# GreedyMini-based schemes with the polarity at1-cg0 (the paper reports at0-cg1, chosen arbitrarily; the two are compared
+# in its supplementary table polarity_comparison), KMC3's GreedyMini with the DNA-alphabet table, SSHash's GreedyMini
+# orders on 13-mers, and Kraken2's classification at minimum hit groups 0.
+UNREPORTED_PROJECTION = "at1-cg0"
+SKIP = {
+    "kraken2": lambda r: r.get("minimum_hit_groups") not in (None, "", "2"),
+    "kmc": lambda r: r.get("gm_lut") == "dna",
+    "sshash": lambda r: r.get("gm_k") == "13",
+}
+
+
+def unreported(r, app):
+    """Whether the paper does not report the run r of app (SKIP)."""
+    return r.get("projection") == UNREPORTED_PROJECTION or SKIP.get(app, lambda _r: False)(r)
+
 
 def num(v):
     try:
@@ -100,7 +116,7 @@ def points(results, app):
             continue
         with open(path, newline="") as f:
             rows = list(csv.DictReader(f))
-        rows = ROWS.get(fname, list)(rows)
+        rows = [r for r in ROWS.get(fname, list)(rows) if not unreported(r, app)]
         base = defaultdict(list)   # the default's runs of a setting and seed
         for r in rows:
             if r.get("scheme") == dflt:

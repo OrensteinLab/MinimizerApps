@@ -86,7 +86,7 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   its low k bits into Gamma (as kraken2's and sshash's greedymini seeds).
   `-k - gm_k` must be
   even and `-k <= 23` (the packed value must stay below UINT64_MAX).
-  `validate_greedymini.py` checks the compiled rank and sketch against two
+  `benchmark/minimap2/tests/test_greedymini_sketch.py` checks the compiled rank and sketch against two
   independent Python versions.
 - `mod-minimizer-xor` / `mod-minimizer-greedymini` are a strand-symmetric variant of mod-sampling (Groot
   Koerkamp & Pibiri, WABI 2024), with the rule shared with kraken2 and sshash
@@ -107,7 +107,7 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   conditional moves and rescans only when the minimum leaves the window (as
   native `mm_sketch()` does), and emits a selected k-mer when it leaves the
   window (output stays in position order); an index built with the earlier
-  G/T-strand tie rule is refused (rebuild it); `validate_mod_minimizer.py`
+  G/T-strand tie rule is refused (rebuild it); `benchmark/minimap2/tests/test_mod_minimizer_sketch.py`
   checks it, with both orders on t-mers, against a brute force of the definition. A window whose sampled
   k-mer is its own reverse complement (even `-k` only), or spans 256 or more
   bases under `-H`, emits no minimizer; native minimap2 instead skips such a
@@ -119,6 +119,6 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
 ```bash
 make all     # CC compiles the C sources; CXX (g++) compiles scheme.cpp; -lstdc++ added to LIBS
 make test    # builds the sketch_dump test driver, then ./test_scheme.sh -- sanity checks for every scheme,
-             # including validate_mod_minimizer.py (brute force vs. the compiled mod-minimizer sketch)
-             # and validate_greedymini.py
+             # including test_mod_minimizer_sketch.py (brute force vs. the compiled mod-minimizer sketch)
+             # and test_greedymini_sketch.py (both in benchmark/minimap2/tests/)
 ```

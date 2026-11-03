@@ -1,0 +1,124 @@
+method,metric,dataset,k,w,scheme,order,ratio to the default,95% CI of the ratio,p-value (Bonferroni),verdict
+Kraken2,database size,strain-exclusion library,31,5,minimizer,xor-pcg-hash,1.002,"[0.968, 1.037]",1.000,equivalent
+Kraken2,database size,strain-exclusion library,31,5,minimizer,GreedyMini,0.737,"[0.712, 0.763]",<0.001,lower
+Kraken2,database size,strain-exclusion library,31,5,mod-minimizer,xor,0.688,"[0.669, 0.708]",<0.001,lower
+Kraken2,database size,strain-exclusion library,31,5,mod-minimizer,GreedyMini,0.682,"[0.659, 0.706]",<0.001,lower
+Kraken2,build peak memory,strain-exclusion library,31,5,minimizer,xor-pcg-hash,1.002,"[0.970, 1.035]",1.000,equivalent
+Kraken2,build peak memory,strain-exclusion library,31,5,minimizer,GreedyMini,0.750,"[0.726, 0.775]",<0.001,lower
+Kraken2,build peak memory,strain-exclusion library,31,5,mod-minimizer,xor,0.704,"[0.685, 0.723]",<0.001,lower
+Kraken2,build peak memory,strain-exclusion library,31,5,mod-minimizer,GreedyMini,0.698,"[0.675, 0.721]",<0.001,lower
+Kraken2,classification peak memory,strain-exclusion,31,5,minimizer,xor-pcg-hash,1.002,"[0.969, 1.036]",1.000,equivalent
+Kraken2,classification peak memory,strain-exclusion,31,5,minimizer,GreedyMini,0.738,"[0.713, 0.764]",<0.001,lower
+Kraken2,classification peak memory,strain-exclusion,31,5,mod-minimizer,xor,0.689,"[0.670, 0.709]",<0.001,lower
+Kraken2,classification peak memory,strain-exclusion,31,5,mod-minimizer,GreedyMini,0.683,"[0.660, 0.707]",<0.001,lower
+Kraken2,classification peak memory,CAMI II,31,5,minimizer,xor-pcg-hash,1.002,"[0.969, 1.035]",1.000,equivalent
+Kraken2,classification peak memory,CAMI II,31,5,minimizer,GreedyMini,0.747,"[0.722, 0.772]",<0.001,lower
+Kraken2,classification peak memory,CAMI II,31,5,mod-minimizer,xor,0.697,"[0.678, 0.717]",<0.001,lower
+Kraken2,classification peak memory,CAMI II,31,5,mod-minimizer,GreedyMini,0.691,"[0.667, 0.715]",<0.001,lower
+Kraken2,classification peak memory,FDA-ARGOS,31,5,minimizer,xor-pcg-hash,1.002,"[0.969, 1.037]",1.000,equivalent
+Kraken2,classification peak memory,FDA-ARGOS,31,5,minimizer,GreedyMini,0.739,"[0.714, 0.764]",<0.001,lower
+Kraken2,classification peak memory,FDA-ARGOS,31,5,mod-minimizer,xor,0.690,"[0.671, 0.710]",<0.001,lower
+Kraken2,classification peak memory,FDA-ARGOS,31,5,mod-minimizer,GreedyMini,0.684,"[0.661, 0.708]",<0.001,lower
+Minimap2,index size,CHM13 chrX,19,10,minimizer,xor,0.986,"[0.970, 1.003]",0.417,equivalent
+Minimap2,index size,CHM13 chrX,19,10,minimizer,xor-pcg-hash,1.001,"[1.000, 1.001]",0.027,higher
+Minimap2,index size,CHM13 chrX,19,10,minimizer,GreedyMini,0.827,"[0.827, 0.827]",<0.001,lower
+Minimap2,index size,CHM13 chrX,19,10,mod-minimizer,xor,0.832,"[0.824, 0.841]",<0.001,lower
+Minimap2,index size,CHM13 chrX,19,10,mod-minimizer,GreedyMini,0.786,"[0.786, 0.786]",<0.001,lower
+Minimap2,index size,GRCh38,19,10,minimizer,xor,0.987,"[0.972, 1.002]",0.338,equivalent
+Minimap2,index size,GRCh38,19,10,minimizer,xor-pcg-hash,1.001,"[1.000, 1.002]",0.236,equivalent
+Minimap2,index size,GRCh38,19,10,minimizer,GreedyMini,0.819,"[0.819, 0.819]",<0.001,lower
+Minimap2,index size,GRCh38,19,10,mod-minimizer,xor,0.824,"[0.817, 0.831]",<0.001,lower
+Minimap2,index size,GRCh38,19,10,mod-minimizer,GreedyMini,0.779,"[0.779, 0.779]",<0.001,lower
+Minimap2,index size,ONT reads on GRCh38,15,10,minimizer,xor,0.971,"[0.932, 1.012]",0.484,inconclusive
+Minimap2,index size,ONT reads on GRCh38,15,10,minimizer,xor-pcg-hash,0.976,"[0.975, 0.977]",<0.001,lower
+Minimap2,index size,ONT reads on GRCh38,15,10,minimizer,GreedyMini,0.772,"[0.772, 0.772]",<0.001,lower
+Minimap2,index size,ONT reads on GRCh38,15,10,mod-minimizer,xor,0.806,"[0.778, 0.835]",<0.001,lower
+Minimap2,mapping peak memory,CHM13 chrX,19,10,minimizer,xor,0.906,"[0.875, 0.939]",0.008,lower
+Minimap2,mapping peak memory,CHM13 chrX,19,10,minimizer,xor-pcg-hash,0.908,"[0.832, 0.992]",0.192,inconclusive
+Minimap2,mapping peak memory,CHM13 chrX,19,10,minimizer,GreedyMini,0.855,"[0.852, 0.858]",<0.001,lower
+Minimap2,mapping peak memory,CHM13 chrX,19,10,mod-minimizer,xor,0.921,"[0.859, 0.988]",0.154,inconclusive
+Minimap2,mapping peak memory,CHM13 chrX,19,10,mod-minimizer,GreedyMini,0.916,"[0.861, 0.975]",0.086,inconclusive
+Minimap2,mapping peak memory,GRCh38,19,10,minimizer,xor,0.989,"[0.975, 1.003]",0.469,equivalent
+Minimap2,mapping peak memory,GRCh38,19,10,minimizer,xor-pcg-hash,0.990,"[0.961, 1.019]",1.000,equivalent
+Minimap2,mapping peak memory,GRCh38,19,10,minimizer,GreedyMini,0.896,"[0.890, 0.903]",<0.001,lower
+Minimap2,mapping peak memory,GRCh38,19,10,mod-minimizer,xor,0.934,"[0.912, 0.957]",0.007,lower
+Minimap2,mapping peak memory,GRCh38,19,10,mod-minimizer,GreedyMini,0.821,"[0.808, 0.834]",<0.001,lower
+Minimap2,mapping peak memory,ONT reads on GRCh38,15,10,minimizer,xor,1.032,"[0.925, 1.152]",1.000,inconclusive
+Minimap2,mapping peak memory,ONT reads on GRCh38,15,10,minimizer,xor-pcg-hash,1.001,"[0.971, 1.032]",1.000,equivalent
+Minimap2,mapping peak memory,ONT reads on GRCh38,15,10,minimizer,GreedyMini,0.878,"[0.859, 0.897]",<0.001,lower
+Minimap2,mapping peak memory,ONT reads on GRCh38,15,10,mod-minimizer,xor,0.937,"[0.915, 0.959]",0.006,lower
+KMC3,temporary disk,F. vesca,9,20,minimizer,xor,1.057,"[1.021, 1.094]",0.034,higher
+KMC3,temporary disk,F. vesca,9,20,minimizer,xor-pcg-hash,1.021,"[1.018, 1.023]",<0.001,higher
+KMC3,temporary disk,F. vesca,9,20,minimizer,GreedyMini,0.924,"[0.923, 0.924]",<0.001,lower
+KMC3,temporary disk,G. gallus,9,20,minimizer,xor,1.060,"[1.023, 1.098]",0.031,higher
+KMC3,temporary disk,G. gallus,9,20,minimizer,xor-pcg-hash,1.028,"[1.025, 1.030]",<0.001,higher
+KMC3,temporary disk,G. gallus,9,20,minimizer,GreedyMini,0.936,"[0.935, 0.937]",<0.001,lower
+KMC3,temporary disk,M. balbisiana,9,20,minimizer,xor,1.048,"[1.019, 1.078]",0.028,higher
+KMC3,temporary disk,M. balbisiana,9,20,minimizer,xor-pcg-hash,1.018,"[1.017, 1.020]",<0.001,higher
+KMC3,temporary disk,M. balbisiana,9,20,minimizer,GreedyMini,0.927,"[0.926, 0.927]",<0.001,lower
+KMC3,temporary disk,H. sapiens 2,9,20,minimizer,xor,1.050,"[1.010, 1.091]",0.077,inconclusive
+KMC3,temporary disk,H. sapiens 2,9,20,minimizer,xor-pcg-hash,1.014,"[1.012, 1.016]",<0.001,higher
+KMC3,temporary disk,H. sapiens 2,9,20,minimizer,GreedyMini,0.921,"[0.921, 0.922]",<0.001,lower
+KMC3,temporary disk,H. sapiens 3,9,20,minimizer,xor,1.050,"[1.008, 1.093]",0.086,inconclusive
+KMC3,temporary disk,H. sapiens 3,9,20,minimizer,xor-pcg-hash,1.012,"[1.011, 1.014]",<0.001,higher
+KMC3,temporary disk,H. sapiens 3,9,20,minimizer,GreedyMini,0.920,"[0.920, 0.920]",<0.001,lower
+SSHash,index size (bits per L-mer),cod,21,11,minimizer,xor,1.096,"[1.090, 1.102]",<0.001,higher
+SSHash,index size (bits per L-mer),cod,21,11,minimizer,xor-pcg-hash,1.002,"[0.998, 1.006]",1.000,equivalent
+SSHash,index size (bits per L-mer),cod,21,11,minimizer,GreedyMini,0.842,"[0.839, 0.846]",<0.001,lower
+SSHash,index size (bits per L-mer),cod,21,11,mod-minimizer,xor,0.860,"[0.845, 0.876]",<0.001,lower
+SSHash,index size (bits per L-mer),cod,21,11,mod-minimizer,GreedyMini,0.817,"[0.814, 0.820]",<0.001,lower
+SSHash,index size (bits per L-mer),kestrel,21,11,minimizer,xor,1.118,"[1.112, 1.124]",<0.001,higher
+SSHash,index size (bits per L-mer),kestrel,21,11,minimizer,xor-pcg-hash,1.002,"[0.997, 1.006]",1.000,equivalent
+SSHash,index size (bits per L-mer),kestrel,21,11,minimizer,GreedyMini,0.834,"[0.830, 0.838]",<0.001,lower
+SSHash,index size (bits per L-mer),kestrel,21,11,mod-minimizer,xor,0.848,"[0.830, 0.866]",<0.001,lower
+SSHash,index size (bits per L-mer),kestrel,21,11,mod-minimizer,GreedyMini,0.807,"[0.803, 0.811]",<0.001,lower
+SSHash,index size (bits per L-mer),human,21,11,minimizer,xor,1.113,"[1.108, 1.118]",<0.001,higher
+SSHash,index size (bits per L-mer),human,21,11,minimizer,xor-pcg-hash,1.001,"[0.997, 1.006]",1.000,equivalent
+SSHash,index size (bits per L-mer),human,21,11,minimizer,GreedyMini,0.848,"[0.844, 0.852]",<0.001,lower
+SSHash,index size (bits per L-mer),human,21,11,mod-minimizer,xor,0.860,"[0.840, 0.880]",<0.001,lower
+SSHash,index size (bits per L-mer),human,21,11,mod-minimizer,GreedyMini,0.822,"[0.818, 0.825]",<0.001,lower
+SSHash,index size (bits per L-mer),NCBI viruses,21,11,minimizer,xor,1.086,"[1.082, 1.090]",<0.001,higher
+SSHash,index size (bits per L-mer),NCBI viruses,21,11,minimizer,xor-pcg-hash,1.001,"[0.997, 1.004]",1.000,equivalent
+SSHash,index size (bits per L-mer),NCBI viruses,21,11,minimizer,GreedyMini,0.848,"[0.845, 0.851]",<0.001,lower
+SSHash,index size (bits per L-mer),NCBI viruses,21,11,mod-minimizer,xor,0.859,"[0.844, 0.874]",<0.001,lower
+SSHash,index size (bits per L-mer),NCBI viruses,21,11,mod-minimizer,GreedyMini,0.821,"[0.818, 0.824]",<0.001,lower
+SSHash,index size (bits per L-mer),S. enterica,21,11,minimizer,xor,1.098,"[1.095, 1.101]",<0.001,higher
+SSHash,index size (bits per L-mer),S. enterica,21,11,minimizer,xor-pcg-hash,1.001,"[0.999, 1.003]",1.000,equivalent
+SSHash,index size (bits per L-mer),S. enterica,21,11,minimizer,GreedyMini,0.868,"[0.866, 0.870]",<0.001,lower
+SSHash,index size (bits per L-mer),S. enterica,21,11,mod-minimizer,xor,0.881,"[0.870, 0.892]",<0.001,lower
+SSHash,index size (bits per L-mer),S. enterica,21,11,mod-minimizer,GreedyMini,0.845,"[0.843, 0.848]",<0.001,lower
+SSHash,index size (bits per L-mer),HPRC,21,11,minimizer,xor,1.120,"[1.115, 1.124]",<0.001,higher
+SSHash,index size (bits per L-mer),HPRC,21,11,minimizer,xor-pcg-hash,1.002,"[0.998, 1.005]",1.000,equivalent
+SSHash,index size (bits per L-mer),HPRC,21,11,minimizer,GreedyMini,0.872,"[0.869, 0.876]",<0.001,lower
+SSHash,index size (bits per L-mer),HPRC,21,11,mod-minimizer,xor,0.882,"[0.865, 0.900]",<0.001,lower
+SSHash,index size (bits per L-mer),HPRC,21,11,mod-minimizer,GreedyMini,0.848,"[0.845, 0.851]",<0.001,lower
+SSHash,build peak memory,cod,21,11,minimizer,xor,1.137,"[1.122, 1.152]",<0.001,higher
+SSHash,build peak memory,cod,21,11,minimizer,xor-pcg-hash,1.002,"[0.996, 1.007]",1.000,equivalent
+SSHash,build peak memory,cod,21,11,minimizer,GreedyMini,0.780,"[0.770, 0.790]",<0.001,lower
+SSHash,build peak memory,cod,21,11,mod-minimizer,xor,0.808,"[0.783, 0.833]",<0.001,lower
+SSHash,build peak memory,cod,21,11,mod-minimizer,GreedyMini,0.749,"[0.740, 0.758]",<0.001,lower
+SSHash,build peak memory,kestrel,21,11,minimizer,xor,1.072,"[1.063, 1.081]",<0.001,higher
+SSHash,build peak memory,kestrel,21,11,minimizer,xor-pcg-hash,1.003,"[0.994, 1.012]",1.000,equivalent
+SSHash,build peak memory,kestrel,21,11,minimizer,GreedyMini,0.778,"[0.771, 0.786]",<0.001,lower
+SSHash,build peak memory,kestrel,21,11,mod-minimizer,xor,0.798,"[0.773, 0.823]",<0.001,lower
+SSHash,build peak memory,kestrel,21,11,mod-minimizer,GreedyMini,0.769,"[0.761, 0.776]",<0.001,lower
+SSHash,build peak memory,human,21,11,minimizer,xor,1.092,"[1.087, 1.097]",<0.001,higher
+SSHash,build peak memory,human,21,11,minimizer,xor-pcg-hash,1.000,"[0.996, 1.005]",1.000,equivalent
+SSHash,build peak memory,human,21,11,minimizer,GreedyMini,0.864,"[0.861, 0.868]",<0.001,lower
+SSHash,build peak memory,human,21,11,mod-minimizer,xor,0.876,"[0.859, 0.893]",<0.001,lower
+SSHash,build peak memory,human,21,11,mod-minimizer,GreedyMini,0.847,"[0.843, 0.851]",<0.001,lower
+SSHash,build peak memory,NCBI viruses,21,11,minimizer,xor,1.112,"[1.102, 1.122]",<0.001,higher
+SSHash,build peak memory,NCBI viruses,21,11,minimizer,xor-pcg-hash,0.996,"[0.984, 1.009]",1.000,equivalent
+SSHash,build peak memory,NCBI viruses,21,11,minimizer,GreedyMini,0.931,"[0.925, 0.938]",<0.001,lower
+SSHash,build peak memory,NCBI viruses,21,11,mod-minimizer,xor,0.916,"[0.845, 0.994]",0.202,inconclusive
+SSHash,build peak memory,NCBI viruses,21,11,mod-minimizer,GreedyMini,0.886,"[0.878, 0.893]",<0.001,lower
+SSHash,build peak memory,S. enterica,21,11,minimizer,xor,1.104,"[1.098, 1.109]",<0.001,higher
+SSHash,build peak memory,S. enterica,21,11,minimizer,xor-pcg-hash,0.998,"[0.992, 1.005]",1.000,equivalent
+SSHash,build peak memory,S. enterica,21,11,minimizer,GreedyMini,0.805,"[0.803, 0.807]",<0.001,lower
+SSHash,build peak memory,S. enterica,21,11,mod-minimizer,xor,0.823,"[0.808, 0.840]",<0.001,lower
+SSHash,build peak memory,S. enterica,21,11,mod-minimizer,GreedyMini,0.776,"[0.773, 0.778]",<0.001,lower
+SSHash,build peak memory,HPRC,21,11,minimizer,xor,1.160,"[1.152, 1.169]",<0.001,higher
+SSHash,build peak memory,HPRC,21,11,minimizer,xor-pcg-hash,1.003,"[0.998, 1.008]",1.000,equivalent
+SSHash,build peak memory,HPRC,21,11,minimizer,GreedyMini,0.842,"[0.836, 0.847]",<0.001,lower
+SSHash,build peak memory,HPRC,21,11,mod-minimizer,xor,0.859,"[0.835, 0.883]",<0.001,lower
+SSHash,build peak memory,HPRC,21,11,mod-minimizer,GreedyMini,0.804,"[0.800, 0.809]",<0.001,lower

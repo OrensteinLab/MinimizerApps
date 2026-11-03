@@ -9,7 +9,7 @@ writes analysis_*.csv tables into <results-dir>/csvs.
   read (chaining input), reference occurrences before filtering, thread-local
   memory per read.
 - timing: per (dataset, cap, scheme), total sample time per replicate; ratio to
-  native; Welch t-test on log totals (Holm over the schemes of a block); 90% CI
+  native; Welch t-test on log totals (Bonferroni over the schemes of a block); 90% CI
   of the ratio and TOST equivalence at +-5% (equivalent iff the 90% CI lies in
   [0.95, 1/0.95]); paired per-read median log2 ratio with a bootstrap CI.
 - per-read mechanism: within each scheme, Pearson r between log anchors and log
@@ -22,7 +22,7 @@ writes analysis_*.csv tables into <results-dir>/csvs.
   pooled as n * n_seeds pairs); mean(d), SE = sd(d) / sqrt(n), its 90% CI
   (t, df = n - 1) and TOST at +-0.1 percentage point (equivalent iff that CI
   lies inside [-0.001, 0.001]); p from the paired t-test on d over reads, or
-  the exact McNemar test for a single-run (seed-independent) scheme; Holm over
+  the exact McNemar test for a single-run (seed-independent) scheme; Bonferroni over
   the schemes of each (dataset, cap, subset) block. Datasets without truth
   (D3, real reads) have no accuracy rows.
 """
@@ -69,7 +69,7 @@ TIME_MARGIN = 0.05
 ACC_MARGIN = 0.001
 
 
-from stats_util import holm, t_quantile, t_two_sided_p, welch  # noqa: E402,F401  (shared, scipy-free)
+from stats_util import bonferroni, t_quantile, t_two_sided_p, welch  # noqa: E402,F401  (shared, scipy-free)
 
 
 # -- helpers --
@@ -185,8 +185,8 @@ def timing(adir: Path, ds: str, rng: random.Random) -> tuple[list[dict], list[di
                     })
             block.append(row)
         tested = [r for r in block if "welch_p" in r]
-        for r, adj in zip(tested, holm([r["welch_p"] for r in tested])):
-            r["welch_p_holm"] = round(adj, 6)
+        for r, adj in zip(tested, bonferroni([r["welch_p"] for r in tested])):
+            r["welch_p_bonferroni"] = round(adj, 6)
             r["welch_p"] = round(r["welch_p"], 6)
         rows.extend(block)
         # per-read mechanism: log anchors vs log time, within scheme
@@ -228,8 +228,8 @@ def accuracy(results: Path) -> list[dict]:
         })
     for key in {(r["dataset"], r["mid_occ_cap"], r["subset"]) for r in out}:
         block = [r for r in out if (r["dataset"], r["mid_occ_cap"], r["subset"]) == key]
-        for r, adj in zip(block, holm([r["p"] for r in block])):
-            r["p_holm"] = round(adj, 6)
+        for r, adj in zip(block, bonferroni([r["p"] for r in block])):
+            r["p_bonferroni"] = round(adj, 6)
             r["p"] = round(r["p"], 6)
     return sorted(out, key=lambda r: (r["dataset"], r["mid_occ_cap"], r["subset"],
                                       sort_index(r["scheme"]),

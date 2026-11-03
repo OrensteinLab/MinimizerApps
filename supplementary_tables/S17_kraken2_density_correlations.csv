@@ -1,0 +1,7 @@
+metric,"r, all datasets",paired runs,"r, strain-exclusion","r, CAMI II","r, FDA-ARGOS"
+build wall time,+0.87,20,,,
+build peak memory,+1.00,20,,,
+database size,+1.00,20,,,
+classification processing time,+0.69,60,+0.63,+0.85,+0.73
+classification total wall time,-0.06,60,-0.17,+0.88,+0.81
+classification peak memory,+1.00,60,+1.00,+1.00,+1.00

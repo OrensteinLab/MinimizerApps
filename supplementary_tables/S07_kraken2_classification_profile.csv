@@ -1,0 +1,16 @@
+dataset,scheme,order,computing selected k-mers (% of steps) mean,computing selected k-mers (% of steps) std,lookups (% of steps) mean,lookups (% of steps) std,resolving hits (% of steps) mean,resolving hits (% of steps) std,computing selected k-mers (s) mean,computing selected k-mers (s) std,lookups per Mbp mean,lookups per Mbp std,lookup misses (% of lookups) mean,lookup misses (% of lookups) std,time per lookup (ns) mean,time per lookup (ns) std,k-mers outside the UHS (%)
+strain-exclusion,minimizer,xor (default),47.9,0.9,26.5,1.5,25.7,0.9,0.191,0.004,226412,5999,34.4,0.1,46.6,3.3,
+strain-exclusion,minimizer,xor-pcg-hash,53.6,0.9,23.9,1.4,22.6,0.6,0.240,0.003,224791,100,35.0,0.04,47.6,4.2,
+strain-exclusion,minimizer,GreedyMini,53.6,0.6,22.1,1.1,24.2,0.5,0.194,0.003,168573,1,34.5,0.001,47.5,3.6,71.9
+strain-exclusion,mod-minimizer,xor,63.7,0.8,17.1,0.9,19.1,0.3,0.281,0.003,158326,1367,34.4,0.04,47.8,3.5,
+strain-exclusion,mod-minimizer,GreedyMini,61.3,0.8,18.4,1.1,20.3,0.4,0.252,0.002,156592,53,34.7,0.02,48.3,3.7,54.4
+CAMI II,minimizer,xor (default),44.6,0.3,34.1,0.3,21.3,0.3,1.562,0.024,263515,7049,66.4,0.1,60.5,0.5,
+CAMI II,minimizer,xor-pcg-hash,51.3,0.1,30.3,0.1,18.4,0.05,2.003,0.010,262214,10,67.6,0.003,60.2,0.2,
+CAMI II,minimizer,GreedyMini,51.1,0.4,29.1,0.6,19.8,0.3,1.613,0.020,194634,0.2,66.6,0.0004,62.9,1.5,72.2
+CAMI II,mod-minimizer,xor,60.4,0.3,23.4,0.3,16.2,0.2,2.183,0.037,182693,1461,66.7,0.1,61.7,0.8,
+CAMI II,mod-minimizer,GreedyMini,58.2,0.4,24.7,0.4,17.1,0.2,1.990,0.033,180635,38,66.8,0.01,62.3,0.8,57.0
+FDA-ARGOS,minimizer,xor (default),49.0,0.5,25.6,0.2,25.5,0.4,1.602,0.061,263250,6886,37.0,0.03,42.1,0.7,
+FDA-ARGOS,minimizer,xor-pcg-hash,55.3,0.2,22.5,0.2,22.2,0.1,2.053,0.048,262451,23,37.6,0.01,42.1,0.5,
+FDA-ARGOS,minimizer,GreedyMini,54.5,0.3,21.6,0.2,23.9,0.2,1.616,0.017,195171,1,37.1,0.0004,43.4,0.5,72.1
+FDA-ARGOS,mod-minimizer,xor,63.8,0.3,17.1,0.2,19.1,0.1,2.191,0.038,182983,1409,37.1,0.04,42.6,0.2,
+FDA-ARGOS,mod-minimizer,GreedyMini,61.3,0.2,18.3,0.2,20.3,0.3,1.964,0.016,181184,33,37.3,0.009,42.9,0.4,56.4

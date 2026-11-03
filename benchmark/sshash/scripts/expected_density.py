@@ -1,22 +1,19 @@
 """Theoretical expected density_factor for every sshash scheme variant (native,
-xor, xor-pcg-hash, greedymini and mod-minimizer-* per table/projection), via Monte Carlo simulation
-on an i.i.d. uniform-random DNA stream -- not measured on any real dataset.
-Thin adapter over benchmark/common/expected_density_driver.py (loop, mean/std,
-cache, CLI): this file only has sshash's variants and its order hash
-functions (scripts/density.py: sshash's own A=0,C=1,G=3,T=2 packing, native
-approximation and mod-minimizer, so they cannot be the shared ones).
+xor, xor-pcg-hash, greedymini and mod-minimizer-* per table/projection),
+counted on uniformly random DNA by sshash's own minimizer iterators (the sshash
+tool of benchmark/common/expected_density/) -- not measured on any real dataset.
+Thin adapter over benchmark/common/expected_density_driver.py (tool, loop,
+mean/std, cache, CLI): this file only has sshash's variants and their tool options.
 
 xor/xor-pcg-hash/greedymini are seed-dependent, so this reports mean and
 std across the benchmark's predefined seeds (see config.yaml), not a single
-value; native's own seed only changes an internal mixing constant, not its
-statistical behavior as a random order (see density.py:native_hash's
-docstring), but it's still varied across seeds here for a fair
-apples-to-apples comparison.
+value; native's own seed (sshash -s) only changes an internal mixing constant,
+but it's still varied across seeds here, as in the runs.
 
 Feeds the `schemes` xlsx sheet's expected_density_factor_mean/std columns (see
 scripts/export.py); cached to sshash_density_expected_schemes.csv since it's
 independent of any actual benchmark run (a pure function of m/w + the seed
-list) and each simulation costs real Monte Carlo time.
+list) and each count costs real time.
 """
 
 from __future__ import annotations
@@ -25,70 +22,13 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import expected_density_driver as shared
-from density import gm_k_from_table, read_gm_ranks, xor_hash, xor_pcg_hash  # identical across apps
-from scripts.density import (
-    canonical_mmer,
-    gm_centre_valid,
-    greedymini_hash,
-    mod_sampling_runs,
-    native_hash,
-)
+from scripts.density import gm_centre_valid
 import scheme_names as sn
 from scripts.config import gm_table_file
 from scripts.schemes import SCHEMES, expand_variants, mod_t, scheme_dir_name, variant_key
 
-DEFAULT_N_BASES = 300_000
-# the mod-minimizer's Monte Carlo is O(k) per k-mer in pure Python
-DEFAULT_MOD_N_BASES = 60_000
-DEFAULT_SEED = shared.DEFAULT_SEED
+DEFAULT_N_BASES = shared.DEFAULT_N_BASES
 ROUNDING = shared.Rounding(sample=10, avg=8, std=10, single_std=0.0)
-
-
-def _hash_fn(scheme: str, m: int, gm_ranks: list[int] | None, sigma_flip: bool = False):
-    """Return `f(value, seed) -> hash` for `scheme`, hashing a raw
-    (uncanonicalized) m-mer."""
-    if scheme == "native":
-        return native_hash
-    if scheme == "xor":
-        return xor_hash
-    if scheme == "xor-pcg-hash":
-        return xor_pcg_hash
-    assert gm_ranks is not None
-    return lambda value, seed: greedymini_hash(value, m, gm_ranks, seed, sigma_flip)
-
-
-def expected_density_factor(
-    scheme: str,
-    m: int,
-    w: int,
-    *,
-    seed: int,
-    n_bases: int = DEFAULT_N_BASES,
-    gm_ranks: list[int] | None = None,
-    projection: str | None = None,
-    rng_seed: int = DEFAULT_SEED,
-) -> float | None:
-    is_mod = sn.is_mod_minimizer(scheme)
-    if is_mod:
-        n_bases = min(n_bases, DEFAULT_MOD_N_BASES)
-    dna_stream = shared.random_dna(n_bases, rng_seed)
-    sigma_flip = sn.is_greedymini(scheme) and sn.projection_from_flag(projection) == "at1-cg0"
-    if is_mod:
-        k = w + m - 1
-        t = mod_t(scheme, k, m) if scheme == "mod-minimizer-xor" else gm_k_from_table(gm_ranks)
-        if scheme == "mod-minimizer-xor":
-            fn = xor_hash
-        else:
-            assert gm_ranks is not None
-            fn = lambda value, seed: greedymini_hash(value, t, gm_ranks, seed, sigma_flip)  # noqa: E731
-        n_kmers, n_super = mod_sampling_runs(dna_stream, k, m, t, fn, seed)
-        return ROUNDING.factor(n_super, n_kmers, w)
-    if scheme == "greedymini" and gm_ranks is not None and not gm_centre_valid(m, gm_k_from_table(gm_ranks)):
-        return None  # needs m - gm_k even (sshash rejects it too)
-
-    # one hash per canonicalized m-mer position, plain sliding-window argmin
-    keys = shared.canonical_keys(dna_stream, m, _hash_fn(scheme, m, gm_ranks, sigma_flip), canonical_mmer, seed)
-    return shared.window_density(keys, w, ROUNDING)
 
 
 def compute_all_schemes(
@@ -99,33 +39,36 @@ def compute_all_schemes(
     n_bases: int = DEFAULT_N_BASES,
     variants: Iterable[dict] | None = None,
 ) -> list[dict]:
-    """Monte Carlo rows for `variants` (id dicts as scripts.schemes.expand_variants
+    """Expected-density rows for `variants` (id dicts as scripts.schemes.expand_variants
     returns; default: every variant config.yaml registers at k = w + m - 1)."""
     if variants is None:
         variants = expand_variants(SCHEMES, w + m - 1, m)
 
-    def prepare(v):
-        if not sn.is_greedymini(v["scheme"]):
-            return None
-        path = v.get("gm_file")
-        if path is None:
-            path = gm_table_file(v["gm_table"])
-        if not Path(path).is_file():
-            raise shared.Unavailable  # no table: n_seeds 0
-        return read_gm_ranks(Path(path))
+    def options(v):
+        scheme = v["scheme"]
+        opts = {"k": w + m - 1, "m": m, "scheme": scheme}
+        if sn.is_mod_minimizer(scheme):
+            opts["t"] = v.get("mod_t") or mod_t(scheme, w + m - 1, m)
+        if sn.is_greedymini(scheme):
+            path = v.get("gm_file") or gm_table_file(v["gm_table"])
+            if not Path(path).is_file():
+                raise shared.Unavailable  # no table: n_seeds 0
+            if scheme == "greedymini" and not gm_centre_valid(m, int(v["gm_k"])):
+                raise shared.Unavailable  # needs m - gm_k even (sshash rejects it too)
+            opts.update({"gm": path, "projection": sn.projection_from_flag(v.get("projection"))})
+        return opts
 
     return shared.compute_rows(
         variants,
         seeds_of=lambda v: seeds,
-        prepare=prepare,
-        sample=lambda v, gm_ranks, seed: expected_density_factor(
-            v["scheme"], m, w, seed=seed, n_bases=n_bases, gm_ranks=gm_ranks, projection=v.get("projection")),
+        prepare=options,
+        sample=lambda v, opts, seed: shared.tool_density_factor("sshash", opts, seed, n_bases, w, ROUNDING),
         row_id=lambda v: {**{f: v.get(f) for f in sn.ID_FIELDS}, "k": m, "w": w, "L": m + w - 1},
         rounding=ROUNDING,
     )
 
 
-EXPECTED_SCHEMES_FIELDS = (*sn.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule")
+EXPECTED_SCHEMES_FIELDS = (*sn.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule", "n_bases")
 # The mod-minimizer tie rule the cached rows were computed with; a cache without it
 # (the retired G/T-strand rule) is recomputed.
 MOD_TIE_RULE = "centre"
@@ -160,7 +103,7 @@ def ensure_expected_schemes(
     variants: Iterable[dict] | None = None,
 ) -> dict[tuple, dict]:
     """Cached expected density per variant (keyed by variant_key). With `variants`
-    given, only those are computed (the pure-Python Monte Carlo is slow), merged into
+    given, only those are computed, merged into
     whatever the cache already holds for this m/w."""
     wanted = list(variants) if variants is not None else expand_variants(SCHEMES, w + m - 1, m)
     return shared.ensure_cache(
@@ -173,9 +116,10 @@ def ensure_expected_schemes(
         compute=lambda todo: compute_all_schemes(m, w, seeds, n_bases=n_bases, variants=todo),
         accept=lambda cached: all(
             int(r.get("k") or r.get("m") or 0) == m and int(r.get("w") or 0) == w
-            and r.get("mod_tie_rule") == MOD_TIE_RULE for r in cached.values()),
+            and r.get("mod_tie_rule") == MOD_TIE_RULE and str(r.get("n_bases")) == str(n_bases)
+            for r in cached.values()),
         merge=True,
-        stamp={"mod_tie_rule": MOD_TIE_RULE},
+        stamp={"mod_tie_rule": MOD_TIE_RULE, "n_bases": n_bases},
         force=force,
     )
 
@@ -191,8 +135,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = shared.base_parser(
         "scripts expected-density",
-        "Theoretical expected density_factor per sshash scheme (Monte Carlo "
-        "on i.i.d. random DNA; mean/std over the benchmark's predefined seeds). Feeds the "
+        "Theoretical expected density_factor per sshash scheme (sshash's own "
+        "minimizer iterators on uniformly random DNA; mean/std over the benchmark's predefined seeds). Feeds the "
         "`schemes` xlsx sheet's expected_density_factor_mean/std columns.",
         default_results=str(default_results),
         default_n_bases=DEFAULT_N_BASES,

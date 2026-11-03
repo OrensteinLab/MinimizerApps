@@ -1,0 +1,194 @@
+method,dataset,k,w,scheme,order,metric,at0-cg1 mean,at0-cg1 std,at1-cg0 mean,at1-cg0 std,ratio at1-cg0 / at0-cg1,95% CI of the ratio,p-value (Bonferroni),verdict
+Kraken2,strain-exclusion library,31,5,minimizer,GreedyMini,particular density factor,1.473,0.0000005,1.474,0.0000005,1.001,"[1.001, 1.001]",<0.001,higher
+Kraken2,strain-exclusion library,31,5,minimizer,GreedyMini,build wall time (s),1310,39,1288,58,0.983,"[0.950, 1.017]",0.474,equivalent
+Kraken2,strain-exclusion library,31,5,minimizer,GreedyMini,build peak memory (GB),8.18,0.0006,8.18,,1.001,"[1.001, 1.001]",<0.001,higher
+Kraken2,strain-exclusion library,31,5,minimizer,GreedyMini,database size (GB),7.625,0.001,7.631,0.0002,1.001,"[1.001, 1.001]",<0.001,higher
+Kraken2,strain-exclusion library,31,5,mod-minimizer,GreedyMini,particular density factor,1.364,0.0003,1.364,0.0004,1.000,"[1.000, 1.001]",0.020,higher
+Kraken2,strain-exclusion library,31,5,mod-minimizer,GreedyMini,build wall time (s),1078,86,1099,58,1.020,"[0.952, 1.094]",0.932,inconclusive
+Kraken2,strain-exclusion library,31,5,mod-minimizer,GreedyMini,build peak memory (GB),7.61,0.003,7.61,0.002,1.000,"[1.000, 1.000]",0.804,equivalent
+Kraken2,strain-exclusion library,31,5,mod-minimizer,GreedyMini,database size (GB),7.055,0.002,7.056,0.002,1.000,"[1.000, 1.000]",1.000,equivalent
+Kraken2,strain-exclusion,31,5,minimizer,GreedyMini,classification processing time (s),0.57,0.01,0.56,0.004,0.986,"[0.953, 1.021]",0.661,equivalent
+Kraken2,strain-exclusion,31,5,minimizer,GreedyMini,classification peak memory (GB),7.67,0.0003,7.67,0.001,1.001,"[1.001, 1.001]",<0.001,higher
+Kraken2,strain-exclusion,31,5,minimizer,GreedyMini,genus F1 (%),91.67,0.01,91.66,0.01,1.000,"[1.000, 1.000]",0.141,equivalent
+Kraken2,strain-exclusion,31,5,minimizer,GreedyMini,species F1 (%),79.78,0.01,79.81,0.01,1.000,"[1.000, 1.001]",0.028,higher
+Kraken2,strain-exclusion,31,5,mod-minimizer,GreedyMini,classification processing time (s),0.60,0.02,0.61,0.02,1.009,"[0.960, 1.060]",1.000,equivalent
+Kraken2,strain-exclusion,31,5,mod-minimizer,GreedyMini,classification peak memory (GB),7.10,0.003,7.10,0.003,1.000,"[1.000, 1.001]",0.372,equivalent
+Kraken2,strain-exclusion,31,5,mod-minimizer,GreedyMini,genus F1 (%),91.53,0.04,91.54,0.03,1.000,"[1.000, 1.000]",1.000,equivalent
+Kraken2,strain-exclusion,31,5,mod-minimizer,GreedyMini,species F1 (%),79.71,0.06,79.64,0.01,0.999,"[0.998, 1.000]",0.188,equivalent
+Kraken2,CAMI II,31,5,minimizer,GreedyMini,classification processing time (s),5.46,0.03,5.50,0.11,1.008,"[0.987, 1.029]",0.721,equivalent
+Kraken2,CAMI II,31,5,minimizer,GreedyMini,classification peak memory (GB),7.90,0.0004,7.90,0.0006,1.000,"[1.000, 1.000]",0.047,higher
+Kraken2,CAMI II,31,5,minimizer,GreedyMini,genus F1 (%),89.01,0.0007,89.02,0.001,1.000,"[1.000, 1.000]",0.003,higher
+Kraken2,CAMI II,31,5,minimizer,GreedyMini,species F1 (%),96.82,0.0006,96.82,0.0009,1.000,"[1.000, 1.000]",0.096,equivalent
+Kraken2,CAMI II,31,5,mod-minimizer,GreedyMini,classification processing time (s),5.60,0.04,5.64,0.13,1.007,"[0.973, 1.043]",1.000,equivalent
+Kraken2,CAMI II,31,5,mod-minimizer,GreedyMini,classification peak memory (GB),7.31,0.003,7.31,0.002,1.000,"[1.000, 1.000]",0.668,equivalent
+Kraken2,CAMI II,31,5,mod-minimizer,GreedyMini,genus F1 (%),88.90,0.01,88.88,0.01,1.000,"[1.000, 1.000]",0.033,lower
+Kraken2,CAMI II,31,5,mod-minimizer,GreedyMini,species F1 (%),96.82,0.01,96.82,0.01,1.000,"[1.000, 1.000]",0.654,equivalent
+Kraken2,FDA-ARGOS,31,5,minimizer,GreedyMini,classification processing time (s),4.10,0.16,4.01,0.03,0.978,"[0.936, 1.022]",0.472,inconclusive
+Kraken2,FDA-ARGOS,31,5,minimizer,GreedyMini,classification peak memory (GB),7.69,0.001,7.70,0.0007,1.001,"[1.000, 1.001]",0.007,higher
+Kraken2,FDA-ARGOS,31,5,mod-minimizer,GreedyMini,classification processing time (s),4.22,0.04,4.23,0.02,1.002,"[0.993, 1.011]",1.000,equivalent
+Kraken2,FDA-ARGOS,31,5,mod-minimizer,GreedyMini,classification peak memory (GB),7.12,0.005,7.13,0.003,1.000,"[1.000, 1.001]",0.671,equivalent
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,particular density factor,1.590,0.001,1.636,0.0001,1.029,"[1.028, 1.029]",<0.001,higher
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,index build wall time (s),4.3,0.02,4.4,0.03,1.011,"[0.996, 1.025]",0.221,equivalent
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,index build peak memory (GB),0.94,0.001,0.95,0.001,1.009,"[1.006, 1.013]",0.003,higher
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,index size (GB),0.297,,0.303,0.00004,1.022,"[1.022, 1.022]",<0.001,higher
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,mapping processing time (s),20.4,0.2,20.7,0.1,1.015,"[1.003, 1.026]",0.049,higher
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,mapping peak memory (GB),4.98,0.03,4.56,0.10,0.915,"[0.896, 0.934]",<0.001,lower
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,mapped reads (%),100.00,,100.00,,1.000,"[1.000, 1.000]",1.000,equivalent
+Minimap2,CHM13 chrX,19,10,minimizer,GreedyMini,correctly mapped reads (%),99.85,0.01,99.89,0.01,1.000,"[1.000, 1.000]",<0.001,higher
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,particular density factor,1.483,0.0004,1.486,0.0005,1.002,"[1.002, 1.003]",<0.001,higher
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,index build wall time (s),4.6,0.04,4.5,0.02,0.998,"[0.983, 1.012]",1.000,equivalent
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,index build peak memory (GB),0.92,0.004,0.92,0.003,1.001,"[0.995, 1.007]",1.000,equivalent
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,index size (GB),0.282,0.00004,0.282,0.0001,1.000,"[1.000, 1.001]",0.050,higher
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,mapping processing time (s),20.1,0.1,20.2,0.1,1.006,"[0.999, 1.014]",0.147,equivalent
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,mapping peak memory (GB),5.35,0.29,5.41,0.33,1.012,"[0.990, 1.034]",0.421,equivalent
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,mapped reads (%),100.00,,100.00,,1.000,"[1.000, 1.000]",1.000,equivalent
+Minimap2,CHM13 chrX,19,10,mod-minimizer,GreedyMini,correctly mapped reads (%),99.86,0.01,99.85,0.01,1.000,"[1.000, 1.000]",0.284,equivalent
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,particular density factor,1.592,0.0004,1.632,0.0002,1.025,"[1.024, 1.025]",<0.001,higher
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,index build wall time (s),59.3,0.2,60.0,0.1,1.012,"[1.007, 1.017]",0.006,higher
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,index build peak memory (GB),10.29,0.02,10.15,0.01,0.987,"[0.984, 0.990]",<0.001,lower
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,index size (GB),4.751,0.0004,4.822,0.0003,1.015,"[1.015, 1.015]",<0.001,higher
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,mapping processing time (s),59.2,0.8,60.2,0.6,1.018,"[1.003, 1.034]",0.064,equivalent
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,mapping peak memory (GB),9.92,0.05,10.13,0.07,1.021,"[1.012, 1.030]",0.006,higher
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,mapped reads (%),100.00,,100.00,,1.000,"[1.000, 1.000]",1.000,equivalent
+Minimap2,GRCh38,19,10,minimizer,GreedyMini,correctly mapped reads (%),98.15,,98.13,,1.000,"[1.000, 1.000]",<0.001,lower
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,particular density factor,1.479,0.0002,1.480,0.0001,1.001,"[1.001, 1.001]",<0.001,higher
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,index build wall time (s),65.2,1.8,65.0,1.4,0.997,"[0.950, 1.047]",1.000,equivalent
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,index build peak memory (GB),10.02,0.02,10.01,0.005,0.999,"[0.997, 1.001]",0.315,equivalent
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,index size (GB),4.522,0.001,4.512,0.001,0.998,"[0.998, 0.998]",<0.001,lower
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,mapping processing time (s),56.8,1.0,57.4,0.8,1.010,"[1.004, 1.015]",0.018,higher
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,mapping peak memory (GB),9.09,0.12,9.31,0.18,1.025,"[0.991, 1.060]",0.231,inconclusive
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,mapped reads (%),100.00,,100.00,,1.000,"[1.000, 1.000]",1.000,equivalent
+Minimap2,GRCh38,19,10,mod-minimizer,GreedyMini,correctly mapped reads (%),98.12,0.02,98.09,0.01,1.000,"[1.000, 1.000]",0.084,equivalent
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,particular density factor,1.545,0.0003,1.537,0.0003,0.995,"[0.995, 0.995]",<0.001,lower
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,index build wall time (s),58.1,0.4,60.3,4.4,1.036,"[0.949, 1.131]",0.326,inconclusive
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,index build peak memory (GB),11.10,0.02,11.03,0.01,0.993,"[0.991, 0.996]",0.002,lower
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,index size (GB),5.787,0.001,5.732,0.001,0.991,"[0.990, 0.991]",<0.001,lower
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,mapping processing time (s),9.1,0.2,9.5,0.1,1.041,"[1.013, 1.069]",0.015,higher
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,mapping peak memory (GB),10.18,0.08,10.33,0.23,1.014,"[0.984, 1.045]",0.259,equivalent
+Minimap2,ONT reads on GRCh38,15,10,minimizer,GreedyMini,mapped reads (%),98.10,,98.20,,1.001,"[1.001, 1.001]",<0.001,higher
+KMC3,F. vesca,9,20,minimizer,GreedyMini,particular density factor,1.793,0.0002,1.803,0.0004,1.006,"[1.006, 1.006]",<0.001,higher
+KMC3,F. vesca,9,20,minimizer,GreedyMini,total wall time (s),16.2,0.1,15.8,0.1,0.977,"[0.960, 0.995]",0.024,lower
+KMC3,F. vesca,9,20,minimizer,GreedyMini,stage 1 time (s),9.7,0.1,9.4,0.1,0.968,"[0.952, 0.985]",0.006,lower
+KMC3,F. vesca,9,20,minimizer,GreedyMini,stage 2 time (s),6.5,0.1,6.4,0.1,0.991,"[0.970, 1.012]",0.313,equivalent
+KMC3,F. vesca,9,20,minimizer,GreedyMini,peak memory (GB),12.01,0.01,12.02,0.01,1.000,"[0.999, 1.001]",0.456,equivalent
+KMC3,F. vesca,9,20,minimizer,GreedyMini,temporary disk (GB),3.89,0.0004,3.91,0.0005,1.004,"[1.004, 1.004]",<0.001,higher
+KMC3,G. gallus,9,20,minimizer,GreedyMini,particular density factor,1.994,0.002,1.984,0.0001,0.995,"[0.994, 0.997]",<0.001,lower
+KMC3,G. gallus,9,20,minimizer,GreedyMini,total wall time (s),98.3,1.3,97.1,1.1,0.988,"[0.969, 1.006]",0.140,equivalent
+KMC3,G. gallus,9,20,minimizer,GreedyMini,stage 1 time (s),61.8,1.0,60.5,0.7,0.979,"[0.956, 1.002]",0.066,equivalent
+KMC3,G. gallus,9,20,minimizer,GreedyMini,stage 2 time (s),36.5,0.8,36.6,0.9,1.002,"[0.970, 1.035]",0.871,equivalent
+KMC3,G. gallus,9,20,minimizer,GreedyMini,peak memory (GB),12.05,0.0006,12.05,0.001,1.000,"[1.000, 1.000]",0.102,equivalent
+KMC3,G. gallus,9,20,minimizer,GreedyMini,temporary disk (GB),25.83,0.02,25.74,0.001,0.997,"[0.996, 0.997]",<0.001,lower
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,particular density factor,1.991,0.001,1.994,0.0004,1.001,"[1.001, 1.002]",<0.001,higher
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,total wall time (s),226.0,0.8,226.1,1.2,1.000,"[0.994, 1.007]",0.848,equivalent
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,stage 1 time (s),169.5,0.9,169.2,1.1,0.998,"[0.988, 1.008]",0.627,equivalent
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,stage 2 time (s),56.5,0.3,56.9,0.1,1.008,"[1.001, 1.014]",0.029,higher
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,peak memory (GB),12.08,0.002,12.08,0.001,1.000,"[1.000, 1.000]",0.679,equivalent
+KMC3,M. balbisiana,9,20,minimizer,GreedyMini,temporary disk (GB),41.82,0.01,41.86,0.01,1.001,"[1.001, 1.001]",<0.001,higher
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,particular density factor,1.988,0.0004,1.989,0.001,1.000,"[1.000, 1.001]",0.091,equivalent
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,total wall time (s),498.9,28.7,505.8,37.2,1.013,"[0.941, 1.091]",0.649,inconclusive
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,stage 1 time (s),316.3,24.1,324.6,35.9,1.024,"[0.938, 1.118]",0.501,inconclusive
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,stage 2 time (s),182.5,6.6,181.2,3.2,0.993,"[0.933, 1.058]",0.784,inconclusive
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,peak memory (GB),12.11,0.003,12.11,0.01,1.000,"[0.999, 1.000]",0.177,equivalent
+KMC3,H. sapiens 2,9,20,minimizer,GreedyMini,temporary disk (GB),100.58,0.02,100.63,0.03,1.000,"[1.000, 1.001]",0.028,higher
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,particular density factor,1.988,0.001,1.990,0.001,1.001,"[1.001, 1.002]",0.002,higher
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,total wall time (s),2394.4,136.6,2339.4,96.8,0.978,"[0.931, 1.027]",0.273,inconclusive
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,stage 1 time (s),1603.6,108.7,1552.4,76.5,0.969,"[0.906, 1.036]",0.260,inconclusive
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,stage 2 time (s),790.8,28.5,787.0,22.8,0.995,"[0.977, 1.014]",0.530,equivalent
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,peak memory (GB),32.49,0.01,32.49,0.01,1.000,"[1.000, 1.001]",0.240,equivalent
+KMC3,H. sapiens 3,9,20,minimizer,GreedyMini,temporary disk (GB),548.06,0.10,548.63,0.14,1.001,"[1.001, 1.001]",<0.001,higher
+SSHash,cod,21,11,minimizer,GreedyMini,particular density factor,1.586,0.0001,1.588,0.0001,1.001,"[1.001, 1.001]",<0.001,higher
+SSHash,cod,21,11,minimizer,GreedyMini,build wall time (s),18.9,0.04,19.2,0.1,1.012,"[1.007, 1.017]",0.005,higher
+SSHash,cod,21,11,minimizer,GreedyMini,build peak memory (GB),3.02,0.02,3.04,0.01,1.005,"[0.998, 1.012]",0.219,equivalent
+SSHash,cod,21,11,minimizer,GreedyMini,index size (bits per L-mer),7.044,0.001,7.057,0.001,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,cod,21,11,minimizer,GreedyMini,streaming query processing time (s),6.26,0.04,6.27,0.02,1.002,"[0.993, 1.010]",1.000,equivalent
+SSHash,cod,21,11,minimizer,GreedyMini,streaming query peak memory (GB),0.45,0.0003,0.45,0.0004,1.001,"[0.999, 1.003]",0.335,equivalent
+SSHash,cod,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),580.8,39.7,567.9,5.5,0.979,"[0.901, 1.065]",1.000,inconclusive
+SSHash,cod,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),481.9,27.2,471.1,3.5,0.979,"[0.914, 1.047]",0.850,inconclusive
+SSHash,cod,21,11,mod-minimizer,GreedyMini,particular density factor,1.509,0.00005,1.507,0.00003,0.999,"[0.999, 0.999]",<0.001,lower
+SSHash,cod,21,11,mod-minimizer,GreedyMini,build wall time (s),18.9,0.04,19.0,0.03,1.010,"[1.007, 1.013]",0.003,higher
+SSHash,cod,21,11,mod-minimizer,GreedyMini,build peak memory (GB),2.90,0.01,2.89,0.01,0.996,"[0.988, 1.005]",0.546,equivalent
+SSHash,cod,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),6.833,0.0004,6.834,0.001,1.000,"[1.000, 1.000]",0.032,higher
+SSHash,cod,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),7.36,0.06,7.36,0.04,1.000,"[0.993, 1.007]",1.000,equivalent
+SSHash,cod,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),0.43,0.0003,0.43,0.0003,1.000,"[1.000, 1.001]",0.270,equivalent
+SSHash,cod,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),623.7,23.3,628.8,22.1,1.008,"[0.945, 1.076]",1.000,inconclusive
+SSHash,cod,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),501.0,6.3,509.2,14.6,1.016,"[0.969, 1.065]",0.806,inconclusive
+SSHash,kestrel,21,11,minimizer,GreedyMini,particular density factor,1.545,0.00004,1.550,0.00004,1.003,"[1.003, 1.003]",<0.001,higher
+SSHash,kestrel,21,11,minimizer,GreedyMini,build wall time (s),32.8,1.7,32.6,1.6,0.995,"[0.980, 1.009]",0.734,equivalent
+SSHash,kestrel,21,11,minimizer,GreedyMini,build peak memory (GB),6.45,0.01,6.47,0.004,1.003,"[1.001, 1.005]",0.025,higher
+SSHash,kestrel,21,11,minimizer,GreedyMini,index size (bits per L-mer),6.654,0.001,6.666,0.001,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,kestrel,21,11,minimizer,GreedyMini,streaming query processing time (s),42.19,2.08,41.94,2.09,0.994,"[0.985, 1.003]",0.285,equivalent
+SSHash,kestrel,21,11,minimizer,GreedyMini,streaming query peak memory (GB),0.96,0.0004,0.96,0.0005,1.002,"[1.000, 1.003]",0.040,higher
+SSHash,kestrel,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),607.1,34.4,593.4,27.6,0.978,"[0.909, 1.052]",0.882,inconclusive
+SSHash,kestrel,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),515.4,13.0,509.3,11.2,0.988,"[0.954, 1.024]",0.807,equivalent
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,particular density factor,1.471,0.00004,1.468,0.00009,0.997,"[0.997, 0.998]",<0.001,lower
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,build wall time (s),31.4,1.5,30.7,0.8,0.980,"[0.952, 1.008]",0.226,equivalent
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,build peak memory (GB),6.37,0.01,6.36,0.01,0.998,"[0.996, 1.001]",0.208,equivalent
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),6.441,0.001,6.430,0.001,0.998,"[0.998, 0.999]",<0.001,lower
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),46.73,2.06,46.62,1.71,0.998,"[0.987, 1.009]",1.000,equivalent
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),0.93,0.0002,0.93,0.0004,0.998,"[0.998, 0.999]",<0.001,lower
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),640.1,26.8,640.6,26.4,1.001,"[0.988, 1.014]",1.000,equivalent
+SSHash,kestrel,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),537.8,11.5,544.7,19.0,1.013,"[0.970, 1.058]",0.934,equivalent
+SSHash,human,21,11,minimizer,GreedyMini,particular density factor,1.587,0.0001,1.593,0.00008,1.004,"[1.004, 1.004]",<0.001,higher
+SSHash,human,21,11,minimizer,GreedyMini,build wall time (s),111.2,0.7,113.5,1.3,1.021,"[1.007, 1.035]",0.027,higher
+SSHash,human,21,11,minimizer,GreedyMini,build peak memory (GB),11.25,0.003,11.28,0.003,1.003,"[1.002, 1.003]",<0.001,higher
+SSHash,human,21,11,minimizer,GreedyMini,index size (bits per L-mer),7.454,0.001,7.477,0.001,1.003,"[1.003, 1.003]",<0.001,higher
+SSHash,human,21,11,minimizer,GreedyMini,streaming query processing time (s),157.64,0.83,159.35,4.35,1.011,"[0.980, 1.043]",0.804,equivalent
+SSHash,human,21,11,minimizer,GreedyMini,streaming query peak memory (GB),2.34,0.0002,2.35,0.0004,1.003,"[1.003, 1.003]",<0.001,higher
+SSHash,human,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),677.1,10.3,683.0,11.8,1.009,"[0.995, 1.022]",0.287,equivalent
+SSHash,human,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),538.8,4.3,535.9,6.0,0.995,"[0.988, 1.001]",0.181,equivalent
+SSHash,human,21,11,mod-minimizer,GreedyMini,particular density factor,1.511,0.0002,1.507,0.00006,0.997,"[0.997, 0.997]",<0.001,lower
+SSHash,human,21,11,mod-minimizer,GreedyMini,build wall time (s),109.8,2.7,109.8,1.1,1.001,"[0.967, 1.037]",1.000,equivalent
+SSHash,human,21,11,mod-minimizer,GreedyMini,build peak memory (GB),11.02,0.01,11.03,0.01,1.000,"[1.000, 1.001]",0.523,equivalent
+SSHash,human,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),7.222,0.0004,7.211,0.001,0.998,"[0.998, 0.999]",<0.001,lower
+SSHash,human,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),170.27,2.99,168.94,1.22,0.992,"[0.979, 1.006]",0.376,equivalent
+SSHash,human,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),2.27,0.0003,2.26,0.0003,0.998,"[0.998, 0.999]",<0.001,lower
+SSHash,human,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),788.3,86.2,756.7,73.6,0.961,"[0.890, 1.038]",0.447,inconclusive
+SSHash,human,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),600.7,62.9,600.0,76.2,0.997,"[0.970, 1.025]",1.000,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,particular density factor,1.588,0.00006,1.588,0.00004,1.000,"[1.000, 1.000]",<0.001,lower
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,build wall time (s),11.3,0.1,11.1,0.1,0.989,"[0.980, 0.998]",0.052,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,build peak memory (GB),2.75,0.02,2.76,0.02,1.002,"[0.988, 1.017]",1.000,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,index size (bits per L-mer),6.948,0.0001,6.948,0.001,1.000,"[1.000, 1.000]",1.000,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,streaming query processing time (s),0.60,0.03,0.58,0.03,0.976,"[0.932, 1.022]",0.432,inconclusive
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,streaming query peak memory (GB),0.33,0.00008,0.33,0.0001,1.001,"[1.000, 1.001]",0.209,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),556.7,10.5,559.3,10.7,1.005,"[0.978, 1.032]",1.000,equivalent
+SSHash,NCBI viruses,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),476.9,10.7,473.0,12.1,0.992,"[0.949, 1.037]",1.000,equivalent
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,particular density factor,1.511,0.00006,1.510,0.00007,0.999,"[0.999, 0.999]",<0.001,lower
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,build wall time (s),11.3,0.1,11.2,0.1,0.999,"[0.990, 1.008]",1.000,equivalent
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,build peak memory (GB),2.62,0.004,2.64,0.02,1.008,"[0.996, 1.019]",0.255,equivalent
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),6.724,0.0001,6.720,0.0002,0.999,"[0.999, 0.999]",<0.001,lower
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),0.70,0.03,0.68,0.03,0.967,"[0.908, 1.031]",0.445,inconclusive
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),0.32,0.0001,0.32,0.0002,0.999,"[0.998, 1.000]",0.163,equivalent
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),601.6,9.8,595.2,6.4,0.989,"[0.973, 1.006]",0.284,equivalent
+SSHash,NCBI viruses,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),505.1,13.5,496.5,6.3,0.983,"[0.961, 1.006]",0.211,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,particular density factor,1.728,0.0003,1.731,0.0004,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,S. enterica,21,11,minimizer,GreedyMini,build wall time (s),43.1,0.6,43.1,1.8,0.997,"[0.959, 1.037]",1.000,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,build peak memory (GB),5.25,0.01,5.25,0.004,1.000,"[0.997, 1.003]",1.000,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,index size (bits per L-mer),8.909,0.001,8.904,0.001,0.999,"[0.999, 1.000]",<0.001,lower
+SSHash,S. enterica,21,11,minimizer,GreedyMini,streaming query processing time (s),194.63,12.34,191.97,10.92,0.987,"[0.945, 1.030]",0.877,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,streaming query peak memory (GB),1.00,0.0004,1.00,0.0003,0.999,"[0.999, 1.000]",0.053,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),781.8,29.3,784.1,27.8,1.003,"[0.983, 1.024]",1.000,equivalent
+SSHash,S. enterica,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),513.9,13.9,518.8,11.0,1.009,"[0.994, 1.025]",0.324,equivalent
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,particular density factor,1.655,0.0005,1.658,0.0002,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,build wall time (s),42.3,0.9,44.2,3.2,1.042,"[0.960, 1.131]",0.472,inconclusive
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,build peak memory (GB),5.06,0.01,5.08,0.03,1.005,"[0.999, 1.010]",0.140,equivalent
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),8.677,0.004,8.691,0.0003,1.002,"[1.001, 1.002]",0.003,higher
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),198.66,10.35,198.56,13.39,0.999,"[0.932, 1.070]",1.000,inconclusive
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),0.97,0.0003,0.98,0.0001,1.002,"[1.001, 1.002]",0.002,higher
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),830.9,28.9,835.0,26.4,1.005,"[0.957, 1.055]",1.000,equivalent
+SSHash,S. enterica,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),547.7,14.0,550.2,14.9,1.005,"[0.975, 1.035]",1.000,equivalent
+SSHash,HPRC,21,11,minimizer,GreedyMini,particular density factor,1.702,0.0002,1.710,0.0001,1.005,"[1.005, 1.005]",<0.001,higher
+SSHash,HPRC,21,11,minimizer,GreedyMini,build wall time (s),217.8,2.8,218.2,3.0,1.002,"[0.980, 1.025]",1.000,equivalent
+SSHash,HPRC,21,11,minimizer,GreedyMini,build peak memory (GB),17.90,0.04,18.38,0.07,1.027,"[1.022, 1.031]",<0.001,higher
+SSHash,HPRC,21,11,minimizer,GreedyMini,index size (bits per L-mer),9.302,0.001,9.320,0.0004,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,HPRC,21,11,minimizer,GreedyMini,streaming query processing time (s),203.41,2.39,203.81,1.98,1.002,"[0.984, 1.021]",1.000,equivalent
+SSHash,HPRC,21,11,minimizer,GreedyMini,streaming query peak memory (GB),4.33,0.0004,4.34,0.0004,1.002,"[1.002, 1.002]",<0.001,higher
+SSHash,HPRC,21,11,minimizer,GreedyMini,positive lookup (ns per L-mer),819.0,9.0,829.6,28.3,1.012,"[0.977, 1.049]",0.773,equivalent
+SSHash,HPRC,21,11,minimizer,GreedyMini,negative lookup (ns per L-mer),574.9,1.0,574.8,3.5,1.000,"[0.992, 1.007]",1.000,equivalent
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,particular density factor,1.623,0.0003,1.624,0.00007,1.001,"[1.000, 1.001]",0.005,higher
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,build wall time (s),216.8,5.4,217.0,3.5,1.001,"[0.984, 1.019]",1.000,equivalent
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,build peak memory (GB),17.11,0.01,17.15,0.01,1.002,"[1.001, 1.004]",0.027,higher
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,index size (bits per L-mer),9.039,0.002,9.041,0.001,1.000,"[1.000, 1.001]",0.087,equivalent
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,streaming query processing time (s),214.84,1.08,216.81,0.42,1.009,"[1.002, 1.017]",0.048,higher
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,streaming query peak memory (GB),4.21,0.0005,4.21,0.0004,1.000,"[1.000, 1.001]",0.062,equivalent
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,positive lookup (ns per L-mer),868.0,5.6,880.1,24.6,1.014,"[0.977, 1.051]",0.723,equivalent
+SSHash,HPRC,21,11,mod-minimizer,GreedyMini,negative lookup (ns per L-mer),607.3,1.5,607.6,3.8,1.000,"[0.991, 1.010]",1.000,equivalent

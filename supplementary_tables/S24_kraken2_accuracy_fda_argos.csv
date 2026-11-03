@@ -1,0 +1,126 @@
+block,scheme,order,concordant (%) mean,concordant (%) std,discordant (%) mean,discordant (%) std,ancestor (%) mean,ancestor (%) std,unclassified (%) mean,unclassified (%) std
+"SRR5409204, Bacillus anthracis",minimizer,xor (default),99.53,0.01,0.09,0.01,0.04,0.01,0.35,0.004
+"SRR5409204, Bacillus anthracis",minimizer,xor-pcg-hash,99.54,0.01,0.08,0.004,0.04,0.01,0.34,0.004
+"SRR5409204, Bacillus anthracis",minimizer,GreedyMini,99.53,,0.07,,0.05,,0.35,
+"SRR5409204, Bacillus anthracis",mod-minimizer,xor,99.54,0.01,0.08,0.01,0.04,0.01,0.35,0.02
+"SRR5409204, Bacillus anthracis",mod-minimizer,GreedyMini,99.54,0.01,0.08,,0.03,0.01,0.35,
+"SRR5409214, Parabacteroides distasonis",minimizer,xor (default),98.17,0.03,0.97,0.004,0.26,0.02,0.59,0.02
+"SRR5409214, Parabacteroides distasonis",minimizer,xor-pcg-hash,98.13,0.01,0.98,0.01,0.26,0.02,0.63,0.01
+"SRR5409214, Parabacteroides distasonis",minimizer,GreedyMini,98.12,,0.97,,0.27,,0.64,
+"SRR5409214, Parabacteroides distasonis",mod-minimizer,xor,98.10,0.01,0.95,0.01,0.29,0.01,0.66,0.01
+"SRR5409214, Parabacteroides distasonis",mod-minimizer,GreedyMini,98.09,0.02,0.98,0.01,0.28,0.02,0.65,0.01
+"SRR5440739, Yersinia enterocolitica",minimizer,xor (default),84.36,0.06,1.30,0.14,0.49,0.06,13.85,0.17
+"SRR5440739, Yersinia enterocolitica",minimizer,xor-pcg-hash,84.31,0.09,1.31,0.03,0.45,0.03,13.93,0.07
+"SRR5440739, Yersinia enterocolitica",minimizer,GreedyMini,84.07,,1.16,0.004,0.53,,14.24,0.004
+"SRR5440739, Yersinia enterocolitica",mod-minimizer,xor,84.02,0.04,1.15,0.07,0.53,0.05,14.29,0.07
+"SRR5440739, Yersinia enterocolitica",mod-minimizer,GreedyMini,83.79,0.06,1.13,0.02,0.58,0.02,14.51,0.08
+"SRR5866636, Morganella morganii",minimizer,xor (default),83.74,0.11,3.70,0.04,0.23,0.03,12.33,0.11
+"SRR5866636, Morganella morganii",minimizer,xor-pcg-hash,83.67,0.08,3.55,0.07,0.24,0.04,12.54,0.03
+"SRR5866636, Morganella morganii",minimizer,GreedyMini,83.60,,3.48,0.01,0.27,,12.65,0.01
+"SRR5866636, Morganella morganii",mod-minimizer,xor,83.57,0.05,3.34,0.07,0.31,0.04,12.77,0.09
+"SRR5866636, Morganella morganii",mod-minimizer,GreedyMini,83.47,0.03,3.40,0.02,0.25,0.02,12.88,0.04
+"SRR5866640, Salmonella enterica subsp. enterica",minimizer,xor (default),97.45,0.02,0.55,0.02,1.16,0.04,0.84,0.01
+"SRR5866640, Salmonella enterica subsp. enterica",minimizer,xor-pcg-hash,97.45,0.03,0.57,0.02,1.13,0.05,0.85,0.01
+"SRR5866640, Salmonella enterica subsp. enterica",minimizer,GreedyMini,97.39,0.01,0.53,0.004,1.22,0.01,0.86,0.004
+"SRR5866640, Salmonella enterica subsp. enterica",mod-minimizer,xor,97.43,0.04,0.52,0.02,1.20,0.03,0.85,0.02
+"SRR5866640, Salmonella enterica subsp. enterica",mod-minimizer,GreedyMini,97.41,0.01,0.54,0.01,1.18,0.01,0.86,0.01
+"SRR5866643, Rothia mucilaginosa",minimizer,xor (default),83.27,0.07,0.64,0.03,0.12,0.02,15.98,0.09
+"SRR5866643, Rothia mucilaginosa",minimizer,xor-pcg-hash,82.98,0.10,0.65,0.08,0.12,0.04,16.25,0.06
+"SRR5866643, Rothia mucilaginosa",minimizer,GreedyMini,82.39,0.01,0.60,0.01,0.12,0.01,16.89,0.01
+"SRR5866643, Rothia mucilaginosa",mod-minimizer,xor,82.50,0.02,0.58,0.05,0.18,0.03,16.74,0.03
+"SRR5866643, Rothia mucilaginosa",mod-minimizer,GreedyMini,82.28,0.06,0.51,0.03,0.15,0.01,17.06,0.07
+"SRR5866647, Edwardsiella tarda",minimizer,xor (default),29.84,0.17,16.98,0.43,3.40,0.12,49.78,0.56
+"SRR5866647, Edwardsiella tarda",minimizer,xor-pcg-hash,28.62,0.16,16.64,0.43,3.49,0.27,51.25,0.24
+"SRR5866647, Edwardsiella tarda",minimizer,GreedyMini,27.09,0.02,14.51,0.02,4.36,0.02,54.03,0.01
+"SRR5866647, Edwardsiella tarda",mod-minimizer,xor,26.25,0.30,13.13,0.34,5.34,0.18,55.28,0.21
+"SRR5866647, Edwardsiella tarda",mod-minimizer,GreedyMini,25.39,0.16,12.60,0.25,5.36,0.22,56.65,0.12
+"SRR5872728, Pasteurella multocida",minimizer,xor (default),90.28,0.05,1.21,0.03,0.44,0.04,8.07,0.03
+"SRR5872728, Pasteurella multocida",minimizer,xor-pcg-hash,90.04,0.11,1.17,0.05,0.48,0.04,8.31,0.08
+"SRR5872728, Pasteurella multocida",minimizer,GreedyMini,89.73,,1.06,0.004,0.50,0.004,8.71,
+"SRR5872728, Pasteurella multocida",mod-minimizer,xor,89.81,0.03,1.01,0.02,0.57,0.05,8.61,0.03
+"SRR5872728, Pasteurella multocida",mod-minimizer,GreedyMini,89.74,0.04,0.97,0.02,0.57,0.02,8.72,0.04
+"SRR5878734, Enterococcus faecium",minimizer,xor (default),63.83,0.10,3.26,0.09,0.19,0.03,32.72,0.04
+"SRR5878734, Enterococcus faecium",minimizer,xor-pcg-hash,63.24,0.11,3.22,0.05,0.16,0.03,33.37,0.09
+"SRR5878734, Enterococcus faecium",minimizer,GreedyMini,62.51,0.02,3.17,0.01,0.15,,34.17,0.02
+"SRR5878734, Enterococcus faecium",mod-minimizer,xor,62.46,0.19,3.09,0.02,0.19,0.04,34.26,0.20
+"SRR5878734, Enterococcus faecium",mod-minimizer,GreedyMini,62.24,0.03,3.07,0.02,0.22,0.03,34.47,0.07
+"SRR5878833, Escherichia coli",minimizer,xor (default),73.74,0.10,2.13,0.05,23.93,0.09,0.21,0.01
+"SRR5878833, Escherichia coli",minimizer,xor-pcg-hash,74.44,0.11,2.40,0.07,22.95,0.12,0.22,0.01
+"SRR5878833, Escherichia coli",minimizer,GreedyMini,73.21,0.02,2.08,0.01,24.50,0.02,0.21,
+"SRR5878833, Escherichia coli",mod-minimizer,xor,73.27,0.07,2.06,0.05,24.44,0.10,0.23,0.02
+"SRR5878833, Escherichia coli",mod-minimizer,GreedyMini,73.36,0.04,2.06,0.02,24.37,0.05,0.21,0.01
+"SRR5878890, Micrococcus luteus",minimizer,xor (default),87.85,0.04,3.26,0.16,0.32,0.05,8.57,0.11
+"SRR5878890, Micrococcus luteus",minimizer,xor-pcg-hash,87.72,0.08,3.17,0.10,0.31,0.04,8.80,0.06
+"SRR5878890, Micrococcus luteus",minimizer,GreedyMini,87.63,0.01,2.92,0.01,0.38,0.02,9.07,0.02
+"SRR5878890, Micrococcus luteus",mod-minimizer,xor,87.60,0.11,2.74,0.04,0.39,0.06,9.27,0.10
+"SRR5878890, Micrococcus luteus",mod-minimizer,GreedyMini,87.48,0.02,2.63,0.03,0.45,0.05,9.44,0.05
+"SRR5878897, Ralstonia pickettii",minimizer,xor (default),58.00,0.72,11.63,0.26,2.25,0.16,28.12,0.43
+"SRR5878897, Ralstonia pickettii",minimizer,xor-pcg-hash,56.95,0.15,11.43,0.23,2.18,0.19,29.44,0.25
+"SRR5878897, Ralstonia pickettii",minimizer,GreedyMini,55.78,0.03,10.23,0.03,2.61,0.02,31.39,0.02
+"SRR5878897, Ralstonia pickettii",mod-minimizer,xor,54.60,0.27,9.28,0.25,3.46,0.27,32.67,0.32
+"SRR5878897, Ralstonia pickettii",mod-minimizer,GreedyMini,53.79,0.24,9.58,0.19,3.37,0.08,33.26,0.14
+"SRR8072909, Pseudopropionibacterium propionicum",minimizer,xor (default),98.76,0.01,1.02,0.01,0.01,0.004,0.21,0.02
+"SRR8072909, Pseudopropionibacterium propionicum",minimizer,xor-pcg-hash,98.74,0.02,1.01,0.01,0.01,0.01,0.24,0.02
+"SRR8072909, Pseudopropionibacterium propionicum",minimizer,GreedyMini,98.73,0.01,1.00,,0.01,,0.26,0.01
+"SRR8072909, Pseudopropionibacterium propionicum",mod-minimizer,xor,98.72,0.01,1.00,0.01,0.02,0.01,0.26,0.02
+"SRR8072909, Pseudopropionibacterium propionicum",mod-minimizer,GreedyMini,98.71,0.01,1.00,,0.01,,0.28,0.01
+"SRR8072949, Burkholderia pseudomallei",minimizer,xor (default),95.92,0.03,1.09,0.02,0.41,0.01,2.58,0.02
+"SRR8072949, Burkholderia pseudomallei",minimizer,xor-pcg-hash,95.94,0.01,1.08,0.02,0.39,0.03,2.58,0.02
+"SRR8072949, Burkholderia pseudomallei",minimizer,GreedyMini,95.93,0.01,1.08,,0.41,0.004,2.58,0.004
+"SRR8072949, Burkholderia pseudomallei",mod-minimizer,xor,95.85,0.02,1.08,0.01,0.44,0.01,2.63,0.02
+"SRR8072949, Burkholderia pseudomallei",mod-minimizer,GreedyMini,95.83,0.01,1.07,0.01,0.44,0.01,2.66,0.01
+"SRR8178574, Bifidobacterium breve",minimizer,xor (default),95.49,0.05,1.07,0.02,0.01,0.01,3.43,0.07
+"SRR8178574, Bifidobacterium breve",minimizer,xor-pcg-hash,95.47,0.05,1.06,0.02,0.01,0.004,3.46,0.04
+"SRR8178574, Bifidobacterium breve",minimizer,GreedyMini,95.43,0.004,1.03,,0.02,,3.52,0.004
+"SRR8178574, Bifidobacterium breve",mod-minimizer,xor,95.40,0.02,1.03,0.02,0.01,,3.55,0.03
+"SRR8178574, Bifidobacterium breve",mod-minimizer,GreedyMini,95.44,0.03,1.01,0.01,0.02,0.01,3.53,0.03
+"SRR8179089, Gardnerella vaginalis",minimizer,xor (default),93.96,0.02,0.65,0.02,0.00,0.004,5.39,0.04
+"SRR8179089, Gardnerella vaginalis",minimizer,xor-pcg-hash,93.88,0.03,0.62,0.03,0.01,0.02,5.49,0.04
+"SRR8179089, Gardnerella vaginalis",minimizer,GreedyMini,93.89,,0.67,,0.01,,5.43,
+"SRR8179089, Gardnerella vaginalis",mod-minimizer,xor,93.88,0.03,0.60,0.01,0.00,0.01,5.52,0.02
+"SRR8179089, Gardnerella vaginalis",mod-minimizer,GreedyMini,93.88,0.03,0.56,0.01,0.01,0.004,5.55,0.03
+"SRR8179283, Pseudomonas aeruginosa",minimizer,xor (default),90.01,0.08,2.68,0.03,0.95,0.02,6.36,0.08
+"SRR8179283, Pseudomonas aeruginosa",minimizer,xor-pcg-hash,90.03,0.07,2.69,0.05,0.93,0.05,6.35,0.08
+"SRR8179283, Pseudomonas aeruginosa",minimizer,GreedyMini,89.87,,2.56,0.01,0.97,,6.60,0.01
+"SRR8179283, Pseudomonas aeruginosa",mod-minimizer,xor,89.98,0.05,2.56,0.05,0.99,0.04,6.46,0.03
+"SRR8179283, Pseudomonas aeruginosa",mod-minimizer,GreedyMini,90.01,0.02,2.63,0.03,0.96,0.03,6.40,0.02
+"SRR8179759, Stenotrophomonas maltophilia",minimizer,xor (default),85.85,0.03,4.17,0.07,0.23,0.02,9.76,0.06
+"SRR8179759, Stenotrophomonas maltophilia",minimizer,xor-pcg-hash,85.79,0.04,4.14,0.08,0.23,0.02,9.84,0.10
+"SRR8179759, Stenotrophomonas maltophilia",minimizer,GreedyMini,85.81,0.01,4.09,0.004,0.22,,9.88,0.01
+"SRR8179759, Stenotrophomonas maltophilia",mod-minimizer,xor,85.72,0.10,3.98,0.04,0.27,0.04,10.03,0.07
+"SRR8179759, Stenotrophomonas maltophilia",mod-minimizer,GreedyMini,85.68,0.01,3.99,0.01,0.25,0.02,10.07,0.02
+"SRR8180384, Shigella sonnei",minimizer,xor (default),42.48,0.03,7.70,0.07,48.18,0.08,1.63,0.03
+"SRR8180384, Shigella sonnei",minimizer,xor-pcg-hash,42.80,0.12,8.82,0.15,46.71,0.25,1.67,0.04
+"SRR8180384, Shigella sonnei",minimizer,GreedyMini,42.01,0.01,7.52,0.05,48.80,0.03,1.67,
+"SRR8180384, Shigella sonnei",mod-minimizer,xor,42.09,0.06,7.25,0.05,48.97,0.03,1.69,0.02
+"SRR8180384, Shigella sonnei",mod-minimizer,GreedyMini,42.06,0.06,7.36,0.08,48.85,0.07,1.73,0.01
+"SRR8180461, Staphylococcus epidermidis",minimizer,xor (default),91.16,0.07,1.47,0.05,0.54,0.05,6.84,0.04
+"SRR8180461, Staphylococcus epidermidis",minimizer,xor-pcg-hash,90.88,0.04,1.47,0.04,0.59,0.03,7.06,0.03
+"SRR8180461, Staphylococcus epidermidis",minimizer,GreedyMini,90.59,,1.36,0.01,0.64,0.004,7.41,0.004
+"SRR8180461, Staphylococcus epidermidis",mod-minimizer,xor,90.73,0.09,1.38,0.02,0.63,0.04,7.27,0.07
+"SRR8180461, Staphylococcus epidermidis",mod-minimizer,GreedyMini,90.58,0.04,1.43,0.02,0.61,0.01,7.39,0.04
+"SRR8180464, Corynebacterium jeikeium",minimizer,xor (default),12.61,0.46,7.03,0.18,1.90,0.09,78.46,0.35
+"SRR8180464, Corynebacterium jeikeium",minimizer,xor-pcg-hash,12.37,0.16,6.61,0.13,1.76,0.14,79.26,0.23
+"SRR8180464, Corynebacterium jeikeium",minimizer,GreedyMini,11.45,0.01,5.59,0.02,2.25,0.01,80.70,0.02
+"SRR8180464, Corynebacterium jeikeium",mod-minimizer,xor,11.06,0.20,4.92,0.21,2.57,0.20,81.45,0.27
+"SRR8180464, Corynebacterium jeikeium",mod-minimizer,GreedyMini,10.86,0.03,4.54,0.04,2.47,0.04,82.12,0.03
+"SRR8180786, Acinetobacter baumannii",minimizer,xor (default),53.61,0.01,35.08,0.02,0.52,0.01,10.80,0.03
+"SRR8180786, Acinetobacter baumannii",minimizer,xor-pcg-hash,53.43,0.06,35.13,0.07,0.47,0.03,10.97,0.04
+"SRR8180786, Acinetobacter baumannii",minimizer,GreedyMini,53.38,,35.02,,0.54,,11.06,
+"SRR8180786, Acinetobacter baumannii",mod-minimizer,xor,53.35,0.05,35.02,0.05,0.56,0.03,11.07,0.03
+"SRR8180786, Acinetobacter baumannii",mod-minimizer,GreedyMini,53.25,0.03,34.98,0.01,0.57,0.01,11.20,0.03
+"SRR8180790, Bordetella bronchiseptica",minimizer,xor (default),98.24,0.01,0.97,0.02,0.32,0.01,0.48,0.01
+"SRR8180790, Bordetella bronchiseptica",minimizer,xor-pcg-hash,98.23,0.02,0.95,0.01,0.32,0.01,0.50,0.01
+"SRR8180790, Bordetella bronchiseptica",minimizer,GreedyMini,98.21,0.01,0.96,,0.33,,0.50,0.01
+"SRR8180790, Bordetella bronchiseptica",mod-minimizer,xor,98.21,0.04,0.96,0.03,0.34,0.02,0.50,0.01
+"SRR8180790, Bordetella bronchiseptica",mod-minimizer,GreedyMini,98.18,0.02,0.97,0.01,0.35,0.02,0.50,0.004
+"SRR8180830, Listeria monocytogenes",minimizer,xor (default),84.63,0.01,13.17,0.02,0.02,0.01,2.18,0.01
+"SRR8180830, Listeria monocytogenes",minimizer,xor-pcg-hash,84.62,0.01,13.13,0.02,0.02,0.01,2.23,0.02
+"SRR8180830, Listeria monocytogenes",minimizer,GreedyMini,84.61,,13.08,0.004,0.06,0.004,2.25,
+"SRR8180830, Listeria monocytogenes",mod-minimizer,xor,84.62,0.01,13.10,0.02,0.04,0.01,2.24,0.02
+"SRR8180830, Listeria monocytogenes",mod-minimizer,GreedyMini,84.61,,13.14,0.01,0.02,0.01,2.22,0.01
+"SRR8283294, Francisella tularensis",minimizer,xor (default),99.36,0.004,0.44,0.004,0.00,,0.20,0.01
+"SRR8283294, Francisella tularensis",minimizer,xor-pcg-hash,99.35,0.01,0.44,0.004,0.00,,0.20,0.01
+"SRR8283294, Francisella tularensis",minimizer,GreedyMini,99.35,,0.44,,0.00,,0.21,
+"SRR8283294, Francisella tularensis",mod-minimizer,xor,99.35,0.01,0.44,0.01,0.00,,0.20,0.01
+"SRR8283294, Francisella tularensis",mod-minimizer,GreedyMini,99.35,,0.44,,0.00,,0.21,

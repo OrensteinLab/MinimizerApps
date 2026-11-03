@@ -1,0 +1,6 @@
+scheme,order,particular density factor mean,particular density factor std,distinct selected k-mers (10^6) mean,distinct selected k-mers (10^6) std,build wall time (s) mean,build wall time (s) std,capacity estimation wall time (s) mean,capacity estimation wall time (s) std,library processing wall time (s) mean,library processing wall time (s) std,build CPU time (s) mean,build CPU time (s) std,build peak memory (GB) mean,build peak memory (GB) std,database size (GB) mean,database size (GB) std
+minimizer,xor (default),2.008,0.056,1812,50,1524,35,37,8,1485,32,23875,522,10.90,0.29,10.35,0.29
+minimizer,xor-pcg-hash,2.000,0.00005,1815,0.02,1499,68,35,6,1463,62,23571,1004,10.92,0.005,10.37,0.005
+minimizer,GreedyMini,1.473,0.0000005,1340,0.003,1310,39,32,5,1276,37,20571,593,8.18,0.0006,7.62,0.0006
+mod-minimizer,xor,1.378,0.011,1246,9,1068,49,30,2,1036,49,16634,738,7.67,0.05,7.12,0.05
+mod-minimizer,GreedyMini,1.364,0.0003,1235,0.3,1078,86,29,2,1047,85,16784,1311,7.61,0.003,7.05,0.002

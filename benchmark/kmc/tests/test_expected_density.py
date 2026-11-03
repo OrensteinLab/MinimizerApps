@@ -17,7 +17,6 @@ from scripts.expected_density import (
     compute_all_schemes,
     dna_rev,
     ensure_expected_schemes,
-    expected_density,
     load_expected_schemes,
     rxs_m_xs64,
 )
@@ -85,14 +84,6 @@ def test_rxs_m_xs64_matches_custom_order_cpp_constant():
     assert rxs_m_xs64(1) != rxs_m_xs64(2)
 
 
-def test_expected_density_is_in_plausible_range():
-    keys = build_dna_keys("lex", 28, P)
-    w = 6
-    d = expected_density(keys, P, w, n_bases=50_000)
-    assert d is not None
-    assert 1.0 <= d <= w + 1
-
-
 def test_compute_all_schemes_small_alphabet_no_greedymini():
     # Point gm_dir at an empty directory so the greedymini variants gracefully
     # report n_seeds=0 instead of trying to load real p=9 tables at this test's p=5.
@@ -135,7 +126,6 @@ def test_at1_is_the_flipped_table_and_a_different_order():
     at1 = build_dna_keys("greedymini", 28, 9, seed=seeds()[0], projection="at1-cg0")
     assert at0 != at1
     assert len(at1) == 4**9
-    assert expected_density(at1, 9, 20, n_bases=100_000) < 2.0
 
 
 def test_ensure_and_load_expected_schemes_cache_round_trip():
@@ -149,9 +139,12 @@ def test_ensure_and_load_expected_schemes_cache_round_trip():
         assert loaded[key]["density_factor_mean"] == built[key]["density_factor_mean"]
         assert (loaded[key]["k"], loaded[key]["w"], loaded[key]["L"]) == (str(P), "6", "28")
 
-        # second call with same k/p reuses the cache (doesn't silently change values)
-        again = ensure_expected_schemes(out_root, 28, P, 6, gm_dir=out_root)
+        # a second call with the same k/p and string length reuses the cache
+        again = ensure_expected_schemes(out_root, 28, P, 6, gm_dir=out_root, n_bases=10_000)
         assert again[key]["density_factor_mean"] == built[key]["density_factor_mean"]
+        # another string length recomputes it
+        longer = ensure_expected_schemes(out_root, 28, P, 6, gm_dir=out_root, n_bases=20_000)
+        assert longer[key]["n_bases"] == "20000"
 
 
 if __name__ == "__main__":
@@ -161,7 +154,6 @@ if __name__ == "__main__":
     test_canonical_pairs_always_tie()
     test_xor_and_pcg_differ_for_same_seed()
     test_rxs_m_xs64_matches_custom_order_cpp_constant()
-    test_expected_density_is_in_plausible_range()
     test_compute_all_schemes_small_alphabet_no_greedymini()
     test_greedymini_at0_equals_real_dna_gm_table()
     test_at1_is_the_flipped_table_and_a_different_order()

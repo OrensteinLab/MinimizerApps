@@ -119,7 +119,7 @@ python common/scheme_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir 
 
 Per context (dataset, repeat-filter condition, ...) and timed metric (wall and CPU seconds of each step) it
 compares every GreedyMini / mod-minimizer variant, xor and xor-pcg-hash with the baseline scheme and with xor:
-Welch's t-test on log times over the repeats (ratio of geometric means, 90% CI, p, Holm-adjusted over the
+Welch's t-test on log times over the repeats (ratio of geometric means, 90% CI, p, Bonferroni-adjusted over the
 candidates of a block), plus TOST equivalence at +-5%. No scipy (`common/stats_util.py`). Output:
 `<results dir>/csvs/scheme_tests_<app>.csv` and a per-metric verdict count. `--exclude-cold-gb G` drops the
 steps that read more than G GB from disk, a sensitivity check for the page-cache confound.
@@ -171,6 +171,9 @@ Each app's export adds the sheets `density_effect` and `density_effect_points` t
 - **minimap2.** Only the fixed-threshold block (`-f` = native's threshold) is paired, found by position as in
   `scheme_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
   not make the run comparable. A result set without a fixed block has no `density_effect` sheets.
+- **Runs left out** (`density_effect.unreported`, also in `significance.py`): those the paper does not report --
+  the GreedyMini-based schemes with the polarity at1-cg0 (the paper reports at0-cg1), KMC3's GreedyMini with
+  the DNA-alphabet table, the SSHash 13-mer GreedyMini tables, and kraken2 at minimum hit groups 0.
 
 ## Whether each scheme changes each metric (`common/significance.py`)
 
@@ -181,11 +184,11 @@ temporary disk, bits per k-mer).
 - **Pairing.** As in `density_effect`: every run is paired with the default scheme's run of the same setting
   and seed (the same round), and gives d = ln(metric / default's).
 - **Test.** Per (setting, metric, scheme), over the seeds: ratio = exp(mean d), the geometric mean of the
-  ratios, with its 95% CI; a paired t-test of mean d = 0 (p); Holm-adjusted over the schemes of the same
-  setting and metric (p_holm); TOST equivalence at +-5% (the 90% CI of the ratio in [1/1.05, 1.05]).
-- **Verdict.** lower / higher when p_holm < 0.05, else equivalent (TOST) or inconclusive.
-- Not tested: kraken2 at minimum hit groups 0 and the sshash 13-mer GreedyMini tables (not in the paper).
-  Unlike `scheme_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
+  ratios, with its 95% CI; a paired t-test of mean d = 0 (p); Bonferroni-adjusted over the schemes of the
+  same setting and metric (p_bonferroni); TOST equivalence at +-5% (the 90% CI of the ratio in [1/1.05, 1.05]).
+- **Verdict.** lower / higher when p_bonferroni < 0.05, else equivalent (TOST) or inconclusive.
+- Not tested: the runs the paper does not report, as in `density_effect`, so the Bonferroni families are
+  the schemes of the paper. Unlike `scheme_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
 
 ## Profiling (`<app>/experiments/profile_run.sh`)
 
@@ -216,11 +219,12 @@ minimizers" stamp).
 | `wait_low_load.sh`, `node_gate.py` | wait for a quiet machine / NUMA node before a timed step (CPUs, memory, free 2 MB blocks, compaction) |
 | `bench_step.py`, `step_record.py` | run a timed step pinned and memory-bound, and record its node, huge pages, load and disk; the record's columns |
 | `pin_cpus.sh`, `pin_cpus.py` | CPU pinning: one NUMA node, one thread per core, spare cores |
-| `scheme_tests.py`, `stats_util.py` | significance tests of scheme differences; scipy-free t / Welch / Holm |
+| `scheme_tests.py`, `stats_util.py` | significance tests of scheme differences; scipy-free t / Welch / Bonferroni |
 | `density_effect.py` | how closely each metric follows the density: paired ratios to the default scheme, Pearson r |
-| `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Holm, TOST (the `significance` sheet) |
+| `significance.py` | whether each scheme changes each metric of the paper's figures: paired t-test on log ratios, Bonferroni, TOST (the `significance` sheet) |
 | `mirror_results.py` | mirror a result set (large files hard-linked, small ones copied) for the profiling scripts |
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |
-| `scheme_names.py`, `schemes_sheet.py`, `density.py`, `expected_density_driver.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |
+| `expected_density_driver.py`, `expected_density/` | the expected density of every app's schemes: one C++ tool per app that counts the selected k-mers of 10^9 random bases per seed with the app's own selection code (its tie rule and its own count), and the Python driver that runs it and caches the results (`expected_density/README.md`) |
+| `scheme_names.py`, `schemes_sheet.py`, `density.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |

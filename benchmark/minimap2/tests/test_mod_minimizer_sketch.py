@@ -2,7 +2,7 @@
 """Brute-force cross-validation of sketch_mod_minimizer() (scheme.cpp), the
 strand-symmetric mod-minimizer sketch, with O_t = xor (mod-minimizer-xor) and
 O_t = a GreedyMini table of t-mers (mod-minimizer-greedymini, w20_k9 at t = 9,
-both projections; the t-mer rank is validate_greedymini.reference_value).
+both projections; the t-mer rank is test_greedymini_sketch.reference_value).
 
 brute_force() applies the definition window by window (no deques, no
 incremental state): for the window of L = w+k-1 bases starting at k-mer
@@ -28,11 +28,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from validate_greedymini import gm_k_from_table, read_gm_ranks, reference_value  # noqa: E402
+from test_greedymini_sketch import REPO, SKETCH_DUMP, gm_k_from_table, read_gm_ranks, reference_value  # noqa: E402
 
 MASK64 = (1 << 64) - 1
-SKETCH_DUMP = Path(__file__).resolve().parent / "sketch_dump"
-GM_MOD_FILE = Path(__file__).resolve().parent.parent / "orders" / "GreedyMini" / "w20_k9_canonical.gm"
+GM_MOD_FILE = REPO / "orders" / "GreedyMini" / "w20_k9_canonical.gm"
 
 
 class Order:
@@ -250,6 +249,15 @@ def main() -> int:
         return 1
     print("all cases match the brute-force reference; selections are strand-symmetric")
     return 0
+
+
+def test_mod_minimizer_sketch():
+    import pytest
+
+    for f in (SKETCH_DUMP, GM_MOD_FILE):
+        if not f.is_file():
+            pytest.skip(f"{f} not built (make sketch_dump in minimap2/, the .gm tables in orders/GreedyMini/)")
+    assert main() == 0
 
 
 if __name__ == "__main__":

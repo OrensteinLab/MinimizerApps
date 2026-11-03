@@ -1,0 +1,35 @@
+block,k,w,scheme,order,occurrence threshold,particular density factor mean,particular density factor std,index build wall time (s) mean,index build wall time (s) std,mapping processing time (s) mean,mapping processing time (s) std,index build peak memory (GB) mean,index build peak memory (GB) std,mapping peak memory (GB) mean,mapping peak memory (GB) std,index size (GB) mean,index size (GB) std
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,minimizer,invertible integer hash (default),159,2.010,,4.61,0.07,22.2,0.03,1.25,0.002,5.83,0.05,0.359,
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,minimizer,xor,159,1.976,0.034,4.35,0.10,22.3,0.2,1.18,0.07,5.28,0.14,0.354,0.005
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,minimizer,xor-pcg-hash,159,2.013,0.002,4.57,0.04,22.5,0.2,1.25,0.002,5.30,0.38,0.359,0.0001
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,minimizer,GreedyMini,159,1.590,0.001,4.34,0.02,20.4,0.2,0.94,0.001,4.98,0.03,0.297,
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,mod-minimizer,xor,159,1.598,0.019,4.27,0.06,20.6,0.2,0.94,0.01,5.37,0.27,0.299,0.002
+"CHM13 chrX, occurrence threshold fixed to that of the default scheme",19,10,mod-minimizer,GreedyMini,159,1.483,0.0004,4.56,0.04,20.1,0.1,0.92,0.004,5.35,0.29,0.282,0.00005
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,minimizer,invertible integer hash (default),159,2.010,,4.63,0.06,22.3,0.1,1.25,0.002,5.83,0.05,0.359,
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,minimizer,xor,164,1.976,0.034,4.39,0.10,22.5,0.3,1.18,0.07,5.22,0.17,0.354,0.005
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,minimizer,xor-pcg-hash,162.6,2.013,0.002,4.55,0.05,22.7,0.2,1.25,0.003,5.30,0.31,0.359,0.0001
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,minimizer,GreedyMini,189.6,1.590,0.001,4.34,0.03,20.9,0.1,0.94,0.002,4.67,0.09,0.297,
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,mod-minimizer,xor,181.8,1.598,0.019,4.25,0.07,20.9,0.1,0.94,0.01,4.96,0.50,0.299,0.002
+"CHM13 chrX, default occurrence threshold (derived from each index)",19,10,mod-minimizer,GreedyMini,183.6,1.483,0.0004,4.56,0.03,20.3,0.04,0.92,0.0007,5.00,0.41,0.282,0.00005
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,minimizer,invertible integer hash (default),495,2.006,,55.04,0.23,65.3,1.0,10.68,0.002,11.07,0.02,5.803,
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,minimizer,xor,495,1.973,0.033,53.07,0.26,64.8,0.3,10.64,0.06,10.95,0.12,5.725,0.070
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,minimizer,xor-pcg-hash,495,2.009,0.001,54.72,0.22,65.1,0.8,10.68,0.01,10.96,0.27,5.808,0.004
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,minimizer,GreedyMini,495,1.592,0.0004,59.34,0.21,59.2,0.8,10.29,0.02,9.92,0.05,4.751,0.0004
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,mod-minimizer,xor,495,1.594,0.017,60.24,3.02,58.4,0.8,10.59,0.32,10.35,0.21,4.780,0.033
+"GRCh38, occurrence threshold fixed to that of the default scheme",19,10,mod-minimizer,GreedyMini,495,1.479,0.0002,65.20,1.80,56.8,1.0,10.02,0.02,9.09,0.12,4.522,0.001
+"GRCh38, default occurrence threshold (derived from each index)",19,10,minimizer,invertible integer hash (default),495,2.006,,55.14,0.38,66.6,0.4,10.68,0.002,11.02,0.03,5.803,
+"GRCh38, default occurrence threshold (derived from each index)",19,10,minimizer,xor,500.4,1.973,0.033,52.71,0.31,66.1,1.1,10.64,0.06,10.95,0.12,5.725,0.070
+"GRCh38, default occurrence threshold (derived from each index)",19,10,minimizer,xor-pcg-hash,495,2.009,0.001,54.46,0.35,66.4,0.2,10.68,0.01,10.97,0.27,5.808,0.004
+"GRCh38, default occurrence threshold (derived from each index)",19,10,minimizer,GreedyMini,678,1.592,0.0004,59.55,0.28,65.9,0.3,10.30,0.01,9.68,0.12,4.751,0.0004
+"GRCh38, default occurrence threshold (derived from each index)",19,10,mod-minimizer,xor,654.6,1.594,0.017,59.21,0.38,64.5,1.5,10.59,0.32,10.10,0.25,4.780,0.033
+"GRCh38, default occurrence threshold (derived from each index)",19,10,mod-minimizer,GreedyMini,692.6,1.479,0.0002,64.59,0.21,62.9,0.5,10.02,0.02,8.87,0.17,4.522,0.001
+"ONT reads on GRCh38, occurrence threshold fixed to that of the default scheme",15,10,minimizer,invertible integer hash (default),728,2.072,,57.93,4.20,12.6,0.1,12.85,0.003,11.60,0.20,7.499,
+"ONT reads on GRCh38, occurrence threshold fixed to that of the default scheme",15,10,minimizer,xor,728,2.017,0.071,52.34,4.35,13.1,0.7,12.59,0.36,12.00,0.96,7.287,0.244
+"ONT reads on GRCh38, occurrence threshold fixed to that of the default scheme",15,10,minimizer,xor-pcg-hash,728,2.010,0.001,53.01,0.52,13.2,0.6,12.53,0.01,11.61,0.34,7.318,0.003
+"ONT reads on GRCh38, occurrence threshold fixed to that of the default scheme",15,10,minimizer,GreedyMini,728,1.545,0.0003,58.13,0.41,9.1,0.2,11.10,0.02,10.18,0.08,5.787,0.001
+"ONT reads on GRCh38, occurrence threshold fixed to that of the default scheme",15,10,mod-minimizer,xor,728,1.644,0.077,61.66,4.40,10.0,0.3,11.33,0.17,10.86,0.21,6.043,0.175
+"ONT reads on GRCh38, default occurrence threshold (derived from each index)",15,10,minimizer,invertible integer hash (default),728,2.072,,56.45,0.89,14.3,0.2,12.85,0.004,11.55,0.18,7.499,
+"ONT reads on GRCh38, default occurrence threshold (derived from each index)",15,10,minimizer,xor,771.6,2.017,0.071,51.88,1.88,17.6,2.7,12.58,0.36,11.82,0.97,7.287,0.244
+"ONT reads on GRCh38, default occurrence threshold (derived from each index)",15,10,minimizer,xor-pcg-hash,728.4,2.010,0.001,53.51,0.26,14.9,0.4,12.53,0.01,11.48,0.29,7.318,0.003
+"ONT reads on GRCh38, default occurrence threshold (derived from each index)",15,10,minimizer,GreedyMini,979.2,1.545,0.0003,58.33,0.38,15.8,0.2,11.11,0.01,10.06,0.14,5.787,0.001
+"ONT reads on GRCh38, default occurrence threshold (derived from each index)",15,10,mod-minimizer,xor,1045.8,1.644,0.077,60.38,1.64,17.5,1.5,11.34,0.17,11.04,0.37,6.043,0.175

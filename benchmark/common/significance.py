@@ -9,9 +9,9 @@ when it has several; minimap2: only its fixed-threshold block) -- and gives d = 
 the default). Per (setting, metric, scheme), over the n paired seeds:
   * ratio = exp(mean d), the geometric mean of the ratios to the default, with its 95% CI;
   * p = two-sided paired t-test of mean d = 0 (df = n - 1; p = 0 when all d are equal and non-zero);
-  * p_holm = Holm-adjusted over the schemes of the same setting and metric;
+  * p_bonferroni = Bonferroni-adjusted over the schemes of the same setting and metric (p times their number);
   * equivalent = TOST at +-5%: the 90% CI of the ratio lies in [1/1.05, 1.05];
-  * verdict = "lower" / "higher" (p_holm < 0.05), else "equivalent" (TOST), else "inconclusive".
+  * verdict = "lower" / "higher" (p_bonferroni < 0.05), else "equivalent" (TOST), else "inconclusive".
 Size metrics barely vary between seeds, so their tests are decisive even for small changes; the test
 matters for the times, which vary between runs on a shared server.
 
@@ -30,8 +30,8 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from density_effect import ROWS, VARIANT, mean_of, num  # noqa: E402
-from stats_util import holm, t_quantile, t_two_sided_p  # noqa: E402
+from density_effect import ROWS, VARIANT, mean_of, num, unreported  # noqa: E402
+from stats_util import bonferroni, t_quantile, t_two_sided_p  # noqa: E402
 from xlsx_util import write_csv  # noqa: E402
 
 ALPHA = 0.05
@@ -57,16 +57,12 @@ SPEC = {
     ],
 }
 
-# rows not tested: settings and schemes the paper does not report
-SKIP = {
-    "kraken2": lambda r: r.get("minimum_hit_groups") not in (None, "", "2"),   # the paper: minimum hit groups 2
-    "sshash": lambda r: r.get("gm_k") == "13",                                  # 13-mer GreedyMini tables: not used
-}
+# runs not tested: the settings and schemes the paper does not report (density_effect.unreported)
 
-COLS = ["setting", "metric", "scheme", "n", "ratio", "ci95_lo", "ci95_hi", "p", "p_holm", "equivalent", "verdict"]
+COLS = ["setting", "metric", "scheme", "n", "ratio", "ci95_lo", "ci95_hi", "p", "p_bonferroni", "equivalent", "verdict"]
 DOC = ("paired by seed with the default scheme of the same setting: ratio = geometric mean of metric / default "
-       "over the seeds, 95% CI, paired t-test on the log ratios (p), Holm-adjusted over the schemes of a setting "
-       "and metric (p_holm), TOST at +-5% (equivalent); verdict lower / higher if p_holm < 0.05, else equivalent "
+       "over the seeds, 95% CI, paired t-test on the log ratios (p), Bonferroni-adjusted over the schemes of a "
+       "setting and metric (p_bonferroni), TOST at +-5% (equivalent); verdict lower / higher if p_bonferroni < 0.05, else equivalent "
        "or inconclusive (benchmark/common/significance.py)")
 
 
@@ -79,7 +75,7 @@ def log_ratios(results, app):
             continue
         with open(path, newline="") as f:
             rows = ROWS.get(fname, list)(list(csv.DictReader(f)))
-        rows = [r for r in rows if not SKIP.get(app, lambda _r: False)(r)]
+        rows = [r for r in rows if not unreported(r, app)]
         base = defaultdict(list)
         for r in rows:
             if r.get("scheme") == dflt:
@@ -113,27 +109,33 @@ def paired_test(d):
     return round(math.exp(md), 5), round(math.exp(md - h95), 5), round(math.exp(md + h95), 5), p, equivalent
 
 
+def verdict(mean_log_ratio, p_adjusted, equivalent):
+    """lower / higher (the sign of the mean log ratio, not the rounded ratio) when the adjusted p is below ALPHA, else
+    equivalent (TOST) or inconclusive."""
+    if p_adjusted < ALPHA:
+        return "lower" if mean_log_ratio < 0 else "higher"
+    return "equivalent" if equivalent else "inconclusive"
+
+
 def rows_of(results, app):
-    """The significance rows of one result set, Holm-adjusted per (setting, metric)."""
+    """The significance rows of one result set, Bonferroni-adjusted per (setting, metric) over the schemes tested."""
     groups = defaultdict(list)
     for (setting, metric, scheme), d in log_ratios(results, app).items():
         row = {"setting": setting, "metric": metric, "scheme": scheme, "n": len(d)}
         if len(d) >= 2:
             row["ratio"], row["ci95_lo"], row["ci95_hi"], row["p"], row["equivalent"] = paired_test(d)
+            row["_mean_log"] = statistics.mean(d)
         groups[(setting, metric)].append(row)
     order = [m for _, _, _, ms in SPEC[app] for m in ms]
     out = []
     for (setting, metric) in sorted(groups, key=lambda k: (order.index(k[1]), k[0])):
         rows = sorted(groups[(setting, metric)], key=lambda r: r["scheme"])
         tested = [r for r in rows if "p" in r]
-        for r, adj in zip(tested, holm([r["p"] for r in tested])):
-            r["p_holm"] = adj
-            if adj < ALPHA:
-                r["verdict"] = "lower" if r["ratio"] < 1 else "higher"
-            else:
-                r["verdict"] = "equivalent" if r["equivalent"] else "inconclusive"
+        for r, adj in zip(tested, bonferroni([r["p"] for r in tested])):
+            r["p_bonferroni"] = adj
+            r["verdict"] = verdict(r.pop("_mean_log"), adj, r["equivalent"])
         for r in tested:
-            r["p"], r["p_holm"] = float("%.3g" % r["p"]), float("%.3g" % r["p_holm"])
+            r["p"], r["p_bonferroni"] = float("%.3g" % r["p"]), float("%.3g" % r["p_bonferroni"])
         out += rows
     return out
 
@@ -163,8 +165,8 @@ def main(argv=None):
         if app not in SPEC or not results:
             ap.error("expected APP=RESULTS_DIR with APP in %s, got %r" % (", ".join(SPEC), item))
         for r in results_of(app, results):
-            print("%-8s %-22s %-36s %-34s n=%d ratio=%s p_holm=%s %s" % (
-                app, r["metric"], r["setting"], r["scheme"], r["n"], r.get("ratio"), r.get("p_holm"),
+            print("%-8s %-22s %-36s %-34s n=%d ratio=%s p_bonferroni=%s %s" % (
+                app, r["metric"], r["setting"], r["scheme"], r["n"], r.get("ratio"), r.get("p_bonferroni"),
                 r.get("verdict", "")))
     return 0
 

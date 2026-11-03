@@ -354,16 +354,16 @@ One row per **dataset / k / input / config / scheme**, sorted by **dataset → b
 
 ### `python -m scripts expected-density` (theoretical density, any scheme)
 
-(`scripts/expected_density.py` is a thin adapter over the shared Monte Carlo driver `benchmark/common/expected_density_driver.py`: variant x seed loop, mean/std, cache.)
+(`scripts/expected_density.py` is a thin adapter over the shared driver `benchmark/common/expected_density_driver.py`: the C++ tool, variant x seed loop, mean/std, cache.)
 
-Monte Carlo simulation of density_factor on i.i.d. uniform-random DNA (no real sequence content, no read boundaries) for **every** scheme — `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini` — generalized beyond the original GreedyMini-only `scripts density expected`. xor/xor-pcg-hash/greedymini are seed-dependent, so this reports mean **and** std across this benchmark's predefined seeds (`default`/`lex` are deterministic — no seed, std 0 on the sheet). Both greedymini projections are modelled: at1-cg0 flips the binary table (`ranks[key ^ mask]`, port of `CCustomOrder::install_table`'s `-oat1` branch; checked against `kmc -oat1` super-k-mer counts) before the same DNA extension, at0-cg1 reproduces the real `_dna.gm` bit for bit. Feeds the `schemes` sheet's `expected_density_factor_mean`/`expected_density_factor_std` columns.
+density_factor on uniformly random DNA (no real sequence content, no read boundaries) for **every** scheme — `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini` (both projections) — counted by KMC's own splitter loop and signature orders (`benchmark/common/expected_density/`, the `kmc3` tool: superwindows and k-mers exactly as `kmc` counts them, 10^9 bases, a string of its own per seed). xor/xor-pcg-hash/greedymini are seed-dependent, so this reports mean **and** std across this benchmark's predefined seeds (`default`/`lex` are deterministic — no seed, std 0 on the sheet). Feeds the `schemes` sheet's `expected_density_factor_mean`/`expected_density_factor_std` columns.
 
 ```bash
 python3 -m scripts expected-density                    # k=28 p=9 (this benchmark's defaults)
 python3 -m scripts expected-density --force             # recompute even if a matching cache exists
 ```
 
-Writes `kmc3_density_expected_schemes.csv` to `results/csvs/` (`--results-dir` is the results root). Like `kmc3_density_particular.csv`, this is a **separate, explicit step** — `export`/`schemes_rows()` only *read* the cache (warning to stderr if missing), they never trigger the (one-time, ~tens-of-seconds) computation themselves, so routine `run`/`export` stays fast.
+Writes `kmc3_density_expected_schemes.csv` to `results/csvs/` (`--results-dir` is the results root). Like `kmc3_density_particular.csv`, this is a **separate, explicit step** — `export`/`schemes_rows()` only *read* the cache (warning to stderr if missing), they never trigger the (one-time, ~minutes) computation themselves, so routine `run`/`export` stays fast.
 
 ### `python -m scripts density particular-schemes` (particular density without a kmc run)
 

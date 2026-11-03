@@ -1,0 +1,51 @@
+block,scheme,order,sensitivity (%) mean,sensitivity (%) std,PPV (%) mean,PPV (%) std,F1 (%) mean,F1 (%) std
+"all, genus level",minimizer,xor (default),81.45,0.08,98.88,0.03,89.33,0.05
+"all, genus level",minimizer,xor-pcg-hash,81.13,0.02,98.95,0.01,89.16,0.01
+"all, genus level",minimizer,GreedyMini,80.75,0.0005,99.16,0.001,89.01,0.0007
+"all, genus level",mod-minimizer,xor,80.63,0.04,99.27,0.02,88.98,0.02
+"all, genus level",mod-minimizer,GreedyMini,80.48,0.01,99.30,0.01,88.90,0.01
+"all, species level",minimizer,xor (default),94.53,0.01,99.29,0.01,96.86,0.01
+"all, species level",minimizer,xor-pcg-hash,94.48,0.02,99.31,0.01,96.83,0.01
+"all, species level",minimizer,GreedyMini,94.38,0.0008,99.40,0.002,96.82,0.0006
+"all, species level",mod-minimizer,xor,94.36,0.01,99.44,0.01,96.84,0.01
+"all, species level",mod-minimizer,GreedyMini,94.32,0.01,99.45,0.005,96.82,0.01
+"prokaryote, genus level",minimizer,xor (default),81.45,0.08,98.88,0.03,89.33,0.05
+"prokaryote, genus level",minimizer,xor-pcg-hash,81.13,0.02,98.95,0.01,89.16,0.01
+"prokaryote, genus level",minimizer,GreedyMini,80.75,0.0005,99.16,0.001,89.01,0.0007
+"prokaryote, genus level",mod-minimizer,xor,80.63,0.04,99.27,0.02,88.98,0.02
+"prokaryote, genus level",mod-minimizer,GreedyMini,80.48,0.01,99.30,0.01,88.90,0.01
+"prokaryote, species level",minimizer,xor (default),94.53,0.01,99.29,0.01,96.86,0.01
+"prokaryote, species level",minimizer,xor-pcg-hash,94.48,0.02,99.31,0.01,96.83,0.01
+"prokaryote, species level",minimizer,GreedyMini,94.38,0.0008,99.40,0.002,96.82,0.0006
+"prokaryote, species level",mod-minimizer,xor,94.36,0.01,99.44,0.01,96.84,0.01
+"prokaryote, species level",mod-minimizer,GreedyMini,94.32,0.01,99.45,0.005,96.82,0.01
+"bacteria, genus level",minimizer,xor (default),80.83,0.09,98.80,0.03,88.92,0.05
+"bacteria, genus level",minimizer,xor-pcg-hash,80.52,0.02,98.87,0.01,88.75,0.01
+"bacteria, genus level",minimizer,GreedyMini,80.13,0.0006,99.10,0.0009,88.61,0.0007
+"bacteria, genus level",mod-minimizer,xor,80.01,0.05,99.22,0.03,88.58,0.02
+"bacteria, genus level",mod-minimizer,GreedyMini,79.87,0.01,99.24,0.01,88.51,0.01
+"bacteria, species level",minimizer,xor (default),94.17,0.01,99.24,0.01,96.64,0.01
+"bacteria, species level",minimizer,xor-pcg-hash,94.11,0.02,99.26,0.01,96.62,0.01
+"bacteria, species level",minimizer,GreedyMini,94.00,0.0009,99.35,0.002,96.60,0.0006
+"bacteria, species level",mod-minimizer,xor,93.99,0.01,99.40,0.01,96.62,0.01
+"bacteria, species level",mod-minimizer,GreedyMini,93.95,0.01,99.41,0.01,96.60,0.01
+"archaea, genus level",minimizer,xor (default),89.60,0.08,99.88,0.01,94.46,0.05
+"archaea, genus level",minimizer,xor-pcg-hash,89.24,0.02,99.89,0.02,94.26,0.02
+"archaea, genus level",minimizer,GreedyMini,88.83,0.005,99.94,0.01,94.06,0.003
+"archaea, genus level",mod-minimizer,xor,88.78,0.04,99.93,0.01,94.03,0.02
+"archaea, genus level",mod-minimizer,GreedyMini,88.50,0.03,99.92,0.004,93.86,0.02
+"archaea, species level",minimizer,xor (default),99.12,0.01,99.98,0.01,99.55,0.01
+"archaea, species level",minimizer,xor-pcg-hash,99.10,0.01,99.97,0.004,99.53,0.01
+"archaea, species level",minimizer,GreedyMini,99.10,,99.99,,99.55,
+"archaea, species level",mod-minimizer,xor,99.10,0.01,99.98,0.01,99.54,0.004
+"archaea, species level",mod-minimizer,GreedyMini,99.09,0.005,99.99,0.0000004,99.54,0.002
+"virus, genus level",minimizer,xor (default),0.00,,0.00,,0.00,
+"virus, genus level",minimizer,xor-pcg-hash,0.00,,0.00,,0.00,
+"virus, genus level",minimizer,GreedyMini,0.00,,0.00,,0.00,
+"virus, genus level",mod-minimizer,xor,0.00,,0.00,,0.00,
+"virus, genus level",mod-minimizer,GreedyMini,0.00,,0.00,,0.00,
+"virus, species level",minimizer,xor (default),0.00,,0.00,,0.00,
+"virus, species level",minimizer,xor-pcg-hash,0.00,,0.00,,0.00,
+"virus, species level",minimizer,GreedyMini,0.00,,0.00,,0.00,
+"virus, species level",mod-minimizer,xor,0.00,,0.00,,0.00,
+"virus, species level",mod-minimizer,GreedyMini,0.00,,0.00,,0.00,

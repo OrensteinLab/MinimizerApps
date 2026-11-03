@@ -1,21 +1,22 @@
-"""Shared Monte Carlo driver for the theoretical expected density_factor of a
-scheme on an i.i.d. uniform-random DNA stream (kmc, sshash, minimap2; kraken2
-keeps its own C++ tool). Each app's ``expected_density.py`` is a thin adapter
-that supplies only:
+"""Shared driver for the expected density_factor of a scheme (kmc, sshash,
+minimap2, kraken2). The density is counted by one C++ tool per app
+(benchmark/common/expected_density/, see its driver.h): on DEFAULT_N_BASES
+uniformly random bases, a string of its own per seed, with the app's own
+selection code, so that the tie-breaking rule and what is counted (the app's
+particular density) are the app's. Each app's ``expected_density.py`` is a thin
+adapter that supplies only:
 
   (a) the variants to compute for its config,
-  (b) ``sample(variant, ctx, seed) -> float | None``: one Monte Carlo draw
-      (builds the app's rank/hash function and applies its windowing rule;
-      the helpers `random_dna`, `canonical_keys`, `Rounding.factor` cover the
-      common stream -> canonical hash -> sliding-window skeleton),
+  (b) ``sample(variant, ctx, seed) -> float | None``: the tool's density_factor
+      of the variant for one seed (`tool_density_factor`),
   (c) ``row_id(variant) -> dict`` (the id/parameter columns of the cache row),
   (d) the cache file path and column tuple.
 
-This module owns the loop over variants x seeds, mean/std and its rounding,
-the cache read/validate/merge/write (`ensure_cache`) and the shared CLI
-arguments. The cache layout (a CSV with the id columns, k, w, L, n_seeds,
-density_factor_mean, density_factor_std [, cache_key]) is whatever the adapter
-declares in its `fields`; exporters read it through the adapters'
+This module owns the tools, the loop over variants x seeds, mean/std and its
+rounding, the cache read/validate/merge/write (`ensure_cache`) and the shared
+CLI arguments. The cache layout (a CSV with the id columns, k, w, L, n_seeds,
+density_factor_mean, density_factor_std, n_bases [, cache_key]) is whatever
+the adapter declares in its `fields`; exporters read it through the adapters'
 `load_expected_schemes` / `ensure_expected_schemes`.
 
 (Not named `expected_density.py`: minimap2's adapter is imported as the
@@ -25,16 +26,19 @@ top-level module `expected_density` and would be shadowed.)
 from __future__ import annotations
 
 import csv
-import random
+import functools
+import os
 import statistics
+import subprocess
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from density import density_factor, sliding_runs
+from density import density_factor
 
-DEFAULT_SEED = 0xC0FFEE01  # the Monte Carlo RNG seed (not an order seed)
+DEFAULT_N_BASES = 1_000_000_000  # random bases per seed, the same for every app and scheme
 STAT_FIELDS = ("n_seeds", "density_factor_mean", "density_factor_std")
+TOOL_DIR = Path(__file__).resolve().parent / "expected_density"
 
 
 class Unavailable(Exception):
@@ -68,36 +72,34 @@ class Rounding:
 
 
 # ---------------------------------------------------------------------------
-# Stream -> keys -> density skeleton
+# The C++ tools
 # ---------------------------------------------------------------------------
 
 
-def random_dna(n_bases: int, rng_seed: int = DEFAULT_SEED) -> list[int]:
-    """i.i.d. uniform bases 0..3 (`random.Random(rng_seed).randrange(4)`)."""
-    rng = random.Random(rng_seed)
-    return [rng.randrange(4) for _ in range(n_bases)]
+@functools.lru_cache(maxsize=None)
+def tool_path(app: str) -> Path:
+    """The app's expected-density tool, brought up to date by `make` in TOOL_DIR once per
+    process, so a change to the app's code rebuilds it (SSH_EXT in the environment
+    points sshash's build at another pthash checkout)."""
+    target = f"build/{app}_expected_density"
+    subprocess.run(["make", "-C", str(TOOL_DIR), target], check=True, stdout=subprocess.DEVNULL)
+    return TOOL_DIR / target
 
 
-def canonical_keys(stream: list[int], length: int, hash_fn: Callable[[int, int], int],
-                   canonical: Callable[[int, int], int], seed: int) -> list[int]:
-    """One `hash_fn(canonical(l-mer), seed)` per l-mer of `stream`, l-mers packed
-    first base most significant (the app's `canonical` knows its base encoding)."""
-    mask = (1 << (2 * length)) - 1
-    state = 0
-    for i in range(length):
-        state = (state << 2) | stream[i]
-    keys = [hash_fn(canonical(state, length), seed)]
-    for i in range(length, len(stream)):
-        state = ((state << 2) | stream[i]) & mask
-        keys.append(hash_fn(canonical(state, length), seed))
-    return keys
-
-
-def window_density(keys: list[int], w: int, rounding: Rounding) -> float | None:
-    """density_factor of a forward scheme: super-k-mer boundaries (changes of the
-    window's minimal key) per window over `keys`."""
-    n_win, n_super, _n_sel = sliding_runs(keys, w)
-    return rounding.factor(n_super, n_win, w)
+def tool_density_factor(app: str, options: dict, seed: int, n_bases: int, w: int, rounding: Rounding) -> float | None:
+    """density_factor of one variant and seed: `options` are the tool's own
+    (--name value; a None value passes the flag alone). Threads: the
+    EXPECTED_DENSITY_THREADS environment variable (default 16)."""
+    cmd = [str(tool_path(app)), "--w", str(w), "--seeds", str(seed), "--n-bases", str(n_bases),
+           "--threads", os.environ.get("EXPECTED_DENSITY_THREADS", "16")]
+    for name, value in options.items():
+        cmd += [f"--{name}"] + ([] if value is None else [str(value)])
+    run = subprocess.run(cmd, capture_output=True, text=True)
+    if run.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)}: {run.stderr.strip()}")
+    out = run.stdout.splitlines()
+    row = dict(zip(out[0].split(","), out[-1].split(",")))
+    return rounding.factor(int(row["n_selected"]), int(row["n_kmers"]), w)
 
 
 # ---------------------------------------------------------------------------

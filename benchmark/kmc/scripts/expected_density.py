@@ -1,31 +1,31 @@
 """Theoretical expected DNA-alphabet density_factor for every scheme
-(default, lex = true canonical lex, xor, xor-pcg-hash, greedymini), via Monte
-Carlo simulation on an i.i.d. uniform-random DNA stream -- not measured on any
-real dataset. xor/xor-pcg-hash/greedymini are seed-dependent (see benchmark/README.md:
+(default, lex = true canonical lex, xor, xor-pcg-hash, greedymini), counted on
+uniformly random DNA by kmc's own signature code (the kmc3 tool of
+benchmark/common/expected_density/) -- not measured on any real dataset.
+xor/xor-pcg-hash/greedymini are seed-dependent (see benchmark/README.md:
 "Run order and the lex baseline" for why seed matters), so this reports mean
 and std across the benchmark's predefined seeds, not a single value.
 
-Thin adapter over benchmark/common/expected_density_driver.py (loop, mean/std, cache,
-CLI); this file only has kmc's own variants, DNA comparator keys and random
-stream. Feeds the `schemes` xlsx sheet (see scripts/export.py); cached to
+Thin adapter over benchmark/common/expected_density_driver.py (tool, loop,
+mean/std, cache, CLI); this file only has kmc's own variants and their tool
+options, and the DNA comparator keys of scripts/density.py and the tests.
+Feeds the `schemes` xlsx sheet (see scripts/export.py); cached to
 `kmc3_density_expected_schemes.csv` since it's independent of any actual
-benchmark run (a pure function of k/p/w and the seed list) and each
-simulation costs real Monte Carlo time.
+benchmark run (a pure function of k/p/w, the seed list and the string length)
+and each count costs real time.
 """
 
 from __future__ import annotations
 
-import random
 import struct
 from pathlib import Path
 
 import expected_density_driver as shared
-from density import dna_reverse_complement, flip_gm_ranks, pcg_rxs_m_xs64, sliding_runs  # noqa: F401
+from density import dna_reverse_complement, flip_gm_ranks, pcg_rxs_m_xs64
 from scripts.config import seeds as bench_seeds
 from scripts.density import unify_param_row, _cmp_keys_dna, resolve_gm_ranks
 
-DEFAULT_N_BASES = 4_000_000
-DEFAULT_SEED = 0xC0FFEE01
+DEFAULT_N_BASES = shared.DEFAULT_N_BASES
 N_SCHEME_SEEDS = 5  # matches this benchmark's default -n (see README)
 
 SCHEME_LABELS = ("default", "lex", "xor", "xor-pcg-hash", "greedymini")
@@ -165,26 +165,7 @@ def build_dna_keys(
     raise ValueError(f"unknown scheme: {scheme}")
 
 
-ROUNDING = shared.Rounding(sample=4, avg=4, std=4, single_std=None)
-
-
-def expected_density(
-    dna_keys: list[int], p: int, w: int, *, n_bases: int = DEFAULT_N_BASES, seed: int = DEFAULT_SEED
-) -> float | None:
-    """Monte Carlo expected density_factor for a precomputed comparator on an
-    i.i.d. uniform-random DNA stream (no real sequence content, no read
-    boundaries -- the theoretical floor a scheme's construction targets).
-    kmc-specific: the stream is drawn as one 2p-bit seed state then 2 bits per
-    base via getrandbits (not the shared `random_dna`), and the keys are a
-    lookup of the p-mer state in the comparator `dna_keys` (already canonical)."""
-    rng = random.Random(seed)
-    mask = (1 << (2 * p)) - 1
-    state = rng.getrandbits(2 * p) & mask
-    keys = [dna_keys[state]]
-    for _ in range(n_bases - p):
-        state = ((state << 2) | rng.getrandbits(2)) & mask
-        keys.append(dna_keys[state])
-    return shared.window_density(keys, w, ROUNDING)
+ROUNDING = shared.Rounding(sample=8, avg=6, std=8, single_std=None)
 
 
 def _scheme_seeds(scheme: str) -> list[int | None]:
@@ -202,11 +183,14 @@ def compute_all_schemes(
 
     def sample(v, _ctx, seed):
         scheme, projection = v
-        try:
-            keys = build_dna_keys(scheme, k, p, seed=seed, gm_dir=gm_dir, projection=projection or PROJECTION_AT0)
-        except FileNotFoundError:
-            raise shared.Unavailable from None
-        return expected_density(keys, p, w, n_bases=n_bases)
+        options = {"k": k, "p": p, "scheme": scheme}
+        if scheme == "greedymini":
+            try:
+                options["gm"] = resolve_gm_ranks(k, p, gm_dir)[2]
+            except SystemExit:  # die() on a missing table
+                raise shared.Unavailable from None
+            options["projection"] = projection or PROJECTION_AT0
+        return shared.tool_density_factor("kmc3", options, 0 if seed is None else seed, n_bases, w, ROUNDING)
 
     return shared.compute_rows(
         SCHEME_VARIANTS,
@@ -217,7 +201,8 @@ def compute_all_schemes(
     )
 
 
-EXPECTED_SCHEMES_FIELDS = ("scheme", "projection", "k", "w", "L", "n_seeds", "density_factor_mean", "density_factor_std")
+EXPECTED_SCHEMES_FIELDS = ("scheme", "projection", "k", "w", "L", "n_seeds", "density_factor_mean", "density_factor_std",
+                           "n_bases")
 
 
 def expected_schemes_csv_path(results: Path) -> Path:
@@ -256,7 +241,9 @@ def ensure_expected_schemes(
         key_of_row=_key,
         load=lambda: load_expected_schemes(results),
         compute=lambda _todo: compute_all_schemes(k, p, w, gm_dir=gm_dir, n_bases=n_bases),
-        accept=lambda cached: all(int(r.get("L") or 0) == k and int(r.get("k") or 0) == p for r in cached.values()),
+        accept=lambda cached: all(int(r.get("L") or 0) == k and int(r.get("k") or 0) == p
+                                  and str(r.get("n_bases")) == str(n_bases) for r in cached.values()),
+        stamp={"n_bases": n_bases},
         force=force,
     )
 
@@ -273,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = shared.base_parser(
         "scripts expected-density",
         "Theoretical expected density_factor per scheme "
-        "(Monte Carlo on i.i.d. random DNA; mean/std over predefined seeds for "
+        "(kmc's own signature code on uniformly random DNA; mean/std over predefined seeds for "
         "xor/xor-pcg-hash/greedymini). Feeds the `schemes` xlsx sheet's expected_density_factor_mean/std "
         "columns -- run this once (or after changing k/p) to (re)build that cache.",
         default_results=str(default_results),

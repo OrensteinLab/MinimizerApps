@@ -1,6 +1,6 @@
 """Scipy-free t-test helpers shared by the benchmarks' statistics (minimap2 analysis/stats.py,
 common/scheme_tests.py): Student-t tail via the regularized incomplete beta function (Numerical
-Recipes betacf), Welch's t-test and the Holm step-down correction."""
+Recipes betacf), Welch's t-test, and the Bonferroni correction."""
 from __future__ import annotations
 
 import math
@@ -69,11 +69,5 @@ def welch(x: list[float], y: list[float]) -> tuple[float, float, float, float]:
     return mx - my, math.sqrt(se2), df, t_two_sided_p(abs(t), df)
 
 
-def holm(ps: list[float]) -> list[float]:
-    order = sorted(range(len(ps)), key=lambda i: ps[i])
-    adj = [0.0] * len(ps)
-    running = 0.0
-    for rank, i in enumerate(order):
-        running = max(running, min(1.0, (len(ps) - rank) * ps[i]))
-        adj[i] = running
-    return adj
+def bonferroni(ps: list[float]) -> list[float]:
+    return [min(1.0, len(ps) * p) for p in ps]
