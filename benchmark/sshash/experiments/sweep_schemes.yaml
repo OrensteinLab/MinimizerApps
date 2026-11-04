@@ -1,5 +1,5 @@
 # Primary comparison: all minimizer schemes at the fixed k=31/m=21 this benchmark
-# uses throughout (see README "Choice of m"), 5 seeds each.
+# uses throughout (see README "Choice of k"), 5 seeds each.
 name: sweep_schemes
 description: Primary scheme comparison (native/xor/xor-pcg-hash/greedymini/mod-minimizer-xor/mod-minimizer-greedymini; GreedyMini tables and projections from config.yaml), k=31 m=21, 5 seeds, cod+kestrel+human+ncbi-virus+se+hprc.
 

@@ -34,7 +34,7 @@ done
 common=(-k 28 --input gzip -t 24 --bins 1024 --results-dir "$RES")
 for ds in $DATASETS; do
   echo "=== $ds $(date -Is)"
-  NO_EXPORT=1 ./kmc3_bench.sh run -d "$ds" "${common[@]}" -S all -n 5 \
+  NO_EXPORT=1 ./kmc3_bench.sh run -d "$ds" "${common[@]}" -S all -n 5 --gm-lut dna \
     || { echo "run failed: $ds main (re-run resumes)" >&2; fail=1; }
   for proj in at0-cg1 at1-cg0; do
     NO_EXPORT=1 ./kmc3_bench.sh run -d "$ds" "${common[@]}" -S greedymini -n 5 \

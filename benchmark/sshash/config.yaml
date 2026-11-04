@@ -35,8 +35,9 @@ defaults:
 # time with sshash_bench.sh --gm-tables / --gm-projections.
 #
 # greedymini: sshash --scheme greedymini, the table's gm_k-mer extended to the m-mer around its
-# center (see orders/README.md; needs m - gm_k even, so at m=21 only gm_k 13 and 15).
-# projection: the DNA->binary polarity (sshash --gm-projection): at0-cg1 = A,T->0 and
+# center (see orders/README.md; needs m - gm_k even, so at m=21 only gm_k 13 and 15). The paper
+# reports w11_k15 with projection at0-cg1; w11_k13 is an additional run.
+# projection: the polarity of the DNA->binary map Φ (sshash --gm-projection): at0-cg1 = A,T->0 and
 # C,G->1 (default), at1-cg0 = flipped. Both are run.
 greedymini:
   tables:
@@ -47,11 +48,10 @@ greedymini:
     - at1-cg0
 
 # mod-minimizer-greedymini: the strand-symmetric mod-minimizer with a GreedyMini table of
-# t-mers (sshash --scheme mod-minimizer-greedymini --mod-t t, t = the table's gm_k; a table for
-# mod-sampling is built for the window of T = k - t + 1 t-mers: w22_k10 is t = 10 =
-# 4 + (m - 4) mod w at k=31, m=21). "mod-minimizer-xor" ranks the t-mers by xor, with
-# t = 4 + (m - 4) mod w. Only t = m mod w keeps the scheme forward and at mod-sampling's
-# density (a t = 11 table gave ~2.2 on random DNA and se, worse than native).
+# t-mers (sshash --scheme mod-minimizer-greedymini --mod-t t, t = the table's gm_k; the table is
+# built for windows of k - t + 1 t-mers: w22_k10 has t = 10 = 4 + (m - 4) mod w at k=31, m=21).
+# "mod-minimizer-xor" ranks the t-mers by xor, with t = 4 + (m - 4) mod w. Only t = m mod w keeps
+# the scheme forward and at mod-sampling's density.
 mod_minimizer_greedymini:
   tables:
     - w22_k10_canonical.gm

@@ -1,6 +1,6 @@
 # Secondary, explicitly OPTIONAL sweep: how much does minimizer length m
 # alone move space/time at a FIXED scheme (native)? Not the primary scheme
-# comparison (see sweep_schemes.yaml / README "Choice of m") -- m is held
+# comparison (see sweep_schemes.yaml / README "Choice of k") -- m is held
 # fixed at 21 for every scheme there specifically so the scheme sweep isolates
 # the scheme's effect; this sweep isolates m's effect instead, one scheme at a
 # time, and is not meant to be read side-by-side with the scheme sweep.

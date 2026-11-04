@@ -3,11 +3,11 @@
 reset_run_options() {
   DATASETS="$ALL_DATASETS"
   K=31
-  M=11
+  M=21
   SCHEMES="all"
   GM_TABLES=""
   GM_PROJECTIONS=""
-  THREADS=8
+  THREADS=16
   N_SEEDS=5
   FORCE=0
   RUN_TAG=""

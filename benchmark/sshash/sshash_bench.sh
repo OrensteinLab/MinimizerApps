@@ -31,9 +31,9 @@ Commands (default: run):
 
 Run options:
   -d, --datasets LIST     Comma-separated dataset ids (default: cod,kestrel,human,ncbi-virus,se,hprc)
-  -k K                    k-mer length (default: 31)
-  -m M                    Minimizer length, fixed across ALL schemes by design
-                          (default: 21, giving w=k-m+1=11)
+  -k K                    sshash k-mer length (L in the paper; default: 31)
+  -m M                    sshash minimizer length (k in the paper), the same for all
+                          schemes (default: 21, giving w = 31 - 21 + 1 = 11)
   -S, --schemes LIST      native,xor,xor-pcg-hash,greedymini,mod-minimizer-xor,
                           mod-minimizer-greedymini, or "all" (default: all).
                           GreedyMini schemes run once per variant, a (table,
@@ -43,9 +43,7 @@ Run options:
                           table's gm_k-mer is extended to the m-mer by the center
                           extension, which needs m - gm_k even). Each variant has
                           its own result fields gm_k, projection, gm_table, mod_t.
-                          Every scheme (including native) is run once per seed
-                          -- sshash has no seed-less baseline the way kmc's
-                          lex does.
+                          Every scheme (including native) is run once per seed.
   --gm-tables LIST        Comma-separated GreedyMini table names (e.g.
                           w11_k15_canonical) replacing config.yaml's tables.
   --gm-projections LIST   Comma-separated projections (at0-cg1, at1-cg0)
@@ -54,10 +52,10 @@ Run options:
                           (two-probe, sshash build --regular). Separate axis
                           from -S, e.g. -S native -M regular.
   -n, --n-seeds N         First N predefined seeds from config.yaml (default: 5, max: ${#BENCH_SEEDS[@]})
-  -t, --threads N         sshash build/query -t (default: 8)
+  -t, --threads N         sshash build/query -t (default: 16)
   --sshash PATH           sshash binary (default: $REPO_ROOT/build/sshash)
-  --data-dir PATH         Dataset root (default: SSHASH_DATA_DIR or $SSHASH_BENCH_ROOT/data)
-  --results-dir PATH      Results root (default: SSHASH_RESULTS_DIR or .../results)
+  --data-dir PATH         Dataset root (default: \$SSHASH_DATA_DIR or \$SSHASH_BENCH_ROOT/data)
+  --results-dir PATH      Results root (default: \$SSHASH_RESULTS_DIR or \$SSHASH_BENCH_ROOT/results)
   --dataset-file PATH     Ad hoc local FASTA to benchmark under dataset id "adhoc"
                           (bypasses datasets.csv entirely -- for local smoke testing)
   --keep-index            Keep the built .sshash index after a run (default: removed

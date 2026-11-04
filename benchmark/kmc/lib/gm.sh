@@ -24,6 +24,6 @@ gm_label_for_k() {
 }
 
 resolve_gm_path() {
-  local k="$1" seed="${2:-0}" mode="${GM_LUT:-dna}"
+  local k="$1" seed="${2:-0}" mode="${GM_LUT:-binary}"
   bench_py gm resolve --k "$k" -p "$(signature_len_effective)" --seed "$((seed))" --lut-mode "$mode"
 }

@@ -2,11 +2,11 @@
 
 reset_run_options() {
   DATASETS="$ALL_DATASETS"
-  KS="28,55"
+  KS="28"
   INPUTS="gzip"
-  THREADS=12
+  THREADS=24
   MEM_OVERRIDE=""
-  BINS=""
+  BINS="1024"
   STRICT_MEM=0
   RUN_TAG=""
   SCHEME="all"
@@ -25,7 +25,7 @@ normalize_scheme() {
     default|lex|xor|xor-pcg-hash|greedymini|all) ;;
     *) die "unknown scheme '$SCHEME' (use default, lex, xor, xor-pcg-hash, greedymini or all)" ;;
   esac
-  case "${GM_LUT:-dna}" in dna|binary) ;; *) die "unknown gm_lut '$GM_LUT' (use dna or binary)" ;; esac
+  case "${GM_LUT:-binary}" in dna|binary) ;; *) die "unknown gm_lut '$GM_LUT' (use dna or binary)" ;; esac
   case "${GM_PROJECTION:-at0-cg1}" in at0-cg1|at1-cg0) ;; *) die "unknown projection '$GM_PROJECTION' (use at0-cg1 or at1-cg0)" ;; esac
 }
 

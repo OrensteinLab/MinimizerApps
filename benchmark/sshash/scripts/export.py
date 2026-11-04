@@ -1285,7 +1285,7 @@ def overview_rows() -> list[dict]:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
     return [
-        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every scheme; see README 'Choice of m'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
+        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every scheme; see README 'Choice of k'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
         row("all", "scheme", "canonical minimizer scheme name: native (sshash's own baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor | mod-minimizer-greedymini (strand-symmetric mod-minimizer). Never carries parameters: a variant is the five columns scheme, gm_k, projection, gm_table, mod_t"),
         row("all", "gm_k", "GreedyMini table k (the table's gm_k-mer is extended to the m-mer around its center for greedymini, which needs m - gm_k even; for mod-minimizer-greedymini it is the t-mer table); blank for the other schemes"),
         row("all", "projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. GreedyMini schemes only; blank otherwise. Choices: config.yaml's greedymini / mod_minimizer_greedymini projections (or sshash_bench.sh --gm-projections)"),
