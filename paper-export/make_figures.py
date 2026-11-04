@@ -31,8 +31,8 @@ from common import APPS, ResultSets, fl, key_label, label, minimap2_blocks  # no
 SCH4 = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)", "mod-minimizer (GreedyMini)"]
 SCM = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)"]   # Minimap2 at k = 15 (ONT): no GreedyMini O_t
 SCK = ["default", "xor-pcg-hash", "GreedyMini"]                          # KMC3: no mod-minimizer
-XLAB = {"default": ["default"], "xor-pcg-hash": ["xor-pcg-hash"], "GreedyMini": ["GreedyMini"],
-        "mod-minimizer (xor)": ["mod-min. (xor)"], "mod-minimizer (GreedyMini)": ["mod-min. (GM)"]}   # short, so that each
+XLAB = {"default": ["default"], "xor-pcg-hash": ["xor-pcg-hash"], "GreedyMini": ["C-GreedyMini"],
+        "mod-minimizer (xor)": ["C-mod (xor)"], "mod-minimizer (GreedyMini)": ["C-mod (GM)"]}   # short, so that each
 # name stays under its bar
 # Minimap2: (dataset, chart title key, t of the mod-minimizers, schemes); the mod-minimizer with a GreedyMini order on
 # t-mers only at k = 19 (t = 9, the w20_k9 order)
