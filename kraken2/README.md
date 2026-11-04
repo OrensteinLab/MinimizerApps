@@ -28,7 +28,7 @@ low-density order also used by this monorepo's
 and shared implementation.
 
 With `--order greedymini` and `--sketching minimizer`, a table with `gm_k < l` is
-extended by its **centre** (rank of the middle `gm_k` bases, then tie-breaks),
+extended by its **center** (rank of the middle `gm_k` bases, then tie-breaks),
 which keeps the table's designed density (`w5_k15_canonical`: 1.466 at every
 valid `l`).
 `l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). The

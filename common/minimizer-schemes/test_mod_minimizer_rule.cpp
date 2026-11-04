@@ -1,6 +1,6 @@
 // Tests of mod_minimizer_rule.h: le_revcomp_planes (O(1)) against the
 // per-base window_le_revcomp on random and low-complexity windows of every
-// length 1..64, and CentrePick against a direct evaluation of the centre rule.
+// length 1..64, and CenterPick against a direct evaluation of the center rule.
 // Build and run: make test
 
 #include "mod_minimizer_rule.h"
@@ -48,7 +48,7 @@ int main() {
       const int n = 1 + (int)(rng() % 4);
       for (int i = 0; i < n; ++i)
         offs.push_back(rng() % w);
-      mod_rule::CentrePick c;
+      mod_rule::CenterPick c;
       for (uint64_t p : offs)
         c.add(p, w);
       for (bool le : {false, true}) {
@@ -60,7 +60,7 @@ int main() {
         }
         bool called = false;
         const uint64_t got = c.pick([&]() { called = true; return le; });
-        check(got == (lo == hi || le ? lo : hi), "CentrePick picks the centre-closest offset");
+        check(got == (lo == hi || le ? lo : hi), "CenterPick picks the center-closest offset");
         check(called == (lo != hi), "v <= RC(v) is evaluated only on a two-way tie");
         check(lo == hi || lo + hi == w - 1, "two equally close offsets are mirror images");
       }

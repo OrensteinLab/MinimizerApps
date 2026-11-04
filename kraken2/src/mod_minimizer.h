@@ -18,10 +18,10 @@
  * rule as the minimap2 and sshash forks' mod-minimizers): t == l (mod w), so
  * the offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in
  * the reverse complement correspond; a unique minimum samples its offset, and
- * a tie at the minimum takes the offset closest to the window centre
+ * a tie at the minimum takes the offset closest to the window center
  * (w-1)/2, between two equally close ones the left if the window (the k bases
  * of the k-mer) is <= its reverse complement lexicographically, the right
- * otherwise (the centre rule of Cologni & Pibiri, as in SSHash). A read and
+ * otherwise (the center rule of Cologni & Pibiri, as in SSHash). A read and
  * its reverse complement then give the same minimizers (the t-mer ranks are
  * strand-invariant for every order here), and the selection never moves
  * backwards. Protein (no strands) keeps the plain rule above.
@@ -83,7 +83,7 @@ class ModSampler {
     if (t_ < 1 || t_ > l)
       throw std::invalid_argument("ModSampler: invalid t");
     if (dna_bpc2_ && !mod_rule::t_is_canonical(l_, w_, t_))
-      throw std::invalid_argument("ModSampler: the centre rule needs t == l (mod w)");
+      throw std::invalid_argument("ModSampler: the center rule needs t == l (mod w)");
     tmer_span_ = w_ + l - t_;
     const int t_bits = t_ * bpc_;
     t_mask_ = (t_bits >= 64) ? ~0ULL : ((1ULL << t_bits) - 1ULL);
@@ -276,7 +276,7 @@ class ModSampler {
   }
 
   MOD_ALWAYS_INLINE void push_dispatch(uint8_t base_code) {
-    if (dna_bpc2_) { // the window's k bases, for the centre rule's v <= RC(v)
+    if (dna_bpc2_) { // the window's k bases, for the center rule's v <= RC(v)
       // bit planes of the recent bases, newest lowest
       whi_ = (whi_ << 1) | (uint64_t)(base_code >> 1);
       wlo_ = (wlo_ << 1) | (uint64_t)(base_code & 1);
@@ -418,7 +418,7 @@ class ModSampler {
 
   // Window minimum over the single monotone deque. The entries equal to the
   // front rank are exactly the window t-mers of minimal rank. DNA picks among
-  // them with centre_slot (the centre rule). Protein uses plain mod-sampling: the smallest
+  // them with center_slot (the center rule). Protein uses plain mod-sampling: the smallest
   // offset p = (pos - win) mod w (ties between residues -> smallest p),
   // identical to combining w residue deques. Non-finite ranks (UINT64_MAX,
   // non-UHS t-mers) are never candidates.
@@ -447,7 +447,7 @@ class ModSampler {
     if (best_rank == UINT64_MAX)
       return false;
     if (dna_bpc2_) {
-      *out_lmer = lmer_ring_[(size_t)centre_slot(best_rank, wm)];
+      *out_lmer = lmer_ring_[(size_t)center_slot(best_rank, wm)];
       return true;
     }
     // protein: plain mod-sampling, smallest p over the minimal t-mers
@@ -477,7 +477,7 @@ class ModSampler {
   // larger ranks). The l-mer ring is indexed by residue class, so a minimal
   // t-mer's l-mer is in the slot of its class; its offset in the window is
   // (cls - wm) mod w. A unique minimum (the common case) needs nothing else.
-  MOD_ALWAYS_INLINE int centre_slot(uint64_t best_rank, int wm) const {
+  MOD_ALWAYS_INLINE int center_slot(uint64_t best_rank, int wm) const {
     const Ent &front = dq_[dq_head_ & kDqMask];
     uint32_t r = dq_head_ + 1;
     if (r == dq_tail_ || dq_[r & kDqMask].rank != best_rank)
@@ -485,9 +485,9 @@ class ModSampler {
     return tie_slot(best_rank, wm);
   }
 
-  // A tie at the minimum: the centre rule over the tied entries' offsets.
+  // A tie at the minimum: the center rule over the tied entries' offsets.
   int tie_slot(uint64_t best_rank, int wm) const {
-    mod_rule::CentrePick c;
+    mod_rule::CenterPick c;
     for (uint32_t r = dq_head_;
          r != dq_tail_ && dq_[r & kDqMask].rank == best_rank; ++r) {
       int p = dq_[r & kDqMask].cls - wm;

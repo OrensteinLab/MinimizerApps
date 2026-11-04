@@ -16,7 +16,7 @@ from pathlib import Path
 
 # benchmark/common (on sys.path via scripts/__init__): the extension of a table to an
 # l-mer needs l = gm_k + 2i, the same number of extra bases on both sides
-from scheme_names import gm_centre_fits as gm_centre_valid  # noqa: F401
+from scheme_names import gm_center_fits as gm_center_valid  # noqa: F401
 
 INF_RANK = 0xFFFF
 

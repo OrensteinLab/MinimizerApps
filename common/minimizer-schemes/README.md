@@ -2,7 +2,7 @@
 
 This README documents the implementation of the shared scheme library in this
 directory and of each app's consumer of it. For what the schemes are, CLI flags,
-the AT/CG projection, run-directory naming and the centre-extension rationale,
+the AT/CG projection, run-directory naming and the center-extension rationale,
 see [`../../orders/README.md`](../../orders/README.md); nothing is repeated
 here beyond what is needed to follow the code. Scheme names (`xor`,
 `xor-pcg-hash`, `greedymini`, `mod-minimizer-xor`, `mod-minimizer-greedymini`)
@@ -24,8 +24,8 @@ inside backticks all mean the k-mer.
 |---|---|---|---|---|---|
 | `pcg_rxs_m_xs.h` | `pcg_rxs_m_xs64(x)`: `count = x>>59; x ^= x>>(5+count); x *= 12605985483714917081; return x ^ (x>>43)` | `PcgRanker` | `plain_hasher` | `RankState<XOR_PCG_HASH>` | `build_gm_rank_by_dna` |
 | `greedymini_rank.h` | key/tie-break extraction (`gm_acgt_to_atcg`, `gm_extract_dna_key/_tb`, `pext`/SWAR), `GreedyMiniTable` (uint16 ranks, `kInfRank = 0xFFFF`), `.gm` I/O (`load_gm_file_raw`, `write_gm_file_raw`, `load_gm_table`) | yes (via `kraken2/src/greedymini_rank.h`) | yes | yes | yes (`CMmer::DnaToBinaryKey`, `load_gm_file_raw`) |
-| `greedymini_centre.h` | namespace `gm_centre`: `Order` (centre extension, two packings), `TwoBitPlanes<SigmaXor>`, `roll_in_low/high`, `validate_table`, `Reference`, `density_factor` | `GMRanker` | `custom_scheme_hasher` | `scheme.cpp` | not used |
-| `mod_minimizer_rule.h` | namespace `mod_rule`: `t_is_canonical`, `centre_dist2`, `CentrePick`, `centre_tie_offset`, `le_revcomp_planes`, `window_le_revcomp` (tested by `test_mod_minimizer_rule.cpp`, `make test`) | `ModSampler` | `util.hpp` | `sketch_mod_minimizer` | not used |
+| `greedymini_center.h` | namespace `gm_center`: `Order` (center extension, two packings), `TwoBitPlanes<SigmaXor>`, `roll_in_low/high`, `validate_table`, `Reference`, `density_factor` | `GMRanker` | `custom_scheme_hasher` | `scheme.cpp` | not used |
+| `mod_minimizer_rule.h` | namespace `mod_rule`: `t_is_canonical`, `center_dist2`, `CenterPick`, `center_tie_offset`, `le_revcomp_planes`, `window_le_revcomp` (tested by `test_mod_minimizer_rule.cpp`, `make test`) | `ModSampler` | `util.hpp` | `sketch_mod_minimizer` | not used |
 | `dna_revcomp.h` | `dna_reverse_complement` on packed 2-bit k-mers | own copy in `dna_kmer.h` | own encoding | own loops | `CMmer::DnaReverseComplement` |
 | `gm_serializer.cpp` (+ `Makefile`) | builds a `.gm` from a rank-list `.txt`; `--canonical` gives each listed k-mer and its reverse the same rank | tool | tool | tool | tool |
 
@@ -65,7 +65,7 @@ reverse complement. There is no shared code beyond `dna_revcomp`.
   strict `>`).
 - sshash: `plain_hasher<XOR_HASH>::hash(v) = v ^ seed` on the numerically
   canonical k-mer (`canonical_mmer_at`, `util.hpp`). Ties are broken by the
-  centre-closest rule of `util::compute_minimizer` (`resolve_tie`, and
+  center-closest rule of `util::compute_minimizer` (`resolve_tie`, and
   `break_tie` in `minimizer_iterator`), mirror images by `kmer <= rc(kmer)`.
 - minimap2: `RankState<MM_SCHEME_XOR>::rank = kmer ^ seed` with `seed` masked to
   2k bits so a rank never equals `UINT64_MAX` (the "no candidate" value of
@@ -88,11 +88,11 @@ Table: `2^gm_k` uint16 ranks over the Sigma (AT/CG) projection of a `gm_k`-mer,
 `kInfRank` for non-UHS keys.
 
 For `k == gm_k` (all apps except where a longer k is configured) the table ranks
-the k-mer itself. For `k = gm_k + 2i` the centre extension of
-`gm_centre::Order` is used (kraken2, sshash, minimap2; not kmc, see 4). The
+the k-mer itself. For `k = gm_k + 2i` the center extension of
+`gm_center::Order` is used (kraken2, sshash, minimap2; not kmc, see 4). The
 k-mer is `x y z` with `|x| = |z| = i`, `|y| = gm_k`; the rank is one load
-`table[Sigma(y)]` (`centre_key`, `rank_of_sigma`, `rank_at`), strand invariant
-because the reverse complement's centre is `mirror(y)` and the table is
+`table[Sigma(y)]` (`center_key`, `rank_of_sigma`, `rank_at`), strand invariant
+because the reverse complement's center is `mirror(y)` and the table is
 mirror-symmetric. `check_length` requires `k - gm_k` even.
 
 Packing of the order value (`Order::pack`, constructor flag `injective`):
@@ -101,7 +101,7 @@ Packing of the order value (`Order::pack`, constructor flag `injective`):
 |---|---|---|
 | value | `rank << sh_rank \| Sx \| ybit \| Sz \| (Gamma^toggle)` | `rank_or_inf << 2k \| (Sigma << k \| Gamma^toggle)` |
 | width | `rank_bits + 2i + 1 + k` | `16 + 2k`, so `k <= 24` (`k <= 23` in minimap2, `kGmMaxK`; sshash `16+2k <= 63`) |
-| infinite centre | `UINT64_MAX` (all such windows tie) | rank field `0xFFFF`, still ordered by the planes |
+| infinite center | `UINT64_MAX` (all such windows tie) | rank field `0xFFFF`, still ordered by the planes |
 | `ybit` | `key > mirror_key(key)`, precomputed in `ybit_` | not present (full Sigma is in the value) |
 | `validate_table` pair check | yes | skipped |
 
@@ -112,8 +112,8 @@ integers compares orders. They differ in what is kept:
 
 - Compressed keeps the minimum of bits: since a canonical table gives each
   finite rank to exactly one key and its mirror, `(rank, ybit)` already
-  determines the centre's Sigma, so only the flanks `Sx`, `Sz` and Gamma are
-  appended. This fits `k` up to 31 (kraken2), but an infinite centre (not in the
+  determines the center's Sigma, so only the flanks `Sx`, `Sz` and Gamma are
+  appended. This fits `k` up to 31 (kraken2), but an infinite center (not in the
   UHS) collapses to `UINT64_MAX`, so all such windows tie and the order is not
   total; the consumer must break those ties itself (kraken2 uses the
   strand-invariant xor key). It also requires the table's rank-pair property
@@ -142,14 +142,14 @@ Per app:
 - kraken2 (`minimizer_rankers.h`, `GMRanker`). `k == gm_k`: `probe_strand` takes
   the key by `pext` of the ATCG word for each strand (fwd and rc);
   `pick_better_primary` keeps the finite/smaller primary, ties by
-  `(primary << k) | (Gamma ^ toggle)` (`pack`). `k > gm_k`: `init_centre` builds
-  `gm_centre::Order(table, k, toggle)` (compressed) and
+  `(primary << k) | (Gamma ^ toggle)` (`pack`). `k > gm_k`: `init_center` builds
+  `gm_center::Order(table, k, toggle)` (compressed) and
   `TwoBitPlanes<true>(k, flip)`; `rank_first()` is true for revcom version 1.
   The scanner compares only the table rank (`rank_of_sigma`, with Sigma either
   `pext`ed per k-mer or rolled by `roll_in_low` when `roll_sigma_`, default off:
   `kDefaultRollSigma = false`) and calls `value()` only when two finite ranks
   tie (`PopDominatedRankFirst`). Spaced seed: the rank lookup sees the unmasked
-  centre; each strand's word is ANDed with the mask independently (never
+  center; each strand's word is ANDed with the mask independently (never
   `rc(x & mask)`) and only the tie-break fields x, z, Gamma come from the masked
   planes (`planes()`, `value_of_two_strands_masked`); with `k == gm_k` the table
   key is taken from the masked word. Because the compressed value is not
@@ -159,7 +159,7 @@ Per app:
 - sshash (`custom_scheme_hasher.hpp`). `configure` loads the `.gm`, validates
   (`k - gm_k` even, `16 + 2k <= 63`, mirror symmetry via
   `validate_table(..., false)`), and `derive` builds
-  `gm_centre::Order(table, k, seed, injective=true)`. `hash_gm(x) =
+  `gm_center::Order(table, k, seed, injective=true)`. `hash_gm(x) =
   hash_from_planes(planes_of_mmer(x))` (code name `mmer` = the k-mer): two `pext`s and one 64-bit bit reversal
   give the rc planes, then `value_of_both_strands`. The hash is strand
   invariant (`strand_invariant()`), so callers hash the raw forward k-mer and
@@ -183,9 +183,9 @@ k-mer at offset `x mod w`.
 Strand-symmetric rule (`mod_minimizer_rule.h`), with t == k (mod w) (`t_is_canonical`):
 
 - a unique minimal t-mer at `x` samples offset `x % w`;
-- a tie at the minimum: the centre rule, `CentrePick` (`add` each tied offset, `pick(le_rc)`)
-  or `centre_tie_offset(x_l, x_r, w, is_min, le_rc)`: the offset closest to `(w-1)/2`
-  (doubled distance `centre_dist2`), between two equally close ones the left if `le_rc()`;
+- a tie at the minimum: the center rule, `CenterPick` (`add` each tied offset, `pick(le_rc)`)
+  or `center_tie_offset(x_l, x_r, w, is_min, le_rc)`: the offset closest to `(w-1)/2`
+  (doubled distance `center_dist2`), between two equally close ones the left if `le_rc()`;
 - `le_rc` = v <= RC(v), evaluated only on an exact two-way tie: `le_revcomp_planes(hi, lo, len)`
   (lexicographic, O(1) on two bit planes, `len <= 64`; kraken2, minimap2) or
   `!(kmer_rc < kmer)` on packed words (sshash); `window_le_revcomp` is the per-base version
@@ -198,10 +198,10 @@ minimum is over t-mers, and the k-mer sampled for the minimal t-mer at x is the 
 p = x mod w, so equal-rank t-mers in different residue classes select different k-mers. All
 apps require t == k (mod w) (kraken2 `t = 4 + (l-4) mod w`; minimap2 `--mod-t` and sshash
 `--mod-t` are checked), so the mirror of x in RC(v) lies in class w-1-p and the candidate
-offsets are mirror-symmetric. The centre rule is applied to them: the candidate closest to the
-window centre (w-1)/2, and between the two equally close mirror candidates p and w-1-p, the
+offsets are mirror-symmetric. The center rule is applied to them: the candidate closest to the
+window center (w-1)/2, and between the two equally close mirror candidates p and w-1-p, the
 left if v <= RC(v), else the right. RC(v) then samples the mirror k-mer (canonical), and the
-chosen offset never moves backwards as the window slides (forward). The centre rule does extra
+chosen offset never moves backwards as the window slides (forward). The center rule does extra
 work only on a tied minimum, and compares v with RC(v) only on an exact two-way tie. The native plain rules do not carry over:
 leftmost (kraken2) is not canonical for the mod-minimizer, keeping every tied k-mer (minimap2)
 inflates density at small t, and kmc has no mod-minimizer. v <= RC(v) is lexicographic in
@@ -230,8 +230,8 @@ reverse complement, which is strand-symmetric without a tie rule; it is also the
 baseline. sshash stores super-k-mers by minimizer and offset, so the position matters: the
 scheme must be canonical (a k-mer and its reverse complement find the same minimizer
 occurrence) and forward (its builder checks it), which no leftmost/rightmost-by-strand rule
-achieves; it uses the centre rule of Cologni and Pibiri (SSHash v6.0.0, PR 93): the tied
-position closest to the centre of the k-mer, and between two equally close ones the left if
+achieves; it uses the center rule of Cologni and Pibiri (SSHash v6.0.0, PR 93): the tied
+position closest to the center of the k-mer, and between two equally close ones the left if
 v <= RC(v), else the right. GreedyMini changes only the rank, so every app applies its native
 rule to it.
 
@@ -240,16 +240,16 @@ needs `2 <= w <= 16`, and a GreedyMini table must have `gm_k == t`); sshash and
 minimap2 take `--mod-t` (`mod_t`). For `t = r + (k-r) % w`, `(T-1) = (w-1) mod w` and
 both offset rules reduce to `x mod w`. `mod-minimizer-greedymini` ranks t-mers
 with the `greedymini` machinery at length t (kraken2: `GMRanker` with `k = t`;
-sshash: `custom_scheme_hasher` with `m_l = mod_t`, `gm_k <= t` allowed by centre
+sshash: `custom_scheme_hasher` with `m_l = mod_t`, `gm_k <= t` allowed by center
 extension; `test_mod_minimizer.cpp` tests each table at `t = gm_k` and `t = gm_k + 2`); minimap2 has only `mod-minimizer-xor`.
 
 Sliding structures (read from the code, they differ):
 
 | App | Structure | Update | Where |
 |---|---|---|---|
-| kraken2 | one monotone deque of t-mers, power-of-two ring `dq_[64]` (`kDqCap`), entries `{rank, pos, cls}`, equal ranks kept; plus a k-mer ring `lmer_ring_[w]` indexed by residue class | `push_tmer` pops strictly larger back; `finish_window` drops front `pos < win`; a single front entry is the selection, a front run of equal ranks goes to the centre rule (`tie_slot`) | `ModSampler` in `mod_minimizer.h`; driven by `NextMinimizerMod` in `mmscanner.cc` |
+| kraken2 | one monotone deque of t-mers, power-of-two ring `dq_[64]` (`kDqCap`), entries `{rank, pos, cls}`, equal ranks kept; plus a k-mer ring `lmer_ring_[w]` indexed by residue class | `push_tmer` pops strictly larger back; `finish_window` drops front `pos < win`; a single front entry is the selection, a front run of equal ranks goes to the center rule (`tie_slot`) | `ModSampler` in `mod_minimizer.h`; driven by `NextMinimizerMod` in `mmscanner.cc` |
 | sshash | ring of the T t-mer hashes (`m_ring[64]`, slot `(m_base + x) & 63`), tracked `m_min_hash`, `m_left`, `m_right`; for GreedyMini a ring of 16-bit ranks plus rolled Sigma plane (`m_rank`, `m_sigma`) | hash only the new t-mer; full re-scan only when the leftmost minimum leaves (`m_left == 0`); GM hashes in full only on rank ties | `mod_minimizer_iterator` in `minimizer_iterator.hpp`; definition `util::compute_mod_minimizer` |
-| minimap2 | not a deque: ring of t-mer ranks and residue classes (`trank`, `tcls`, power-of-two), running `min_rank`, `x_l`, `x_r` updated by conditional moves (`take`); k-mer ring `lring[w]` with a per-slot `pending` flag; the window's two bit planes for `le_revcomp_planes` (`L <= 54`) | rescan `[win, ot]` only when `x_l < win`; `x_l == x_r` selects `tcls[x_l]`, otherwise the centre rule over `[x_l, x_r]`; the selected k-mer is marked pending in its slot and emitted when it leaves the window, so output stays in position order | `sketch_mod_minimizer` in `scheme.cpp` (comment explains why not a deque) |
+| minimap2 | not a deque: ring of t-mer ranks and residue classes (`trank`, `tcls`, power-of-two), running `min_rank`, `x_l`, `x_r` updated by conditional moves (`take`); k-mer ring `lring[w]` with a per-slot `pending` flag; the window's two bit planes for `le_revcomp_planes` (`L <= 54`) | rescan `[win, ot]` only when `x_l < win`; `x_l == x_r` selects `tcls[x_l]`, otherwise the center rule over `[x_l, x_r]`; the selected k-mer is marked pending in its slot and emitted when it leaves the window, so output stays in position order | `sketch_mod_minimizer` in `scheme.cpp` (comment explains why not a deque) |
 
 kraken2 additionally replaces per-t-mer ranking by a LUT `rank_lut_[4^t]` for
 `xor-pcg-hash`/GM when `t <= 8`, on the raw forward t-mer for GM and the
@@ -261,7 +261,7 @@ canonical t-mer for PCG; xor needs none (`select_kind`: `K_XOR`, `K_LUT_RAW`,
 | App | Machinery | Tie handling |
 |---|---|---|
 | kraken2 | `std::deque` of `{rank, candidate, pos}` (`queue_`; the default xor path uses a 16-byte `xq_`, `NextMinimizerXor`). New k-mer pops the back while worse (`PopDominatedRankFirst`/`PopDominatedGM`, plain `>` for xor/pcg); front expires when `pos < queue_pos_ - (L - k)` (code: `k` = L, `l` = k) | strict `>` keeps the leftmost on equal ranks; GM equal finite values: `KeyKeepsBack` (hash key ^ toggle) |
-| sshash | no deque. `minimizer_iterator<Kmer, Mode>`: keeps the current min, re-scans all `w` loci (`rescan`) only when it leaves the window (`m_min_pos_in_kmer == 0`), otherwise one new hash and a compare; counts ties in `m_num_mins`. `strand_invariant_minimizer_iterator` (GreedyMini): ring of 16-bit ranks (`m_ring[136]`: 64 slots, every rank stored twice so a window's ranks are contiguous; SSE min 8 at a time), rolled Sigma plane (`roll_sigma`), full hash only on rank ties | `break_tie`: tied locus closest to the centre, mirror images by `kmer <= rc(kmer)` |
+| sshash | no deque. `minimizer_iterator<Kmer, Mode>`: keeps the current min, re-scans all `w` loci (`rescan`) only when it leaves the window (`m_min_pos_in_kmer == 0`), otherwise one new hash and a compare; counts ties in `m_num_mins`. `strand_invariant_minimizer_iterator` (GreedyMini): ring of 16-bit ranks (`m_ring[136]`: 64 slots, every rank stored twice so a window's ranks are contiguous; SSE min 8 at a time), rolled Sigma plane (`roll_sigma`), full hash only on rank ties | `break_tie`: tied locus closest to the center, mirror images by `kmer <= rc(kmer)` |
 | minimap2 | native `mm_sketch()` structure ported in `sketch_single_window<Kind>`: a circular `buf[w]` of `Cand{rank, kmer, span, y}`, `min`/`min_pos`; new min on `info.rank <= min.rank`, rescan of `buf` when the old min leaves; HPC span via `tiny_queue_t` | ties flush as extra minimizers when `y` differs (native behaviour kept); stored `x` is always `mm_hash64(selected k-mer)`, not the rank (`cand_to_mm128`) |
 | kmc | no queue. `CSplitter` (`kmc_core/splitter.cpp`, `CalcStatsT`/`ProcessReadsT`, templated on `CMmer::LutMode()`) holds `current_signature` and `end_mmer`: each base `end_mmer.insert_sym<Mode>`; `<` replaces, `==` also moves the start, and when the current signature leaves the k-mer (`signature_start_pos + kmer_len - 1 < i`) the k-mer is rescanned with `<=` (rightmost on ties) | equal `current_val` moves to the newer position; for GM the value is `(rank << 32) \| min(str^seed, rc^seed)` |
 
@@ -269,9 +269,9 @@ canonical t-mer for PCG; xor needs none (`select_kind`: `K_XOR`, `K_LUT_RAW`,
 
 | App | Order evaluated on | Alphabet / encoding | Table backend | Sliding structure | Code |
 |---|---|---|---|---|---|
-| kraken2 | canonical k-mer (xor/pcg); raw k-mer with strand handling inside `GMRanker` (greedymini); canonical t-mers (mod xor/pcg), raw t-mers (mod GM) | 2-bit, ACGT = 0..3, `lookup_table_` | binary only (`GreedyMiniTable`); centre extension, compressed packing | deque (minimizer); monotone ring deque (mod) | `kraken2/src/{mmscanner.cc,minimizer_rankers.h,mod_minimizer.h}` |
-| sshash | canonical k-mer (xor/pcg), raw k-mer with strand-invariant hash (GM), t-mers for mod | 2-bit, A=00 C=01 G=11 T=10 (traditional encoding not supported for GM) | binary only; centre extension, injective packing, table embedded in the index | re-scan iterator; rank ring + rolled Sigma (GM); hash ring (mod) | `sshash/include/{custom_scheme_hasher.hpp,minimizer_iterator.hpp,util.hpp}` |
-| minimap2 | lex-min strand k-mer, k <= 28 (GM: k <= 23) | 2-bit, ACGT = 0..3 (`seq_nt4_table`), pure C caller via extern "C" | binary only; centre extension, injective packing; table stored in `.mmi` | circular `buf[w]` with rescan; rank ring + residue slots (mod-xor only) | `minimap2/scheme.cpp`, `scheme.h` |
+| kraken2 | canonical k-mer (xor/pcg); raw k-mer with strand handling inside `GMRanker` (greedymini); canonical t-mers (mod xor/pcg), raw t-mers (mod GM) | 2-bit, ACGT = 0..3, `lookup_table_` | binary only (`GreedyMiniTable`); center extension, compressed packing | deque (minimizer); monotone ring deque (mod) | `kraken2/src/{mmscanner.cc,minimizer_rankers.h,mod_minimizer.h}` |
+| sshash | canonical k-mer (xor/pcg), raw k-mer with strand-invariant hash (GM), t-mers for mod | 2-bit, A=00 C=01 G=11 T=10 (traditional encoding not supported for GM) | binary only; center extension, injective packing, table embedded in the index | re-scan iterator; rank ring + rolled Sigma (GM); hash ring (mod) | `sshash/include/{custom_scheme_hasher.hpp,minimizer_iterator.hpp,util.hpp}` |
+| minimap2 | lex-min strand k-mer, k <= 28 (GM: k <= 23) | 2-bit, ACGT = 0..3 (`seq_nt4_table`), pure C caller via extern "C" | binary only; center extension, injective packing; table stored in `.mmi` | circular `buf[w]` with rescan; rank ring + residue slots (mod-xor only) | `minimap2/scheme.cpp`, `scheme.h` |
 | kmc | signature (a k-mer, k = 5..11) | 2-bit, ACGT = 0..3 | DNA LUT (`4^k`) for xor/pcg and `_dna.gm`; binary LUT (`2^k`, default for `.gm`) | `current_signature`/`end_mmer` rescan | `kmc/kmc_api/{custom_order.cpp,mmer.h,mmer.cpp}`, `kmc/kmc_core/splitter.cpp` |
 
 ## 4. kmc's two backends and why k == gm_k
@@ -298,7 +298,7 @@ Why `k == gm_k` (kmc's `-p`): `CCustomOrder::check_k` throws unless the table's 
 signature length `k`, and requires `5 <= k <= 11`. In the code, the binary key
 is the whole k-mer (`DnaToBinaryKey(str, p)` = `gm_extract_dna_key(dna, p, p)`,
 `bin_key_mask = 2^p - 1`, code name `p` = k) and the DNA tables have exactly `4^k` entries
-(`load_dna_gm_file` checks `n == 1 << 2k`); there is no centre-key extraction or
+(`load_dna_gm_file` checks `n == 1 << 2k`); there is no center-key extraction or
 Sigma/Gamma tie-break beyond `str ^ seed`.
 
 Measured cost of the backends: see benchmark/kmc/tools/bench_signature_impls.cpp
@@ -309,9 +309,9 @@ Tests that pin the implementations:
 
 | Subject | File |
 |---|---|
-| kraken2 GreedyMini ranker / centre extension / rank-first vs `Rank()` | `kraken2/src/test_scheme_rankers.cc` |
+| kraken2 GreedyMini ranker / center extension / rank-first vs `Rank()` | `kraken2/src/test_scheme_rankers.cc` |
 | kraken2 `ModSampler` and `MinimizerScanner` (mod) | `kraken2/src/test_mod_minimizer.cc` |
-| sshash centre hash vs `hash_reference`, Python vectors | `sshash/test/test_gm_centre.cpp`, `sshash/test/gm_centre_vectors.inc` |
+| sshash center hash vs `hash_reference`, Python vectors | `sshash/test/test_gm_center.cpp`, `sshash/test/gm_center_vectors.inc` |
 | sshash rolling planes, `strand_invariant_minimizer_iterator` | `sshash/test/test_gm_rolling.cpp` |
 | sshash minimizer iterators / schemes | `sshash/test/test_minimizer.cpp`, `sshash/test/test_streaming_scheme.cpp` |
 | sshash mod-minimizer vs string-level reference | `sshash/test/test_mod_minimizer.cpp` |

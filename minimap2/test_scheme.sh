@@ -3,7 +3,7 @@
 # (scheme.h/scheme.cpp). See the plan's "Sanity checks / tests" section.
 #
 # greedymini uses orders/GreedyMini/w10_k15_canonical.gm (gm_k=15) at this
-# script's -k 15 (no extension) and, centre-extended, at -k 19 (section 12),
+# script's -k 15 (no extension) and, center-extended, at -k 19 (section 12),
 # with both AT/CG projections (the `greedymini_at1-cg0` test label = greedymini with --gm-projection at1-cg0). The
 # mod-minimizer schemes are strand-symmetric: mod-minimizer-xor (O_t = xor, sections 1-13)
 # and mod-minimizer-greedymini (O_t = the w20_k9 table at t = 9, -k 19; section 15).
@@ -167,7 +167,7 @@ r=4; k=15; w=10
 t=$(( r + (k - r) % w ))
 if [ "$t" -eq 5 ]; then ok "t formula gives 5 for k=15,w=10 (matches --mod-t 5 used above)"; else bad "t formula gave $t, expected 5"; fi
 
-echo "== 10. mod-minimizer window limits: t == k (mod w) (the centre rule), widest window, ring sized from w+k-t =="
+echo "== 10. mod-minimizer window limits: t == k (mod w) (the center rule), widest window, ring sized from w+k-t =="
 for o in $SCHEMES_MOD; do
 	if $BIN -a --scheme "$o" --order-seed "$SEED" --mod-t 1 -k 28 -w 27 "$REF" "$QRY" > "$TMP/w27_$o.sam" 2>"$TMP/w27_$o.err"; then
 		ok "-k 28 -w 27 --mod-t 1 (L = 54) builds+maps: $o"
@@ -194,7 +194,7 @@ else
 	tail -20 "$TMP/validate_mod_minimizer.out" >&2
 fi
 
-echo "== 12. greedymini centre extension: k = gm_k + 2i (k=19 here), both projections =="
+echo "== 12. greedymini center extension: k = gm_k + 2i (k=19 here), both projections =="
 for proj in at0-cg1 at1-cg0; do
 	f="--scheme greedymini --greedymini-file $GM_FILE --gm-projection $proj -k 19"
 	$BIN -a $f "$REF" "$QRY" > "$TMP/k19_$proj.sam" 2>/dev/null
@@ -248,7 +248,7 @@ for kind in 4 0 3; do # retired kind, native, greedymini without a table
 		bad "patched order kind $kind: unexpected error ($(tail -1 "$TMP/kind$kind.err"))"
 	fi
 done
-# A mod-minimizer index written before the centre tie rule: its order section
+# A mod-minimizer index written before the center tie rule: its order section
 # lacks the trailing tie-rule byte (drop it and shorten the section length).
 "$PY" - "$TMP/mod-minimizer-xor.mmi" "$TMP/mod_gt.mmi" <<'EOF2'
 import struct, sys

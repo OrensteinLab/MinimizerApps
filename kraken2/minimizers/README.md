@@ -5,15 +5,15 @@ GreedyMini (and related) UHS rank tables used by Kraken 2 when
 rank time: Kraken packs bases as ACGT=`00,01,10,11`, remaps to ATCG bitplanes
 so the key bit is **AT vs CG** (Σ), and the residual bit is Γ.
 
-**Centre extension (ℓ > gm_k).** A canonical (mirror-symmetric) table is
+**Center extension (ℓ > gm_k).** A canonical (mirror-symmetric) table is
 extended to ℓ = gm_k + 2i by viewing the ℓ-mer as `x y z`, `|x| = |z| = i`,
 `|y| = gm_k`: the rank is `table[Σ(y)]` (one lookup; strand invariant because
-the reverse complement has the mirror of Σ(y) at its centre), ties are broken
+the reverse complement has the mirror of Σ(y) at its center), ties are broken
 by the strand frame with the smaller Σ(xyz), then by the DNA (Γ), so the order
 is total on canonical ℓ-mers. It keeps the table's designed density at every
 valid ℓ (below). GreedyMini is DNA only (protein databases refuse it). The
 algorithm is the
-shared `common/minimizer-schemes/greedymini_centre.h` (the same extension
+shared `common/minimizer-schemes/greedymini_center.h` (the same extension
 sshash and minimap2 use, including the Σ/Γ plane extraction: `TwoBitPlanes`);
 `src/minimizer_rankers.h` only picks Kraken's ACGT encoding. For ℓ = gm_k
 (and mod-minimizer + greedymini, t = gm_k) the table ranks the ℓ-mer itself
@@ -33,7 +33,7 @@ both, plus a rolled Σ plane, `MinimizerScanner::SetRankFirst`;
 - **Table:** binary alphabet, mirror-symmetric, each rank shared by a key and
   its mirror only (checked at load; all shipped `*_canonical.gm` qualify).
 - **Spaced seed (`--minimizer-spaces`, default 7):** the rank lookup always
-  sees the *unmasked* centre; the mask (ANDed into each strand's word, never
+  sees the *unmasked* center; the mask (ANDed into each strand's word, never
   RC(x & mask)) only coarsens the tie-break fields. A mask applied to y would
   cost the table's density (measured 1.77 instead of 1.47 at ℓ = 31, s = 7).
   Note `s ≤ ℓ/4`, so s = 7 needs ℓ ≥ 28.
@@ -54,7 +54,7 @@ from them on demand (`../benchmark/kraken2/benchmark_interface.sh`'s
 
 | File | Role |
 |------|------|
-| `w5_k15_canonical.gm` | `--sketching minimizer --order greedymini` (`-g` / `GM_FILE`; default). Centre extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
+| `w5_k15_canonical.gm` | `--sketching minimizer --order greedymini` (`-g` / `GM_FILE`; default). Center extension keeps density factor 1.466 (the table's value at ℓ = gm_k = 15) for every valid ℓ = 15, 17, …, 31; see [Density](#density). |
 | `w5_k6_canonical.gm` | mod-minimizer + binary greedymini (`-M` / `MOD_GM_FILE`; default). gm_k=t=6 with Kraken ℓ=31,k=35 (w=5). |
 
 Kraken 2 supports only binary-alphabet GreedyMini tables; a few other tables
@@ -121,9 +121,9 @@ itself, i.e. the design density (1.4662 ± 0.0003 measured). `xor` is Kraken's
 default order (xor with the toggle mask; its density varies with the toggle),
 `xor-pcg-hash` a proper random hash.
 
-**Expected density, `w5_k15_canonical`** ([`../../benchmark/kraken2/tables/gm_centre_density_expected.csv`](../../benchmark/kraken2/tables/gm_centre_density_expected.csv))
+**Expected density, `w5_k15_canonical`** ([`../../benchmark/kraken2/tables/gm_center_density_expected.csv`](../../benchmark/kraken2/tables/gm_center_density_expected.csv))
 
-| ℓ | greedymini (centre) | xor | xor-pcg-hash |
+| ℓ | greedymini (center) | xor | xor-pcg-hash |
 |---|---|---|---|
 | 15 (= gm_k, design) | 1.4662 ± 0.0003 | 2.019 ± 0.064 | 1.9993 ± 0.0011 |
 | 17 | 1.4659 ± 0.0003 | 2.034 ± 0.058 | 1.9997 ± 0.0005 |
@@ -135,7 +135,7 @@ default order (xor with the toggle mask; its density varies with the toggle),
 | 29 | 1.4662 ± 0.0003 | 2.034 ± 0.046 | 1.9999 ± 0.0011 |
 | **31 (default)** | **1.4661 ± 0.0003** | 2.024 ± 0.074 | 2.0001 ± 0.0005 |
 
-The centre order is flat at the table's value for every valid ℓ. With the
+The center order is flat at the table's value for every valid ℓ. With the
 spaced seed on (s = 7, valid for ℓ ≥ 28) it is unchanged to the 4th decimal
 (ℓ = 29: 1.4662; ℓ = 31: 1.4661).
 
@@ -148,9 +148,9 @@ Other shipped tables at their own design window (k = ℓ + w − 1): `w11_k13`
 **Particular density** (real sequence): the library FASTAs of the benchmark's
 `standard_p0.5` Kraken library (`benchmark_minimizers.sh -z`; archaea, bacteria,
 human, UniVec_Core, viral; ≈1.42 Gbp, scanned in full, one pass per
-scheme), `w5_k15_canonical`, one run per cell ([`../../benchmark/kraken2/tables/gm_centre_density_particular.csv`](../../benchmark/kraken2/tables/gm_centre_density_particular.csv)):
+scheme), `w5_k15_canonical`, one run per cell ([`../../benchmark/kraken2/tables/gm_center_density_particular.csv`](../../benchmark/kraken2/tables/gm_center_density_particular.csv)):
 
-| ℓ | greedymini (centre) | xor | xor-pcg-hash |
+| ℓ | greedymini (center) | xor | xor-pcg-hash |
 |---|---|---|---|
 | 15 (= gm_k) | 1.4730 | 1.954 | 2.000 |
 | 17 | 1.4727 | 2.099 | 1.9998 |
@@ -172,12 +172,12 @@ machine).
 make -C kraken2/src benchmark_minimizers
 S=benchmark/kraken2/density_sweep.sh; G=orders/GreedyMini/w5_k15_canonical.gm
 # expected (6 streams x 3 Mb; -s = minimizer spaces; add -L "29 31" with -s 7; -R adds the random baselines)
-$S -b kraken2/src/benchmark_minimizers -g $G -v centre -o e.csv -s 0 -n 3000000 -S 6 -R
+$S -b kraken2/src/benchmark_minimizers -g $G -v center -o e.csv -s 0 -n 3000000 -S 6 -R
 python3.9 benchmark/kraken2/density_summary.py e.csv     # mean +- std per l
 # particular (one stream is enough; -d = the library)
 DB=$KRAKEN2_BENCH_ROOT/db/standard_p0.5
 for l in 31 25 21 17; do
-  $S -b kraken2/src/benchmark_minimizers -g $G -v centre -o p.csv -L $l -S 1 -n 100000 -d $DB -j 3 -R
+  $S -b kraken2/src/benchmark_minimizers -g $G -v center -o p.csv -L $l -S 1 -n 100000 -d $DB -j 3 -R
 done
 python3.9 benchmark/kraken2/density_summary.py p.csv --col fac_particular
 ```

@@ -921,9 +921,9 @@ SCHEME_INFO = {
     "xor-pcg-hash": ("minimizer", "xor-pcg-hash", "--sketching minimizer --order xor-pcg-hash",
                 "random order with a PCG scramble of the seed-XORed l-mer"),
     "greedymini": ("minimizer", "greedymini", "--sketching minimizer --order greedymini --greedymini-file <table>.gm",
-                   "GreedyMini table (centre extension), ties broken by the seed"),
+                   "GreedyMini table (center extension), ties broken by the seed"),
     "mod-minimizer-xor": ("mod-minimizer", "xor", "--sketching mod-minimizer --order xor",
-                          "strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri, with the centre "
+                          "strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri, with the center "
                           "tie rule; this fork) on a random (xor) order"),
     "mod-minimizer-greedymini": ("mod-minimizer", "greedymini",
                                  "--sketching mod-minimizer --order greedymini --greedymini-file <table>.gm",

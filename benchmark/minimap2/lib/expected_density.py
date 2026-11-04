@@ -134,7 +134,7 @@ def expected_cache_key(
     ident = {
         # bump when an order's hash or the row layout changes (2: greedymini --order-seed
         # toggles Gamma; 3: projection/gm_k/gm_table columns; 4: mod_t and L columns;
-        # 5: the mod-minimizer's centre tie rule; 6: mod-minimizer-greedymini;
+        # 5: the mod-minimizer's center tie rule; 6: mod-minimizer-greedymini;
         # 7: counted by minimap2's own sketching, a random string per seed;
         # 8: mean/std to 6/8 decimals)
         "hash_version": 8,

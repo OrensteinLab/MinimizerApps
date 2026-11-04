@@ -146,7 +146,7 @@ static void test_iterator(uint64_t k, uint64_t m, uint64_t length, std::mt19937_
     GreedyMini (strand-invariant order): the iterator and util::compute_minimizer hash the RAW
     m-mers and canonicalize lazily. Check both against an independent brute-force reference that
     follows the original definition: hash the numerically-canonical m-mer with the *reference*
-    dual-orientation hash, leftmost minimum, ties broken centre-closest (mirror images: smaller
+    dual-orientation hash, leftmost minimum, ties broken center-closest (mirror images: smaller
     index if kmer <= rc(kmer)). Sequences are random with injected tandem repeats and
     reverse-complement copies, so that ties (equal hashes at several loci) actually fire.
 */

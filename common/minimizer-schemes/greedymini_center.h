@@ -1,5 +1,5 @@
 /*
- * GreedyMini CENTRE extension of a canonical binary table (additive header;
+ * GreedyMini CENTER extension of a canonical binary table (additive header;
  * includes greedymini_rank.h and changes nothing in it).
  *
  * A canonical (mirror-symmetric) binary table ranks the 2^gm_k binary strings
@@ -16,7 +16,7 @@
  *
  * (an infinite rank is UINT64_MAX and therefore never the minimum unless both
  * strands are infinite). Why this is the right order:
- *  - The reverse complement of x y z has the mirror of Sigma(y) at its centre
+ *  - The reverse complement of x y z has the mirror of Sigma(y) at its center
  *    and a mirror-symmetric table gives the same rank: ONE lookup, strand
  *    invariant by construction.
  *  - Every finite rank is shared by exactly a key and its mirror, so
@@ -37,7 +37,7 @@
  *
  * Two packings (constructor flag `injective`):
  *  - compressed (default; kraken2, l up to 31): the layout above, an infinite
- *    centre gives UINT64_MAX. Windows with an infinite centre therefore all
+ *    center gives UINT64_MAX. Windows with an infinite center therefore all
  *    tie (the order is not injective on them); a consumer that needs a total
  *    order there must break ties itself (kraken2's scanner breaks equal
  *    values, and a window of infinite l-mers, by the strand-invariant
@@ -47,7 +47,7 @@
  *    (Sigma << l | Gamma ^ toggle)), packed as
  *        value = rank_or_inf << 2l | min(Sigma << l | Gamma ^ t,
  *                                       Sigma_rc << l | Gamma_rc ^ t)
- *    with rank_or_inf = the table's infinity (0xFFFF) for an infinite centre,
+ *    with rank_or_inf = the table's infinity (0xFFFF) for an infinite center,
  *    so infinite windows are ordered too and the value is injective on
  *    canonical l-mers (the winning frame's (Sigma, Gamma) determine the DNA).
  *    This is bit for bit sshash's custom_scheme_hasher hash.
@@ -55,8 +55,8 @@
  * alone is rank_of_sigma() / rank_at() (one table load).
  *
  * Spaced seed / per-strand masking: the table lookup (rank, ybit) must see the
- * UNMASKED centre (masking bits of y destroys the density the table was designed
- * for: kraken2's default 7-space mask lands in the centre and costs 0.3 in
+ * UNMASKED center (masking bits of y destroys the density the table was designed
+ * for: kraken2's default 7-space mask lands in the center and costs 0.3 in
  * density factor at l = 31); the mask only coarsens the tie-break fields. The
  * *_masked entry points take the unmasked Sigma for the lookup and the masked
  * Sigma/Gamma planes of each strand for Sx, Sz and Gamma.
@@ -64,8 +64,8 @@
  * Also here: a slow per-base reference (tests) and a small density helper.
  */
 
-#ifndef MINIMIZER_ORDERS_GREEDYMINI_CENTRE_H_
-#define MINIMIZER_ORDERS_GREEDYMINI_CENTRE_H_
+#ifndef MINIMIZER_ORDERS_GREEDYMINI_CENTER_H_
+#define MINIMIZER_ORDERS_GREEDYMINI_CENTER_H_
 
 #include "greedymini_rank.h"
 
@@ -76,7 +76,7 @@
 #include <string>
 #include <vector>
 
-namespace gm_centre {
+namespace gm_center {
 
 inline uint64_t reverse_bits64(uint64_t v) {
   v = __builtin_bswap64(v);
@@ -97,8 +97,8 @@ inline uint32_t mirror_key(uint32_t key, int gm_k) {
 }
 
 // Key bits [i, i + gm_k) of an l-bit Sigma plane counted from the MSB, i.e.
-// the centre y of x y z.
-inline uint32_t centre_key(uint64_t sigma, int i, int gm_k) {
+// the center y of x y z.
+inline uint32_t center_key(uint64_t sigma, int i, int gm_k) {
   return (uint32_t)(sigma >> i) & (uint32_t)((1ULL << gm_k) - 1ULL);
 }
 
@@ -179,7 +179,7 @@ inline void check_length(int l, int gm_k) {
     throw std::invalid_argument("GreedyMini gm_k exceeds minimizer length l");
   if (((l - gm_k) & 1) != 0)
     throw std::invalid_argument(
-        "GreedyMini centre extension needs l - gm_k even (l = " +
+        "GreedyMini center extension needs l - gm_k even (l = " +
         std::to_string(l) + ", gm_k = " + std::to_string(gm_k) +
         "); valid l: gm_k, gm_k+2, ..., 31");
 }
@@ -207,7 +207,7 @@ inline uint32_t validate_table(const GreedyMiniTable &table, int l,
     const size_t mir = mirror_key((uint32_t)key, gm_k);
     if (r[key] != r[mir])
       throw std::invalid_argument(
-          "GreedyMini centre extension needs a mirror-symmetric (canonical) "
+          "GreedyMini center extension needs a mirror-symmetric (canonical) "
           "table: rank[" + std::to_string(key) + "] != rank[" +
           std::to_string(mir) + "]");
     if (r[key] != GreedyMiniTable::kInfRank && require_rank_pairs &&
@@ -221,7 +221,7 @@ inline uint32_t validate_table(const GreedyMiniTable &table, int l,
       const size_t mir = mirror_key((uint32_t)key, gm_k);
       if (keys_of_rank[r[key]] != (key == mir ? 1 : 2))
         throw std::invalid_argument(
-            "GreedyMini centre extension needs every rank shared by a key and "
+            "GreedyMini center extension needs every rank shared by a key and "
             "its mirror only (rank " + std::to_string(r[key]) + ")");
     }
   for (size_t key = 0; key < n; key++)
@@ -258,7 +258,7 @@ class Order {
     }
     if (sh_rank_ + rank_bits_ > 64)
       throw std::invalid_argument(
-          std::string("GreedyMini centre extension: l = ") +
+          std::string("GreedyMini center extension: l = ") +
           std::to_string(l_) + " too large to pack the " +
           (injective_ ? "injective" : "compressed") + " order");
     z_mask_ = (1ULL << i_) - 1ULL;
@@ -274,23 +274,23 @@ class Order {
 
   int l() const { return l_; }
   int gm_k() const { return gm_k_; }
-  int centre_offset() const { return i_; }  // i = (l - gm_k) / 2
+  int center_offset() const { return i_; }  // i = (l - gm_k) / 2
   bool injective() const { return injective_; }
   // Bits of a value: compressed rank_bits + 2i + 1 + l, injective 16 + 2l.
   int value_bits() const { return sh_rank_ + rank_bits_; }
-  // Compressed mode: a window whose centre is not in the UHS has the value
+  // Compressed mode: a window whose center is not in the UHS has the value
   // UINT64_MAX. Injective mode: its rank field is kInfRank and the low bits
   // are a real tie-break.
   enum : uint16_t { kInfRank = GreedyMiniTable::kInfRank };
 
-  // Rank (kInfRank for a centre outside the UHS) of the l-bit Sigma plane of
+  // Rank (kInfRank for a center outside the UHS) of the l-bit Sigma plane of
   // an l-mer, or of the window at `shift` of a longer Sigma plane: the l-mer
-  // whose own plane is (plane >> shift) & (2^l - 1) has its centre key at
+  // whose own plane is (plane >> shift) & (2^l - 1) has its center key at
   // bits [shift + i, shift + i + gm_k) of the plane. One table load; the
   // rank-first comparison of two windows equals the comparison of their
   // values' top fields in both modes.
   uint16_t rank_of_sigma(uint64_t sigma) const {
-    return ranks_[centre_key(sigma, i_, gm_k_)];
+    return ranks_[center_key(sigma, i_, gm_k_)];
   }
   uint16_t rank_at(uint64_t plane, int shift) const {
     return ranks_[(uint32_t)(plane >> (shift + i_)) &
@@ -298,19 +298,19 @@ class Order {
   }
   uint16_t rank_of_key(uint32_t key) const { return ranks_[key]; }
 
-  // Packed value of one strand (UINT64_MAX when the centre is not in the UHS).
+  // Packed value of one strand (UINT64_MAX when the center is not in the UHS).
   uint64_t value_of_strand(uint64_t sigma, uint64_t gamma) const {
-    const uint32_t key = centre_key(sigma, i_, gm_k_);
+    const uint32_t key = center_key(sigma, i_, gm_k_);
     return pack(sigma, gamma, ranks_[key], key);
   }
 
   // Order value from the planes of one strand when the other strand is its
   // exact reverse complement and the table is read unmodified: one lookup
-  // (the rc strand has the mirror centre, hence the same rank), the rc planes
+  // (the rc strand has the mirror center, hence the same rank), the rc planes
   // from bit reversals, the tie-break a branchless min. UINT64_MAX when the
-  // centre is not in the UHS.
+  // center is not in the UHS.
   uint64_t value_of_planes(uint64_t sigma, uint64_t gamma) const {
-    const uint32_t key = centre_key(sigma, i_, gm_k_);
+    const uint32_t key = center_key(sigma, i_, gm_k_);
     const uint16_t r = ranks_[key];
     if (!injective_ && r == GreedyMiniTable::kInfRank)  // see value_of_both_strands
       return UINT64_MAX;
@@ -318,7 +318,7 @@ class Order {
     const uint64_t gamma_rc = reverse_low_bits(gamma, l_) ^ l_mask_;
     const uint64_t pa = pack(sigma, gamma, r, key);
     const uint64_t pb =
-        pack(sigma_rc, gamma_rc, r, centre_key(sigma_rc, i_, gm_k_));
+        pack(sigma_rc, gamma_rc, r, center_key(sigma_rc, i_, gm_k_));
     return pa < pb ? pa : pb;
   }
 
@@ -329,10 +329,10 @@ class Order {
   // exact reverse-complement planes.
   uint64_t value_of_both_strands(uint64_t sigma, uint64_t gamma,
                                  uint64_t sigma_rc, uint64_t gamma_rc) const {
-    const uint32_t key = centre_key(sigma, i_, gm_k_);
+    const uint32_t key = center_key(sigma, i_, gm_k_);
     const uint16_t r = ranks_[key];
     // injective_ first: constant per Order, so an injective scan does not
-    // branch on whether the centre is in the UHS (unpredictable per l-mer)
+    // branch on whether the center is in the UHS (unpredictable per l-mer)
     if (!injective_ && r == GreedyMiniTable::kInfRank)
       return UINT64_MAX;
     const uint64_t pa = pack(sigma, gamma, r, key);
@@ -350,11 +350,11 @@ class Order {
   }
 
   // Masked variants (see the header comment): `sigma` is the unmasked Sigma
-  // (rank and ybit come from its centre), `sigma_m` / `gamma_m` the planes of
+  // (rank and ybit come from its center), `sigma_m` / `gamma_m` the planes of
   // the masked strand word (Sx, Sz, Gamma come from them).
   uint64_t value_of_strand_masked(uint64_t sigma, uint64_t sigma_m,
                                   uint64_t gamma_m) const {
-    const uint32_t key = centre_key(sigma, i_, gm_k_);
+    const uint32_t key = center_key(sigma, i_, gm_k_);
     return pack(sigma_m, gamma_m, ranks_[key], key);
   }
 
@@ -514,6 +514,6 @@ inline double density_factor(const std::vector<uint64_t> &ranks, int w) {
   return (double)selected / (double)windows * (double)(w + 1);
 }
 
-}  // namespace gm_centre
+}  // namespace gm_center
 
-#endif  // MINIMIZER_ORDERS_GREEDYMINI_CENTRE_H_
+#endif  // MINIMIZER_ORDERS_GREEDYMINI_CENTER_H_

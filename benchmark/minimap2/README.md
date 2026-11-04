@@ -75,7 +75,7 @@ Table 1), built and evaluated the way the paper describes:
 
 k is each preset's own default, as the paper ran minimap2 with `-cx map-pb`
 / `-cx map-ont` (`lib/constants.sh:preset_default_k`; `K=` overrides); every
-scheme uses that k (GreedyMini's k15 table is centre-extended to k=19), and
+scheme uses that k (GreedyMini's k15 table is center-extended to k=19), and
 mod-minimizer's t = 4 + (k-4) % w (9 at k=19, 5 at k=15).
 mod-minimizer-greedymini ranks the t-mers by KMC3's `w20_k9` table (`MOD_GM_TABLE`;
 k = t = 9, w = T = w + k - t = 20), so it runs only on the k=19 datasets (D1, D2);
@@ -204,8 +204,8 @@ winning t-mer's position mod w") is not reverse-complement symmetric, so
 minimap2's mod-minimizer-xor uses a canonical variant shared with kraken2 and
 sshash (`common/minimizer-schemes/mod_minimizer_rule.h`): with t == k (mod w)
 a unique minimal t-mer samples offset x mod w, and a tie at the minimum takes
-the offset closest to the window centre, two equally close ones by the window
-<= its reverse complement (the centre rule of Cologni & Pibiri, as in
+the offset closest to the window center, two equally close ones by the window
+<= its reverse complement (the center rule of Cologni & Pibiri, as in
 SSHash). A read and its reverse complement then select the same loci, as for
 the per-locus canonical orders, and the scheme is forward.
 `analysis/canonical_mod.py` compares plain mod-sampling with the earlier

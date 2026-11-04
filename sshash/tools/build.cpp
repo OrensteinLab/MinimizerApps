@@ -125,7 +125,7 @@ int build(int argc, char** argv) {
 
     if (is_mod_mode(build_config.scheme) and
         !mod_rule::t_is_canonical(int(m), int(k - m + 1), int(build_config.mod_t))) {
-        std::cerr << "Error: the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie "
+        std::cerr << "Error: the mod-minimizer needs --mod-t == m (mod k - m + 1) (the center tie "
                      "rule; e.g. t = 4 + (m - 4) mod (k - m + 1))"
                   << std::endl;
         return 1;

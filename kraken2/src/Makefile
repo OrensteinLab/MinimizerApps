@@ -33,7 +33,7 @@ endif
 MM_HEADERS = mmscanner.h minimizer_rankers.h sketching_schemes.h \
 	mod_minimizer.h dna_kmer.h greedymini_rank.h \
 	../../common/minimizer-schemes/greedymini_rank.h \
-	../../common/minimizer-schemes/greedymini_centre.h \
+	../../common/minimizer-schemes/greedymini_center.h \
 	../../common/minimizer-schemes/mod_minimizer_rule.h
 
 all: check_prof_mode $(PROGS)

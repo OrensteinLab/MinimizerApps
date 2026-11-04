@@ -8,9 +8,9 @@ brute_force() applies the definition window by window (no deques, no
 incremental state): for the window of L = w+k-1 bases starting at k-mer
 ordinal `win`, the T = w+k-t t-mers are ranked by O_t (xor: canonical t-mer
 XOR seed; t == k mod w); every minimal t-mer x offers the offset x mod w, the one
-closest to the centre (w-1)/2 wins, and between two equally close ones the
+closest to the center (w-1)/2 wins, and between two equally close ones the
 left if the window <= its reverse complement lexicographically, the right
-otherwise (the centre rule, common/minimizer-schemes/mod_minimizer_rule.h).
+otherwise (the center rule, common/minimizer-schemes/mod_minimizer_rule.h).
 
 On (w, k, t, seed) configs the compiled code, via the sketch_dump test driver
 (`make sketch_dump`), must emit exactly the brute force's loci, including
@@ -89,7 +89,7 @@ def rolling_values(seq: list[int], length: int) -> list[int]:
 
 def window_selections(seq: list[int], w: int, k: int, t: int, order: Order) -> list[int]:
     """The k-mer ordinal each window selects, by the definition above."""
-    assert t % w == k % w, "the centre rule needs t == k (mod w)"
+    assert t % w == k % w, "the center rule needs t == k (mod w)"
     T = w + k - t
     L = w + k - 1
     t_rank = order.ranks(seq, t)
@@ -224,13 +224,13 @@ def main() -> int:
             if msg:
                 failures.append(f"(w={w},k={k},t={t},seed={hex(seed)}): {msg}")
 
-    # O_t = GreedyMini (w20_k9: t = gm_k = 9, and centre-extended t = gm_k + 2i), both projections
+    # O_t = GreedyMini (w20_k9: t = gm_k = 9, and center-extended t = gm_k + 2i), both projections
     gm_configs = [
         (10, 19, 9, 6000),   # the benchmark's k19_w10 with the w20_k9 table
         (5, 14, 9, 3000),
         (11, 20, 9, 3000),   # even k
         (2, 11, 9, 1500),    # even L
-        (10, 21, 11, 3000),  # t = gm_k + 2: the centre extension of the table to t
+        (10, 21, 11, 3000),  # t = gm_k + 2: the center extension of the table to t
         (3, 16, 13, 1500),   # t = gm_k + 4
     ]
     for (w, k, t, seq_len) in gm_configs:

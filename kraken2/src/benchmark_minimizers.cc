@@ -254,7 +254,7 @@ static void time_rank_paths(const std::vector<uint64_t> &mers,
 }
 
 // Back-to-back batch replay (no per-call timer): mean ns per call of the full
-// Rank() and, for the centre order, of the rank-first path (Sigma pext + one
+// Rank() and, for the center order, of the rank-first path (Sigma pext + one
 // table load), which is what the scanner pays per l-mer before any tie.
 static void time_rank_batch(const std::vector<uint64_t> &mers, GMRanker &gm,
                             int reps) {
@@ -579,7 +579,7 @@ struct ScannerSpec {
   bool gm_flip = false;
 };
 
-// GM centre order scanning: 0 = full Rank() per l-mer (reference), 1 = rank
+// GM center order scanning: 0 = full Rank() per l-mer (reference), 1 = rank
 // first (Sigma pext + table load), 2 = rank first with the Sigma plane rolled.
 static int g_rank_path = kDefaultRollSigma ? 2 : 1;
 
@@ -1049,7 +1049,7 @@ static void usage() {
          "(library/ FASTAs)\n"
       << "  -o FILE   write density table to FILE (.csv or text summary)\n"
       << "  --seed-idx INT  seed index column for CSV (default: 0)\n"
-      << "  --rank-path full|first|roll  greedymini centre scan: full Rank() per\n"
+      << "  --rank-path full|first|roll  greedymini center scan: full Rank() per\n"
          "            l-mer, rank first (pext Sigma), rank first + rolled Sigma\n"
       << "  -L FLOAT  ns per TOK_LOOKUP (GetBatch); from lookup_s/lookups×1e9\n"
       << "  -F FILE   classify timing file (nextminimizer_timing_*.txt)\n"

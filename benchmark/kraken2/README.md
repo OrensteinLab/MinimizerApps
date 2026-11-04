@@ -350,9 +350,9 @@ lists the variants and which are already done without building anything;
 
 `mod-minimizer` is strand-symmetric mod-sampling (this fork, not a published
 scheme; `kraken2/src/mod_minimizer.h`): mod-sampling (Groot Koerkamp & Pibiri,
-2024) with t == l (mod w) and the centre tie rule shared with minimap2 and
+2024) with t == l (mod w) and the center tie rule shared with minimap2 and
 sshash (`common/minimizer-schemes/mod_minimizer_rule.h`): a tie at the minimum
-takes the offset closest to the k-mer's centre, two equally close ones by the
+takes the offset closest to the k-mer's center, two equally close ones by the
 k-mer <= its reverse complement, so a read and its reverse complement give the
 same minimizers. Databases built with the earlier forward-only mod-minimizer,
 or with the G/T-strand tie rule, are rejected (rebuild them).
@@ -467,7 +467,7 @@ Density **sweeps** over ℓ and streams (mean ± std per ℓ, `xor` baselines) u
 the same tool through `density_sweep.sh` + `density_summary.py`; the exact
 commands and the measured greedymini tables are in
 [`../../kraken2/minimizers/README.md`](../../kraken2/minimizers/README.md#density).
-Raw sweep rows: `tables/gm_centre_density_*.csv`.
+Raw sweep rows: `tables/gm_center_density_*.csv`.
 
 ## Measurement protocol
 

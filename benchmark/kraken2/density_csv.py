@@ -28,9 +28,9 @@ from bench_const import scheme_id, scheme_sort_key  # noqa: E402
 import scheme_names  # noqa: E402
 
 ID_COLS = ("gm_k", "projection", "gm_table", "mod_t")
-# Tie rule of the mod-minimizer the rows were computed with; rows without it predate the centre rule
+# Tie rule of the mod-minimizer the rows were computed with; rows without it predate the center rule
 # (G/T-strand rule) and are recomputed. Same stamp as benchmark/sshash/scripts/expected_density.py.
-MOD_TIE_RULE = "centre"
+MOD_TIE_RULE = "center"
 
 
 def is_mod(scheme):

@@ -1,10 +1,10 @@
 // Checks the GreedyMini rank/plane API and strand_invariant_minimizer_iterator (rolling Sigma
 // plane, ring of window ranks, full hashes only on rank ties) against what it replaces:
-//  (a) hash_from_planes(planes_of_mmer(x)) == hash_gm(x) == hash_reference(x) (the centre
+//  (a) hash_from_planes(planes_of_mmer(x)) == hash_gm(x) == hash_reference(x) (the center
 //      reference is the independent per-base implementation), over random / biased /
 //      palindromic / repeat m-mers;
 //  (b) the Sigma plane of a k-mer (sigma_of_kmer, and rolled with roll_sigma along a sequence)
-//      gives, via centre_rank, the rank (hash_reference(window) >> 2m) of every m-mer window;
+//      gives, via center_rank, the rank (hash_reference(window) >> 2m) of every m-mer window;
 //  (c) the iterator's minimizer_info for every k-mer equals that of the pre-optimization iterator
 //      (copied verbatim below as legacy_si_iterator, which hashes each window with hash_gm), and
 //      util::compute_minimizer (rank first) equals util::compute_minimizer_reference (every
@@ -143,7 +143,7 @@ private:
         m_position = begin + m_k - m_m;
     }
 
-    /* Centre-closest tie-break, see `minimizer_iterator::break_tie`. */
+    /* Center-closest tie-break, see `minimizer_iterator::break_tie`. */
     void break_tie(Kmer kmer, Kmer const& kmer_rc, minimizer_info& mini_info) const {
         assert(m_num_mins > 1);
 
@@ -273,8 +273,8 @@ static void check_planes_and_windows(hasher_type const& h, uint64_t k, uint64_t 
                 w.take_chars(m);
                 const uint64_t ref = h.hash_reference(uint64_t(w));
                 ++n_windows;
-                if (h.centre_rank(fresh, (int)i) != (ref >> (2 * m)) or
-                    h.centre_rank(rolled, (int)i) != (ref >> (2 * m))) {
+                if (h.center_rank(fresh, (int)i) != (ref >> (2 * m)) or
+                    h.center_rank(rolled, (int)i) != (ref >> (2 * m))) {
                     fail("window rank from the Sigma plane != reference rank (k=" + std::to_string(k) +
                          " m=" + std::to_string(m) + " i=" + std::to_string(i) + ")");
                 }

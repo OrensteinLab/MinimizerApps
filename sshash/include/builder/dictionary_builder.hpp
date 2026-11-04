@@ -25,7 +25,7 @@ struct dictionary_builder  //
             !mod_rule::t_is_canonical(int(build_config.m), int(build_config.k - build_config.m + 1),
                                       int(build_config.mod_t))) {
             throw std::invalid_argument(
-                "the mod-minimizer needs --mod-t == m (mod k - m + 1) (the centre tie rule)");
+                "the mod-minimizer needs --mod-t == m (mod k - m + 1) (the center tie rule)");
         }
         d.m_hasher.seed(build_config.seed);
         d.m_hasher.configure(build_config.scheme, build_config.m, build_config.greedy_mini_filename,

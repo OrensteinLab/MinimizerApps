@@ -170,8 +170,8 @@ def xor_pcg_hash(value: int, seed: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# GreedyMini centre extension, injective packing (port of
-# common/minimizer-schemes/greedymini_centre.h gm_centre::Order with
+# GreedyMini center extension, injective packing (port of
+# common/minimizer-schemes/greedymini_center.h gm_center::Order with
 # injective=true and TwoBitPlanes<true>, i.e. the ACGT = 0..3 encoding that
 # kraken2 and minimap2 use; benchmark/sshash/scripts/density.py has the same
 # order on sshash's own encoding). l = gm_k + 2i; first base = most
@@ -183,9 +183,9 @@ def _reverse_low_bits(v: int, n: int) -> int:
     return int(format(v, f"0{n}b")[::-1], 2) if n else 0
 
 
-def greedymini_centre_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, flip: bool = False,
+def greedymini_center_hash(lmer: int, l: int, gm_ranks: list[int], gm_k: int, flip: bool = False,
                            toggle: int = 0) -> int:
-    """Value of an ACGT=0123 l-mer: rank of the centre key's Sigma plane in the
+    """Value of an ACGT=0123 l-mer: rank of the center key's Sigma plane in the
     table, then min over the two strands of (Sigma << l | Gamma ^ toggle). Sigma =
     AT vs CG (bit0 ^ bit1, complemented when `flip`: --gm-projection at1-cg0),
     Gamma = bit 1, toggle = the low l bits of minimap2's --order-seed. Strand
@@ -225,13 +225,13 @@ def rolling_values(dna_stream: list[int], length: int) -> list[int]:
     return out
 
 
-def mod_centre_selections(ranks: list[int], w: int, T: int, le_rc) -> list[int]:
+def mod_center_selections(ranks: list[int], w: int, T: int, le_rc) -> list[int]:
     """The k-mer position each window selects under the strand-symmetric
     mod-minimizer of the kraken2, minimap2 and sshash forks
     (common/minimizer-schemes/mod_minimizer_rule.h). `ranks` holds one
     strand-invariant rank per t-mer position; window s holds the T t-mers
     ranks[s:s+T] (T = w + k - t, t == k mod w). Every minimal t-mer x offers
-    the offset x mod w; the offset closest to the centre (w-1)/2 wins, and
+    the offset x mod w; the offset closest to the center (w-1)/2 wins, and
     between the two equally close mirror offsets the left if le_rc(s) (window s
     <= its reverse complement, in the app's own order), else the right. le_rc
     is called only on such a two-way tie. Returns s + offset per window."""
@@ -258,8 +258,8 @@ def mod_sampling_density(
     """(n_kmers, n_selected) of the strand-symmetric mod-minimizer as
     minimap2's mod-minimizer-xor and kraken2's mod-minimizer define it
     (minimap2/scheme.cpp, kraken2/src/mod_minimizer.h): windows of L = w+k-1
-    bases, canonical t-mers ranked by hash_fn, the centre rule of
-    mod_centre_selections with window <= its reverse complement compared
+    bases, canonical t-mers ranked by hash_fn, the center rule of
+    mod_center_selections with window <= its reverse complement compared
     lexicographically. The scheme is forward, so the distinct selected
     positions are its super-k-mers; density_factor(n_selected, n_kmers, w)."""
     n = len(dna_stream)
@@ -270,5 +270,5 @@ def mod_sampling_density(
         win = dna_stream[s:s + L]
         return win <= [3 - b for b in reversed(win)]
 
-    selected = set(mod_centre_selections(ranks, w, T, le_rc)) if n >= L else set()
+    selected = set(mod_center_selections(ranks, w, T, le_rc)) if n >= L else set()
     return max(0, n - k + 1), len(selected)

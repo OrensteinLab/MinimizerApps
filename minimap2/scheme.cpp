@@ -44,7 +44,7 @@
 // naively for GreedyMini's rank (which collapses many distinct non-UHS
 // k-mers to the same value) it would pathologically over-select right where
 // GreedyMini is supposed to reduce density. RankState<MM_SCHEME_GREEDYMINI> below uses the
-// shared centre-extension order in its injective packing (UHS rank, then the
+// shared center-extension order in its injective packing (UHS rank, then the
 // Sigma and Gamma planes of the k-mer), which is a total order on canonical
 // k-mers, so ties only occur where the original algorithm intends duplicate
 // detection to fire (genuine repeats), not as an artifact of the ranking's
@@ -55,7 +55,7 @@
 
 #include "../common/minimizer-schemes/pcg_rxs_m_xs.h"
 #include "../common/minimizer-schemes/greedymini_rank.h"
-#include "../common/minimizer-schemes/greedymini_centre.h"
+#include "../common/minimizer-schemes/greedymini_center.h"
 #include "../common/minimizer-schemes/mod_minimizer_rule.h"
 
 #include <algorithm>
@@ -83,14 +83,14 @@ struct mm_scheme_s {
 	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI and MOD_GREEDYMINI only
 	// GREEDYMINI / MOD_GREEDYMINI only, built once at init/deserialize for the
 	// index's k, respectively the mod-minimizer's t (read-only afterwards, so shared by all sketching threads and by
-	// mm_scheme_clone's copies): the centre-extension order of the gm_k table
+	// mm_scheme_clone's copies): the center-extension order of the gm_k table
 	// at length l = k or t (l = gm_k + 2i), and the Sigma/Gamma planes of
 	// minimap2's ACGT=0123 l-mers. --gm-projection at1-cg0 complements Sigma (sshash's
 	// custom_scheme_hasher.hpp does the same on its own encoding).
 	int gm_l = 0;
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
-	std::shared_ptr<const gm_centre::Order> gm_order;
-	gm_centre::TwoBitPlanes<true> gm_planes;
+	std::shared_ptr<const gm_center::Order> gm_order;
+	gm_center::TwoBitPlanes<true> gm_planes;
 };
 
 namespace {
@@ -119,16 +119,16 @@ int gm_length(mm_scheme_kind_t kind, int k, int t) {
 	return kind == MM_SCHEME_MOD_GREEDYMINI ? t : k;
 }
 
-// GreedyMini rank of a k-mer: the shared centre extension
-// (common/minimizer-schemes/greedymini_centre.h), as kraken2's GMRanker and
+// GreedyMini rank of a k-mer: the shared center extension
+// (common/minimizer-schemes/greedymini_center.h), as kraken2's GMRanker and
 // sshash's custom_scheme_hasher use it. With k = gm_k + 2i the k-mer is
 // x y z (|x| = |z| = i, |y| = gm_k): rank the binary (AT/CG) projection of
-// the centre y by the table, then break ties by the smaller of the two
+// the center y by the table, then break ties by the smaller of the two
 // strands' (Sigma, Gamma ^ toggle), toggle = the low k bits of --order-seed
 // (as kraken2's and sshash's greedymini seeds) -- the injective packing, a total
 // order on canonical k-mers that is strand invariant (the reverse
-// complement's centre is the mirror of y, and the table is mirror
-// symmetric). A centre outside the UHS has rank 0xFFFF in the top field, so
+// complement's center is the mirror of y, and the table is mirror
+// symmetric). A center outside the UHS has rank 0xFFFF in the top field, so
 // the value is never UINT64_MAX (k <= 23, checked at init) and such k-mers
 // still compete, ordered by their planes. i = 0 (k == gm_k) is the plain
 // table order.
@@ -173,8 +173,8 @@ template <> struct RankState<MM_SCHEME_XOR_PCG_HASH> {
 // complement's newest base is its highest (roll_in_high), and complementing
 // a base keeps its AT/CG class (same Sigma bit) and flips Gamma.
 template <> struct RankState<MM_SCHEME_GREEDYMINI> {
-	const gm_centre::Order &order;
-	const gm_centre::TwoBitPlanes<true> &planes;
+	const gm_center::Order &order;
+	const gm_center::TwoBitPlanes<true> &planes;
 	int k;
 	uint64_t mask, sigma_f = 0, gamma_f = 0, sigma_r = 0, gamma_r = 0;
 	RankState(const mm_scheme_t *ord, int k_)
@@ -182,9 +182,9 @@ template <> struct RankState<MM_SCHEME_GREEDYMINI> {
 	void push(int c) {
 		const uint64_t s = planes.base_sigma((uint64_t)c);
 		const uint64_t g = (uint64_t)c >> 1;
-		sigma_f = gm_centre::roll_in_low(sigma_f, s, mask);
+		sigma_f = gm_center::roll_in_low(sigma_f, s, mask);
 		gamma_f = ((gamma_f << 1) | g) & mask;
-		sigma_r = gm_centre::roll_in_high(sigma_r, s, k);
+		sigma_r = gm_center::roll_in_high(sigma_r, s, k);
 		gamma_r = (gamma_r >> 1) | ((g ^ 1ULL) << (k - 1));
 	}
 	uint64_t rank(uint64_t) const { return order.value_of_both_strands(sigma_f, gamma_f, sigma_r, gamma_r); }
@@ -351,9 +351,9 @@ void sketch_single_window(const mm_scheme_t *ord, void *km, const char *str, int
 // shared with the kraken2 and sshash forks) requires t == k (mod w), so the
 // offset p = x mod w of a minimal t-mer x and the mirror offset w-1-p in the
 // reverse complement correspond. A unique minimum samples its offset; a tie
-// takes the offset closest to the window centre (w-1)/2, and between two
+// takes the offset closest to the window center (w-1)/2, and between two
 // equally close ones the left if W <= revcomp(W) lexicographically, the right
-// otherwise (the centre rule of Cologni & Pibiri, as in SSHash). The reverse
+// otherwise (the center rule of Cologni & Pibiri, as in SSHash). The reverse
 // complement of a window then samples the mirror k-mer, so both strands select
 // the same loci, and the selection never moves backwards (forward).
 // validate_mod_minimizer.py checks the code against a brute force of this
@@ -504,12 +504,12 @@ void sketch_mod_minimizer(const mm_scheme_t *ord, void *km, const char *str, int
 		}
 		// The k-mer of a minimal t-mer x sits in the residue slot of x
 		// ((win + (x - win) mod w) mod w == x mod w): a unique minimum is that
-		// slot. A tie takes the centre rule over the tied t-mers' offsets
+		// slot. A tie takes the center rule over the tied t-mers' offsets
 		// p = (tcls[x] - l_cls) mod w (l_cls == win mod w here); the chosen
 		// offset p is the k-mer in slot (l_cls + p) mod w.
 		int sel_slot = tcls[(size_t)(x_l & rmask)];
 		if (x_l != x_r) {
-			mod_rule::CentrePick cp;
+			mod_rule::CenterPick cp;
 			for (ssize_t x = x_l; x <= x_r; ++x) {
 				if (trank[(size_t)(x & rmask)] != min_rank) continue;
 				int p_x = (int)tcls[(size_t)(x & rmask)] - l_cls;
@@ -540,7 +540,7 @@ const int kGmMaxK = 23;
 
 // Builds ord->gm_order for minimizer length l (ord->gm and ord->gm_projection
 // already set). Returns false with a message in errbuf on an invalid length
-// (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the centre extension
+// (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the center extension
 // rejects (not mirror symmetric).
 bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	if (!ord->gm) return true;
@@ -553,13 +553,13 @@ bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	try {
 		// the seed toggles the Gamma tie-break (its low l bits), as kraken2's
 		// and sshash's greedymini seeds do; seed 0 is the untoggled order
-		ord->gm_order = std::make_shared<const gm_centre::Order>(ord->gm, l, ord->seed, /*injective=*/true);
+		ord->gm_order = std::make_shared<const gm_center::Order>(ord->gm, l, ord->seed, /*injective=*/true);
 	} catch (const std::exception &e) {
 		set_err(errbuf, errbuf_len, e.what());
 		return false;
 	}
 	ord->gm_l = l;
-	ord->gm_planes = gm_centre::TwoBitPlanes<true>(l, ord->gm_projection == MM_GM_PROJ_AT1_CG0);
+	ord->gm_planes = gm_center::TwoBitPlanes<true>(l, ord->gm_projection == MM_GM_PROJ_AT1_CG0);
 	return true;
 }
 
@@ -579,7 +579,7 @@ extern "C" mm_scheme_t *mm_scheme_init(const mm_scheme_conf_t *conf, char *errbu
 		return nullptr;
 	}
 	if (mod && !mod_rule::t_is_canonical(conf->k, conf->w, conf->t)) {
-		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires --mod-t == -k (mod -w) (the centre tie rule)");
+		set_err(errbuf, errbuf_len, "mod-minimizer scheme requires --mod-t == -k (mod -w) (the center tie rule)");
 		return nullptr;
 	}
 	if (!mod && conf->t != 0) {
@@ -709,7 +709,7 @@ extern "C" void mm_sketch_scheme(const mm_scheme_t *ord, void *km, const char *s
 // .mmi order section: [u64 len][blob], blob = u32 kind, u64 seed, i32 t,
 // u8 has_gm, (u64 n, n x u64 table entries in the .gm encoding when has_gm),
 // u8 projection, i32 gm_l (the two trailing fields were appended later; a
-// blob without them loads as at0-cg1 / a pre-centre-extension index). Both
+// blob without them loads as at0-cg1 / a pre-center-extension index). Both
 // directions stream the table in chunks: a full-size temporary buffer, once
 // freed, would raise glibc's mmap threshold for the rest of the run and
 // inflate the peak memory of an index build or of mapping.
@@ -718,8 +718,8 @@ namespace {
 
 const size_t kChunk = 4096; // table entries per fwrite/fread
 // Mod-minimizer tie rule stored in an .mmi order section (after gm_l): the
-// centre rule; an index without it was built with the retired G/T-strand rule.
-constexpr uint8_t kModTieRuleCentre = 1;
+// center rule; an index without it was built with the retired G/T-strand rule.
+constexpr uint8_t kModTieRuleCenter = 1;
 
 uint64_t blob_len(const mm_scheme_t *ord) {
 	uint64_t len = sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int32_t) + sizeof(uint8_t);
@@ -770,7 +770,7 @@ extern "C" int mm_scheme_dump(const mm_scheme_t *ord, FILE *fp)
 	}
 	const uint8_t proj = (uint8_t)ord->gm_projection;
 	const int32_t gm_l = (int32_t)ord->gm_l;
-	const uint8_t mod_rule_id = kModTieRuleCentre;
+	const uint8_t mod_rule_id = kModTieRuleCenter;
 	ok = ok && std::fwrite(&proj, sizeof proj, 1, fp) == 1 && std::fwrite(&gm_l, sizeof gm_l, 1, fp) == 1
 		&& std::fwrite(&mod_rule_id, sizeof mod_rule_id, 1, fp) == 1;
 	return ok ? 0 : -1;
@@ -825,15 +825,15 @@ extern "C" mm_scheme_t *mm_scheme_load(FILE *fp, char *errbuf, size_t errbuf_len
 	if (proj > MM_GM_PROJ_AT1_CG0) { set_err(errbuf, errbuf_len, "invalid GreedyMini projection in index"); return nullptr; }
 	int32_t gm_l = 0;
 	if (in.left >= sizeof gm_l) in.get(&gm_l, sizeof gm_l);
-	uint8_t mod_rule_id = 0; // absent: written before the centre tie rule
+	uint8_t mod_rule_id = 0; // absent: written before the center tie rule
 	if (in.left >= sizeof mod_rule_id) in.get(&mod_rule_id, sizeof mod_rule_id);
 	if (!in.skip_rest()) { set_err(errbuf, errbuf_len, "truncated scheme metadata"); return nullptr; }
-	if (is_mod_kind((mm_scheme_kind_t)kind32) && mod_rule_id != kModTieRuleCentre) {
+	if (is_mod_kind((mm_scheme_kind_t)kind32) && mod_rule_id != kModTieRuleCenter) {
 		set_err(errbuf, errbuf_len, "mod-minimizer index built with the retired G/T-strand tie rule; rebuild it");
 		return nullptr;
 	}
 	if (gm && gm_l <= 0) {
-		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini centre extension; rebuild it");
+		set_err(errbuf, errbuf_len, "greedymini index built before the GreedyMini center extension; rebuild it");
 		return nullptr;
 	}
 	mm_scheme_t *ord = new (std::nothrow) mm_scheme_t();

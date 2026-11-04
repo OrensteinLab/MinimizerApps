@@ -1,4 +1,4 @@
-"""The shared mod-minimizer reference (density.mod_centre_selections): the centre
+"""The shared mod-minimizer reference (density.mod_center_selections): the center
 tie rule is canonical (a sequence and its reverse complement select mirrored
 k-mers) and forward (selections never move backwards), with t == k (mod w)."""
 from __future__ import annotations
@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from density import (  # noqa: E402
     canonical_mmer,
     is_forward,
-    mod_centre_selections,
+    mod_center_selections,
     mod_sampling_density,
     rolling_values,
     xor_hash,
@@ -30,7 +30,7 @@ def selections(seq: list[int], w: int, k: int, t: int) -> list[int]:
         win = seq[s:s + L]
         return win <= [3 - b for b in reversed(win)]
 
-    return mod_centre_selections(ranks, w, T, le_rc)
+    return mod_center_selections(ranks, w, T, le_rc)
 
 
 @pytest.mark.parametrize("w,k,t", [(10, 15, 5), (10, 19, 9), (5, 35, 5), (4, 12, 4), (3, 8, 2), (11, 21, 10)])
@@ -54,7 +54,7 @@ def test_canonical_and_forward(w, k, t, alphabet):
 def test_unique_minimum_needs_no_comparison():
     calls = []
     ranks = list(range(100, 0, -1)) + list(range(100))  # one minimum per window
-    out = mod_centre_selections(ranks, 4, 8, lambda s: calls.append(s) or True)
+    out = mod_center_selections(ranks, 4, 8, lambda s: calls.append(s) or True)
     assert calls == [] and is_forward(out)
 
 

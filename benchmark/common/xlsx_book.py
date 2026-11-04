@@ -1,6 +1,6 @@
 """Styled multi-sheet .xlsx writer (stdlib only), the one writer all four apps
 (kraken2, kmc, sshash, minimap2) use: row 1 = category band (merged across
-contiguous columns that share a category; bold, centred, no fill), row 2 =
+contiguous columns that share a category; bold, centered, no fill), row 2 =
 column headers, data from row 3, frozen below the header; vertically merged identity columns (dataset,
 library, ...) inside blocks, a medium bottom border after each block, and
 green/white/red colour scales on `*_ratio` columns.
@@ -54,7 +54,7 @@ written). Use data_start_row(sheet) when you need the real first data row.
                 value is stored next to it for viewers that do not recalculate
 
 Numbers are written as numbers, None / "" / NaN / inf as blank cells. Python
-3.6 compatible. No header/band fills: bold, centred, wrapped only.
+3.6 compatible. No header/band fills: bold, centered, wrapped only.
 """
 
 from __future__ import print_function

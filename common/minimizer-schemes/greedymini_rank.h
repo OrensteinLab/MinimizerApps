@@ -2,7 +2,7 @@
  * GreedyMini rank calculation (Golan et al. 2025), shared by kraken2 and kmc.
  *
  * Binary UHS on {0,1}^gm_k sigma-extended to DNA, for an l-mer with l == gm_k
- * (a longer l uses the centre extension of greedymini_centre.h: kraken2's
+ * (a longer l uses the center extension of greedymini_center.h: kraken2's
  * binary order, sshash, minimap2; kmc only uses a table at its own length):
  *   DNA packing is ACGT = 0,1,2,3 (A=00, C=01, G=10, T=11).
  *   1. Remap each base ACGT -> ATCG bitplanes (A=00, T=01, C=10, G=11)

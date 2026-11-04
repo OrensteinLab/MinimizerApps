@@ -193,7 +193,7 @@ def make_charts(charts, W, lab, head=None):
         stacked = c and c[0] == "stacked"
         draw = C.stacked_mini if stacked else C.minibars
         draw(f, 10 + yl, 0, W, h, title, c[1] if stacked else c, head=head, xlabels=lab if o["xlab"] else None)
-        if o["ylab"]:                                # centred on the y axis (from its top tick to the base), by the ticks
+        if o["ylab"]:                                # centered on the y axis (from its top tick to the base), by the ticks
             lines = YLAB[metric].replace("L-mer", "<i>L</i>-mer").split("|")
             yc = ((32 if title else 14) + head + h) / 2
             for j, ln in enumerate(lines):
@@ -227,7 +227,7 @@ def kw(k=None, w=None):
 
 def compose(panels):
     """One figure of panels as SVG: panels = [(title, legend, rows)], rows a list of rows of charts (make_charts), each
-    panel headed by its letter (A, B, ...), a legend (an SVG fragment, or None) centred below its charts."""
+    panel headed by its letter (A, B, ...), a legend (an SVG fragment, or None) centered below its charts."""
     el, y, Wmax = [], 0, 0
     for n, (title, legend, rows) in enumerate(panels):
         i = title.find("<") % (len(title) + 1)                   # the panel letter, bold, before the method
@@ -298,7 +298,7 @@ def space(data):
     k2 = make_charts([("database_size", "shared", bars(data, build, "index_size_gb", SCH4, ("kraken2", "strain_exclusion"))),
                       ("build_memory", "shared", bars(data, build, "build_max_rss_gb", SCH4, ("kraken2", "strain_exclusion")))],
                      816, xlabels(6, SCH4))
-    w0, h0, e0 = k2[0]                                           # one title for both charts (one dataset), centred on the row
+    w0, h0, e0 = k2[0]                                           # one title for both charts (one dataset), centered on the row
     k2[0] = (w0, h0, e0 + [f'<text x="{w0}" y="20" font-size="22" text-anchor="middle" font-weight="bold" fill="#222" '
                            f'font-family="{C.SANS}">{TITLE["library"]}</text>'])
     k2[1] = separated(k2[1], top=34)                             # database size | build peak memory, below the title

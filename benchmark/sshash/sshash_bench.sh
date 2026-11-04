@@ -40,7 +40,7 @@ Run options:
                           projection) pair from config.yaml's greedymini /
                           mod_minimizer_greedymini sections (sshash --scheme greedymini
                           --greedy-mini-file TABLE [--gm-projection at1-cg0]; the
-                          table's gm_k-mer is extended to the m-mer by the centre
+                          table's gm_k-mer is extended to the m-mer by the center
                           extension, which needs m - gm_k even). Each variant has
                           its own result fields gm_k, projection, gm_table, mod_t.
                           Every scheme (including native) is run once per seed

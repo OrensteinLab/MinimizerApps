@@ -8,7 +8,7 @@
 #     -b BIN     benchmark_minimizers binary (build: make -C kraken2/src benchmark_minimizers;
 #                to compare against an older revision build that revision's binary)
 #     -g FILE    binary greedymini table (.gm)
-#     -v LABEL   variant label written to the CSV (e.g. prefix, centre)
+#     -v LABEL   variant label written to the CSV (e.g. prefix, center)
 #     -o FILE    CSV to append to (header written when the file is new)
 #     -L "l.."   minimizer lengths (default "15 17 19 21 23 25 27 29 31"); k = l + W - 1
 #     -W INT     window w = k - l + 1 (default 5, the table's design window)

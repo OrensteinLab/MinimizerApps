@@ -2,7 +2,7 @@
 
 Benchmarks [SSHash](https://github.com/jermp/sshash) (a compact k-mer dictionary index) across
 its **minimizer scheme**: `native` (sshash's own baseline), `xor`, `xor-pcg-hash`,
-`greedymini` (the GreedyMini rank tables, centre-extended to the m-mer),
+`greedymini` (the GreedyMini rank tables, center-extended to the m-mer),
 and the strand-symmetric mod-minimizer `mod-minimizer-xor` / `mod-minimizer-greedymini`
 (see below and `../../orders/README.md`). Scheme names are the canonical ones shared by all
 four benchmarks (`benchmark/common/scheme_names.py`) and never carry parameters: the GreedyMini
@@ -204,7 +204,7 @@ effect on space/time at a fixed minimizer length, not conflating it with an m sw
 w=k-m+1=11, the window the GreedyMini tables `w11_k13`/`w11_k15` were built for, and using the same
 (k, m) for every scheme keeps the comparison apples-to-apples.
 `greedymini` runs `orders/GreedyMini/w11_k13_canonical.gm` and `w11_k15_canonical.gm` (two variants),
-extended to `l=21` around the centre `gm_k`-mer (`m - gm_k` even). Varying
+extended to `l=21` around the center `gm_k`-mer (`m - gm_k` even). Varying
 m *is* useful as its own, separate question -- `experiments/sweep_m.yaml` covers that, explicitly
 at a single scheme (`native`) so it isn't mistaken for a second scheme comparison, and is
 optional/secondary to the primary `sweep_schemes` results.
@@ -341,7 +341,7 @@ GreedyMini).
 
 - Every scheme (including `native`) takes `-s SEED`; there is no seed-less baseline the way
   kmc's `lex` is, so this benchmark never special-cases a "run once" scheme the way kmc does.
-- `greedymini` (sshash `--scheme greedymini --greedy-mini-file TABLE`, the centre extension of the
+- `greedymini` (sshash `--scheme greedymini --greedy-mini-file TABLE`, the center extension of the
   table to the m-mer, see `orders/README.md`) runs once per variant, a (table, projection)
   pair from `config.yaml`'s `greedymini` section (`tables`: `w11_k13_canonical.gm`,
   `w11_k15_canonical.gm`; `projections`: `at0-cg1`). Add `at1-cg0` there (or pass
@@ -349,7 +349,7 @@ GreedyMini).
   DNA->binary polarity (`sshash build --gm-projection at1-cg0`: AT->1, CG->0 instead of the
   default AT->0, CG->1). Each variant is its own run directory (`greedymini/k15_at1-cg0/...`),
   summary/schemes row and `meta.json` entry with its own `gm_k`, `projection` and `gm_table`.
-  The centre extension needs `m - gm_k` even, so e.g. a table with an even `gm_k` is rejected at
+  The center extension needs `m - gm_k` even, so e.g. a table with an even `gm_k` is rejected at
   m=21; `sshash_bench.sh run` checks this up front (`python -m scripts schemes check-gm greedymini M
   TABLE`). Example:
   `./sshash_bench.sh run -d cod,kestrel -n 5 -S native,greedymini --gm-projections at0-cg1,at1-cg0`.

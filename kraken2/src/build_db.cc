@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     } else if (!opts.input_is_protein && gm_k < (int)opts.l &&
                (((int)opts.l - gm_k) & 1) != 0) {
       errx(EX_DATAERR,
-           "greedymini centre extension needs l - k_gm even (l=%d, k_gm=%d); "
+           "greedymini center extension needs l - k_gm even (l=%d, k_gm=%d); "
            "valid l: %d, %d, ... (max 31)",
            (int)opts.l, gm_k, gm_k, gm_k + 2);
     }

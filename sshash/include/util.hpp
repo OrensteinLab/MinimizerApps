@@ -556,7 +556,7 @@ minimizer_info compute_minimizer_ranked(Kmer kmer, Kmer const& kmer_rc, const ui
     uint16_t ranks[64];
     uint16_t min_rank = 0xFFFF;
     for (uint64_t i = 0; i != num_loci; ++i) {
-        ranks[i] = hasher.centre_rank(sigma, int(i));
+        ranks[i] = hasher.center_rank(sigma, int(i));
         min_rank = ranks[i] < min_rank ? ranks[i] : min_rank;
     }
 
@@ -591,7 +591,7 @@ minimizer_info compute_minimizer_ranked(Kmer kmer, Kmer const& kmer_rc, const ui
 }
 
 /*
-    v <= RC(v) for the centre tie rule of the mod-minimizer: the same comparison of packed words
+    v <= RC(v) for the center tie rule of the mod-minimizer: the same comparison of packed words
     as resolve_tie's `!(kmer_rc < kmer)`; true without strands (plain mod-sampling).
 */
 template <typename Kmer>
@@ -605,18 +605,18 @@ inline bool mod_le_rc(Kmer const& kmer, Kmer const& kmer_rc) {
 }
 
 /* Tie at the minimum of the mod-minimizer: every locus in [x_l, x_r] whose hash
-   (hashes[(base + x) & 63]) is min_hash offers the offset x mod w; the centre rule
-   (mod_rule::centre_tie_offset) picks one, calling le_rc() only on an exact two-way tie. */
+   (hashes[(base + x) & 63]) is min_hash offers the offset x mod w; the center rule
+   (mod_rule::center_tie_offset) picks one, calling le_rc() only on an exact two-way tie. */
 template <typename LeRc>
 inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t w, uint64_t min_hash,
                                uint64_t x_l, uint64_t x_r, LeRc le_rc) {
-    return mod_rule::centre_tie_offset(
+    return mod_rule::center_tie_offset(
         x_l, x_r, w, [&](uint64_t x) { return hashes[(base + x) & 63] == min_hash; }, le_rc);
 }
 
 /*
     Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp and Pibiri, WABI 2024, with the
-    centre tie rule of compute_minimizer; shared definition with the minimap2 and kraken2 forks
+    center tie rule of compute_minimizer; shared definition with the minimap2 and kraken2 forks
     in common/minimizer-schemes/mod_minimizer_rule.h). The kmer's T = k - t + 1 t-mers are ranked
     by the order of `hasher` (canonical t-mers; GreedyMini hashes the raw t-mer, its hash being
     strand invariant); a minimal t-mer at locus x offers the m-mer at offset x mod w,
@@ -626,11 +626,11 @@ inline uint64_t mod_tie_offset(uint64_t const* hashes, uint64_t base, uint64_t w
 
     A unique minimum samples its offset. A tie at the minimum (equal canonical t-mers, ~1e-3 of
     the kmers on real data) is broken as compute_minimizer's own (resolve_tie), on the offered
-    offsets: the one closest to the centre (w-1)/2 of the kmer's m-mers, and between two
+    offsets: the one closest to the center (w-1)/2 of the kmer's m-mers, and between two
     equally close ones (mirror images) the smaller if kmer <= rc(kmer) (packed words), the
     larger otherwise. The scheme keeps mod-sampling's density and is forward -- a tied t-mer's
     offset stays put while the window slides, new candidates enter on the right, and the
-    candidate closest to a centre moving right never lies left of the previous choice (the
+    candidate closest to a center moving right never lies left of the previous choice (the
     builder checks it, see minimizers_tuples).
 
     The definition evaluated directly (O(T) hashes); mod_minimizer_iterator computes the same
@@ -661,7 +661,7 @@ minimizer_info compute_mod_minimizer(Kmer const& kmer, Kmer const& kmer_rc, cons
         uint16_t ranks[64];
         uint16_t min_rank = 0xFFFF;
         for (uint64_t x = 0; x != T; ++x) {
-            ranks[x] = hasher.centre_rank(sigma, int(x));
+            ranks[x] = hasher.center_rank(sigma, int(x));
             min_rank = ranks[x] < min_rank ? ranks[x] : min_rank;
         }
         bool first = true;

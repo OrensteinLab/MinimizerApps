@@ -24,7 +24,7 @@ Same scheme menu as the other three apps (see
 [`orders/README.md`](../orders/README.md) for the shared implementation and
 the cross-app CLI-flag table): `xor`, `xor-pcg-hash`, `greedymini`
 (binary alphabet + on-the-fly projection only, no DNA-alphabet backend;
-a `gm_k` table is centre-extended to `-k = gm_k + 2i`, as in kraken2 and
+a `gm_k` table is center-extended to `-k = gm_k + 2i`, as in kraken2 and
 sshash; either AT/CG projection polarity, `--gm-projection`, as in sshash),
 `mod-minimizer-xor` and `mod-minimizer-greedymini` (strand-symmetric
 mod-sampling with `xor`, respectively a GreedyMini table of t-mers, as the
@@ -78,8 +78,8 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   index-from-FASTA path do not take a custom scheme -- only the CLI path
   through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this way are
   always native-scheme; `mappy` does map against a custom-scheme `.mmi`.
-- `greedymini` uses the shared centre extension
-  (`common/minimizer-schemes/greedymini_centre.h`, injective packing): with
+- `greedymini` uses the shared center extension
+  (`common/minimizer-schemes/greedymini_center.h`, injective packing): with
   `-k = gm_k + 2i` the table ranks the middle `gm_k` bases' AT/CG projection,
   then the k-mer's Sigma and Gamma planes break ties (min over both strands),
   a strand-invariant total order on canonical k-mers; `--order-seed` XORs
@@ -93,14 +93,14 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   in `common/minimizer-schemes/mod_minimizer_rule.h`: `--mod-t` must satisfy
   t == k (mod w) (t = 9 at k = 19, t = 5 at k = 15, w = 10); a unique minimal
   t-mer at `x` samples offset `x mod w`, and a tie takes the offset closest to
-  the window centre `(w-1)/2`, between two equally close ones the left if the
+  the window center `(w-1)/2`, between two equally close ones the left if the
   window of `w+k-1` bases is lexicographically <= its reverse complement (the
-  centre rule of Cologni & Pibiri, as in SSHash). A read and its reverse
+  center rule of Cologni & Pibiri, as in SSHash). A read and its reverse
   complement thus select the same loci, and the selection never moves back.
   The order on t-mers is a template parameter of the one scan
   (`sketch_mod_minimizer<Kind>`, `TmerRank`): xor ranks the canonical t-mer
   XOR the seed; the GreedyMini order is `RankState<MM_SCHEME_GREEDYMINI>` at
-  length t (the shared centre-extension order, built for t, with the same
+  length t (the shared center-extension order, built for t, with the same
   projection and `--order-seed` Gamma toggle as `greedymini`), stored in the
   `.mmi` with its table and length.
   The scan keeps the window minimum and its leftmost/rightmost t-mers by

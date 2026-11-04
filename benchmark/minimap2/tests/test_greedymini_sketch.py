@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cross-validation of the greedymini order (scheme.cpp RankState<MM_SCHEME_GREEDYMINI>: the
-shared GreedyMini centre extension, injective packing) against two
+shared GreedyMini center extension, injective packing) against two
 independent Python implementations:
 
 - reference_value(): written per base from the definition -- for an l-mer
@@ -9,7 +9,7 @@ independent Python implementations:
   min over both strands of (Sigma << l | Gamma), the reverse complement
   reversing both planes and complementing Gamma; --gm-projection at1-cg0
   complements Sigma.
-- benchmark/common/density.py greedymini_centre_hash (the shared bit-plane
+- benchmark/common/density.py greedymini_center_hash (the shared bit-plane
   port); checked equal to the reference on every k-mer.
 
 The compiled sketch (minimap2/sketch_dump driver, `make sketch_dump` in minimap2/) is compared with
@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parents[3]
 SKETCH_DUMP = REPO / "minimap2" / "sketch_dump"
 GM_FILE = REPO / "orders" / "GreedyMini" / "w10_k15_canonical.gm"
 sys.path.insert(0, str(REPO / "benchmark" / "common"))
-from density import greedymini_centre_hash, gm_k_from_table, read_gm_ranks  # noqa: E402
+from density import greedymini_center_hash, gm_k_from_table, read_gm_ranks  # noqa: E402
 
 COMP = {0: 3, 1: 2, 2: 1, 3: 0}
 
@@ -191,7 +191,7 @@ def main() -> int:
             for _ in range(3000):
                 codes = [rng.randrange(4) for _ in range(k)]
                 ref = reference_value(codes, gm_ranks, gm_k, flip)
-                port = greedymini_centre_hash(pack(codes), k, gm_ranks, gm_k, flip)
+                port = greedymini_center_hash(pack(codes), k, gm_ranks, gm_k, flip)
                 rc = reference_value([COMP[c] for c in reversed(codes)], gm_ranks, gm_k, flip)
                 n_kmers += 1
                 if ref != port or ref != rc:
@@ -226,7 +226,7 @@ def main() -> int:
                 codes = [rng.randrange(4) for _ in range(k)]
                 ref = reference_value(codes, gm_ranks, gm_k, False, seed)
                 rc = reference_value([COMP[c] for c in reversed(codes)], gm_ranks, gm_k, False, seed)
-                port = greedymini_centre_hash(pack(codes), k, gm_ranks, gm_k, False, seed)
+                port = greedymini_center_hash(pack(codes), k, gm_ranks, gm_k, False, seed)
                 n_kmers += 1
                 if ref != rc or ref != port:
                     failures.append(f"k={k} seed={seed:#x} {codes}: ref={ref} rc={rc} port={port}")

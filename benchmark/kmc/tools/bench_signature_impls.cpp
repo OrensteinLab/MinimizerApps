@@ -6,9 +6,9 @@
 //   1 default      kmc CMmer LUT_DEFAULT: norm[str] (lexicographic canonical)
 //   2 dna          kmc CMmer LUT_DNA:     gm_dna_sort_lut[str] (4^p u32 table)
 //   3 binary       kmc CMmer LUT_BINARY:  rolling bin_key + str_rc + tie-break
-//   4a shared      gm_centre::Order as kraken2 uses it: rolled Sigma plane
+//   4a shared      gm_center::Order as kraken2 uses it: rolled Sigma plane
 //                  (roll_in_low), Gamma via TwoBitPlanes::gamma on the 2-bit
-//                  word, value_of_planes (p == gm_k -> centre offset 0)
+//                  word, value_of_planes (p == gm_k -> center offset 0)
 //   4b shared-both rolling Sigma/Gamma planes of BOTH strands + value_of_both_strands
 //   4c shared-rank rank_of_sigma only (rank-first, ties -> leftmost; NOT a
 //                  total order, lower bound of the shared path)
@@ -46,7 +46,7 @@
 #include "../../../kmc/kmc_api/mmer.h"
 #undef class
 #include "../../../kmc/kmc_api/custom_order.h"
-#include "../../../common/minimizer-schemes/greedymini_centre.h"
+#include "../../../common/minimizer-schemes/greedymini_center.h"
 
 using clk = std::chrono::steady_clock;
 static int P, W;
@@ -59,24 +59,24 @@ template <int Mode> struct SigKmc {
 };
 
 struct SigShared {  // 4a
-  gm_centre::Order ord; gm_centre::TwoBitPlanes<true> pl; uint64_t word = 0, sigma = 0, wmask, smask;
+  gm_center::Order ord; gm_center::TwoBitPlanes<true> pl; uint64_t word = 0, sigma = 0, wmask, smask;
   SigShared(std::shared_ptr<const GreedyMiniTable> t, int p, uint64_t tog)
       : ord(t, p, tog), pl(p, false), wmask((1ULL << (2 * p)) - 1), smask(pl.mask()) {}
   inline uint64_t next(uint8_t s) {
     word = ((word << 2) | s) & wmask;
-    sigma = gm_centre::roll_in_low(sigma, pl.base_sigma(s), smask);
+    sigma = gm_center::roll_in_low(sigma, pl.base_sigma(s), smask);
     return ord.value_of_planes(sigma, pl.gamma(word));
   }
 };
 
 struct SigSharedBoth {  // 4b
-  gm_centre::Order ord; gm_centre::TwoBitPlanes<true> pl;
+  gm_center::Order ord; gm_center::TwoBitPlanes<true> pl;
   uint64_t sg = 0, gm = 0, sgr = 0, gmr = 0, mask; int p;
   SigSharedBoth(std::shared_ptr<const GreedyMiniTable> t, int p_, uint64_t tog)
       : ord(t, p_, tog), pl(p_, false), mask(pl.mask()), p(p_) {}
   inline uint64_t next(uint8_t s) {
-    sg = gm_centre::roll_in_low(sg, pl.base_sigma(s), mask);
-    gm = gm_centre::roll_in_low(gm, s >> 1, mask);
+    sg = gm_center::roll_in_low(sg, pl.base_sigma(s), mask);
+    gm = gm_center::roll_in_low(gm, s >> 1, mask);
     sgr = (sgr >> 1) | (pl.base_sigma(s) << (p - 1));        // rc: reversed order, same Sigma
     gmr = (gmr >> 1) | ((uint64_t)((s >> 1) ^ 1) << (p - 1));  // complement flips Gamma
     return ord.value_of_both_strands(sg, gm, sgr, gmr);
@@ -84,11 +84,11 @@ struct SigSharedBoth {  // 4b
 };
 
 struct SigSharedRank {  // 4c
-  gm_centre::Order ord; gm_centre::TwoBitPlanes<true> pl; uint64_t sigma = 0, smask;
+  gm_center::Order ord; gm_center::TwoBitPlanes<true> pl; uint64_t sigma = 0, smask;
   SigSharedRank(std::shared_ptr<const GreedyMiniTable> t, int p, uint64_t tog)
       : ord(t, p, tog), pl(p, false), smask(pl.mask()) {}
   inline uint64_t next(uint8_t s) {
-    sigma = gm_centre::roll_in_low(sigma, pl.base_sigma(s), smask);
+    sigma = gm_center::roll_in_low(sigma, pl.base_sigma(s), smask);
     return ord.rank_of_sigma(sigma);
   }
 };

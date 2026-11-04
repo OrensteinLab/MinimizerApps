@@ -3,7 +3,7 @@
  */
 
 #include "greedymini_rank.h"
-#include "../../common/minimizer-schemes/greedymini_centre.h"
+#include "../../common/minimizer-schemes/greedymini_center.h"
 #include "minimizer_rankers.h"
 #include "dna_kmer.h"
 #include "kraken2_data.h"
@@ -46,7 +46,7 @@ int main() {
     }
   }
 
-  // ---- Binary GreedyMini: l == gm_k (old behaviour) and centre extension ----
+  // ---- Binary GreedyMini: l == gm_k (old behaviour) and center extension ----
   {
     // Mirror-symmetric synthetic table, gm_k = 4: ranks are shared by a key
     // and its mirror: {0}:0 {1,8}:1 {2,4}:2 {5,10}:3.
@@ -63,7 +63,7 @@ int main() {
     check(gm_table_to_raw(stable) == sraw, "export matches input encoding");
     auto sshared = std::make_shared<const GreedyMiniTable>(stable);
 
-    // l == gm_k: the pre-centre rule (orient by the better primary, then
+    // l == gm_k: the pre-center rule (orient by the better primary, then
     // (primary << l) | Gamma), with the spaced mask applied per strand.
     for (uint64_t toggle : {0ULL, 0x5ULL}) {
       for (uint64_t mask_bits : {~0ULL, ~0xCULL}) {
@@ -71,7 +71,7 @@ int main() {
         const uint64_t lm = (1ULL << (2 * lk)) - 1ULL;
         const uint64_t mask = (mask_bits == ~0ULL) ? 0 : (lm & mask_bits);
         GMRanker r(lk, 2, toggle, lm, true, sshared, mask);
-        check(!r.centre_extension(), "l == gm_k is not an extension");
+        check(!r.center_extension(), "l == gm_k is not an extension");
         auto pack = [&](uint64_t w) -> uint64_t {
           uint32_t k;
           uint64_t g;
@@ -107,8 +107,8 @@ int main() {
   // Gamma bits (A,T -> Sigma 0; Gamma 1 for G,T), strand by strand. The spaced
   // mask (applied to each strand's own word) coarsens only the tie-break
   // fields; the rank lookup sees the unmasked Sigma. Fed to the shared slow
-  // reference gm_centre::Reference.
-  struct CentreRef {
+  // reference gm_center::Reference.
+  struct CenterRef {
     const GreedyMiniTable &table;
     int l, gk, i, ver;
     uint64_t toggle, mask;  // mask 0 = none
@@ -130,8 +130,8 @@ int main() {
       }
       return p;
     }
-    gm_centre::Reference ref() const {
-      return gm_centre::Reference(table, l, toggle);
+    gm_center::Reference ref() const {
+      return gm_center::Reference(table, l, toggle);
     }
     uint64_t rank(uint64_t w) const {
       const uint64_t rc = dna_reverse_complement(w, (uint8_t)l, ver);
@@ -184,7 +184,7 @@ int main() {
   };
   auto lmask_of = [](int ll) { return (1ULL << (2 * ll)) - 1ULL; };
 
-  // Centre extension on the synthetic table, exhaustively.
+  // Center extension on the synthetic table, exhaustively.
   {
     std::vector<uint64_t> sraw(16, 16);
     sraw[0] = 0;
@@ -196,8 +196,8 @@ int main() {
       for (uint64_t toggle : {0ULL, 0x2d3ULL}) {
         const uint64_t lm = lmask_of(ll);
         GMRanker r(ll, 2, toggle & ((1ULL << ll) - 1ULL), lm, true, sshared);
-        check(r.centre_extension(), "l > gm_k uses the centre extension");
-        CentreRef ref{*sshared, ll, 4, (ll - 4) / 2, DNA_REVCOM_VERSION,
+        check(r.center_extension(), "l > gm_k uses the center extension");
+        CenterRef ref{*sshared, ll, 4, (ll - 4) / 2, DNA_REVCOM_VERSION,
                       toggle & ((1ULL << ll) - 1ULL), 0};
         bool eq = true, inv = true;
         std::vector<std::pair<uint64_t, uint64_t>> fin;  // (rank, canonical)
@@ -212,14 +212,14 @@ int main() {
           if (got != UINT64_MAX && mer <= rc)
             fin.push_back({got, mer});
         }
-        check(eq, "centre Rank == per-base reference (exhaustive)");
-        check(inv, "centre Rank(x) == Rank(rc(x)) (exhaustive)");
+        check(eq, "center Rank == per-base reference (exhaustive)");
+        check(inv, "center Rank(x) == Rank(rc(x)) (exhaustive)");
         std::sort(fin.begin(), fin.end());
         bool inj = true;
         for (size_t j = 1; j < fin.size(); j++)
           if (fin[j].first == fin[j - 1].first)
             inj = false;
-        check(inj && !fin.empty(), "centre injective on canonical (exh.)");
+        check(inj && !fin.empty(), "center injective on canonical (exh.)");
       }
     }
     // Spaced seed: unmasked lookup, masked tie-break fields; strand invariant.
@@ -228,7 +228,7 @@ int main() {
       const uint64_t lm = lmask_of(ll);
       const uint64_t mask = lm & ~0xF0ULL;
       GMRanker r(ll, 2, 0, lm, true, sshared, mask);
-      CentreRef ref{*sshared, ll, 4, 2, DNA_REVCOM_VERSION, 0, mask};
+      CenterRef ref{*sshared, ll, 4, 2, DNA_REVCOM_VERSION, 0, mask};
       bool eq = true, inv = true;
       for (uint64_t mer = 0; mer < (1ULL << (2 * ll)); mer++) {
         const uint64_t rc =
@@ -238,8 +238,8 @@ int main() {
         if (r.Rank(mer) != r.Rank(rc))
           inv = false;
       }
-      check(eq, "spaced centre Rank == reference (mask only in tie-break)");
-      check(inv, "spaced centre Rank strand invariant");
+      check(eq, "spaced center Rank == reference (mask only in tie-break)");
+      check(inv, "spaced center Rank strand invariant");
     }
     // revcom_version 0 drives the strand RC, not a hardcoded v1.
     {
@@ -247,8 +247,8 @@ int main() {
       const uint64_t lm = lmask_of(ll);
       GMRanker r0(ll, 2, 0, lm, true, sshared, 0, 0);
       GMRanker r1(ll, 2, 0, lm, true, sshared, 0, 1);
-      CentreRef ref0{*sshared, ll, 4, 2, 0, 0, 0};
-      CentreRef ref1{*sshared, ll, 4, 2, 1, 0, 0};
+      CenterRef ref0{*sshared, ll, 4, 2, 0, 0, 0};
+      CenterRef ref1{*sshared, ll, 4, 2, 1, 0, 0};
       bool m0 = true, m1 = true, diff = false;
       for (uint64_t mer = 0; mer < (1ULL << (2 * ll)); mer++) {
         m0 = m0 && r0.Rank(mer) == ref0.rank(mer);
@@ -286,7 +286,7 @@ int main() {
       asym[5] = 3;
       auto ash = std::make_shared<const GreedyMiniTable>(asym);
       check(throws([&] { GMRanker(8, 2, 0, lmask_of(8), true, ash); }),
-            "asymmetric table rejected for the centre extension");
+            "asymmetric table rejected for the center extension");
       // ... but l == gm_k does not need symmetry (unchanged behaviour)
       check(!throws([&] { GMRanker(4, 2, 0, lmask_of(4), true, ash); }),
             "asymmetric table still accepted at l == gm_k");
@@ -301,17 +301,17 @@ int main() {
     }
   }
 
-  // ---- shared header greedymini_centre.h: helpers ----
+  // ---- shared header greedymini_center.h: helpers ----
   {
-    check(gm_centre::reverse_low_bits(0b0001101ULL, 7) == 0b1011000ULL,
+    check(gm_center::reverse_low_bits(0b0001101ULL, 7) == 0b1011000ULL,
           "reverse_low_bits");
-    check(gm_centre::mirror_key(0b0011, 4) == 0b1100, "mirror_key");
-    check(gm_centre::centre_key(0b101101ULL, 1, 4) == 0b0110,
-          "centre_key picks bits [i, i+gm_k) from the MSB");
+    check(gm_center::mirror_key(0b0011, 4) == 0b1100, "mirror_key");
+    check(gm_center::center_key(0b101101ULL, 1, 4) == 0b0110,
+          "center_key picks bits [i, i+gm_k) from the MSB");
     bool t1 = false, t2 = false, ok3 = true;
-    try { gm_centre::check_length(8, 4); } catch (...) { ok3 = false; }
-    try { gm_centre::check_length(7, 4); } catch (const std::invalid_argument &) { t1 = true; }
-    try { gm_centre::check_length(3, 4); } catch (const std::invalid_argument &) { t2 = true; }
+    try { gm_center::check_length(8, 4); } catch (...) { ok3 = false; }
+    try { gm_center::check_length(7, 4); } catch (const std::invalid_argument &) { t1 = true; }
+    try { gm_center::check_length(3, 4); } catch (const std::invalid_argument &) { t2 = true; }
     check(t1 && t2 && ok3, "check_length");
     // value_of_planes (rc planes by bit reversal) == value_of_two_strands.
     std::vector<uint64_t> sraw(16, 16);
@@ -321,7 +321,7 @@ int main() {
     sraw[5] = sraw[10] = 3;
     auto st = std::make_shared<const GreedyMiniTable>(sraw);
     const int ll = 10;
-    gm_centre::Order ord(st, ll, 0x2a5);
+    gm_center::Order ord(st, ll, 0x2a5);
     check(ord.value_bits() == 2 + 2 * 3 + 1 + ll,
           "value_bits");
     std::mt19937_64 g(3);
@@ -355,7 +355,7 @@ int main() {
         last = (long long)best;
       }
       const double want = (double)sel / (double)(rk.size() - (size_t)w + 1) * (w + 1);
-      check(std::abs(gm_centre::density_factor(rk, w) - want) < 1e-12,
+      check(std::abs(gm_center::density_factor(rk, w) - want) < 1e-12,
             "density_factor == brute force");
     }
   }
@@ -413,8 +413,8 @@ int main() {
     IndexOptions mod = {0};
     EncodeIndexSchemes(mod, SketchingScheme::MOD, Order::RANDOM_XOR);
     check(IndexOptionsValid(mod, sizeof(IndexOptions)) &&
-              mod.mod_tie_rule == kModTieRuleCentre,
-          "MOD opts carry the centre tie rule");
+              mod.mod_tie_rule == kModTieRuleCenter,
+          "MOD opts carry the center tie rule");
     mod.mod_tie_rule = 0;  // built with the G/T-strand rule
     check(!IndexOptionsValid(mod, sizeof(IndexOptions)),
           "MOD opts with the retired G/T tie rule rejected");
@@ -581,13 +581,13 @@ int main() {
       std::cout << "at1-cg0 projection: relabelling identity and strand "
                    "invariance at l = 15, 21, 31\n";
 
-      // --- centre extension on the real table, l = 17 .. 31 ---
+      // --- center extension on the real table, l = 17 .. 31 ---
       for (int ll : {17, 21, 25, 31}) {
         const uint64_t lm = lmask_of(ll);
         const uint64_t tog = 0xe37e28c4271b5a2dULL & ((1ULL << ll) - 1ULL);
         for (uint64_t mask : {(uint64_t)0, (uint64_t)MakeSpacedSeedMask(ll, ll / 4, 2)}) {
           GMRanker r(ll, 2, tog, lm, true, loaded, mask);
-          CentreRef ref{*loaded, ll, 15, (ll - 15) / 2, DNA_REVCOM_VERSION,
+          CenterRef ref{*loaded, ll, 15, (ll - 15) / 2, DNA_REVCOM_VERSION,
                         tog, mask};
           std::mt19937_64 g(1000 + (uint64_t)ll);
           const int n_iter = (mask == 0 && ll == 31) ? 10000000 : 1500000;
@@ -603,22 +603,22 @@ int main() {
               bad_inv++;
             finite += got != UINT64_MAX;
           }
-          check(bad_ref == 0, "real table: centre Rank == per-base reference");
+          check(bad_ref == 0, "real table: center Rank == per-base reference");
           check(bad_inv == 0, "real table: Rank(x) == Rank(rc(x))");
           check(finite > 0, "real table: some finite ranks");
         }
         // Pairwise order == lexicographic (rank, Sigma(xyz), Gamma^toggle),
-        // on l-mers sharing a centre as well (the interesting ties).
+        // on l-mers sharing a center as well (the interesting ties).
         {
           GMRanker r(ll, 2, tog, lm, true, loaded);
-          CentreRef ref{*loaded, ll, 15, (ll - 15) / 2, DNA_REVCOM_VERSION,
+          CenterRef ref{*loaded, ll, 15, (ll - 15) / 2, DNA_REVCOM_VERSION,
                         tog, 0};
           std::mt19937_64 g(77 + (uint64_t)ll);
           const int i = (ll - 15) / 2;
           bool order_ok = true;
           for (int it = 0; it < 200000 && order_ok; it++) {
             uint64_t a = rand_lmer(g, ll, 0), b = rand_lmer(g, ll, 0);
-            if (it & 1) {  // same centre y, different x / z
+            if (it & 1) {  // same center y, different x / z
               const int sh = 2 * (ll - i - 15);
               const uint64_t cmask = ((1ULL << 30) - 1ULL) << sh;
               b = (b & ~cmask) | (a & cmask);
@@ -634,7 +634,7 @@ int main() {
           }
           check(order_ok, "real table: order == (rank, Sigma, Gamma) lex");
         }
-        // Injectivity on canonical l-mers (random + shared-centre families).
+        // Injectivity on canonical l-mers (random + shared-center families).
         {
           GMRanker r(ll, 2, 0, lm, true, loaded);
           std::mt19937_64 g(5 + (uint64_t)ll);
@@ -642,13 +642,13 @@ int main() {
           const int i = (ll - 15) / 2;
           const int sh = 2 * (ll - i - 15);
           const uint64_t cmask = ((1ULL << 30) - 1ULL) << sh;
-          uint64_t centre = 0;
+          uint64_t center = 0;
           for (int it = 0; it < 1500000; it++) {
             uint64_t x = rand_lmer(g, ll, it % 5);
             if ((it & 7) < 4) {
               if ((it & 7) == 0)
-                centre = x;
-              x = (x & ~cmask) | (centre & cmask);  // shared centre
+                center = x;
+              x = (x & ~cmask) | (center & cmask);  // shared center
             }
             const uint64_t rc =
                 dna_reverse_complement(x, (uint8_t)ll, DNA_REVCOM_VERSION);
@@ -705,7 +705,7 @@ int main() {
       }
 
       // Monte Carlo density factor dens x (w+1) (one stream; the full study
-      // is benchmark/kraken2/density_sweep.sh): the centre extension keeps the
+      // is benchmark/kraken2/density_sweep.sh): the center extension keeps the
       // design value (~1.47) for every valid l, not only l == gm_k.
       auto dens_factor = [&](int ell) -> double {
         const int w = 5;
@@ -720,14 +720,14 @@ int main() {
           x = ((x << 2) | (g() & 3ULL)) & lmask_of(ell);
           v = r.Rank(x);
         }
-        return gm_centre::density_factor(rk, w);
+        return gm_center::density_factor(rk, w);
       };
       const double f15 = dens_factor(15);
       const double f31 = dens_factor(31);
       std::cout << "dens factor l=15: " << f15 << "  l=31: " << f31 << "\n";
       check(f15 > 1.40 && f15 < 1.54, "canonical dens factor l=15 ~1.47");
-      check(f31 > 1.40 && f31 < 1.54, "centre dens factor l=31 ~ l=15");
-      check(std::abs(f31 - f15) < 0.04, "l=31 matches l=15 (centre extension)");
+      check(f31 > 1.40 && f31 < 1.54, "center dens factor l=31 ~ l=15");
+      check(std::abs(f31 - f15) < 0.04, "l=31 matches l=15 (center extension)");
     }
   }
 
@@ -761,7 +761,7 @@ int main() {
     for (int flip = 0; flip < 2; flip++) {
       for (int tg = 0; tg < 3; tg++) {
         const uint64_t toggle = g() & smask;
-        gm_centre::Order ord(tbl, ll, toggle, /*injective=*/true);
+        gm_center::Order ord(tbl, ll, toggle, /*injective=*/true);
         auto ref_key = [&](uint64_t w, uint64_t &fullval, bool &pal) {
           const uint64_t rc =
               dna_reverse_complement(w, (uint8_t)ll, DNA_REVCOM_VERSION);
@@ -771,7 +771,7 @@ int main() {
           const uint32_t key = (uint32_t)(S >> ((ll - gk) / 2)) & ((1u << gk) - 1u);
           const uint64_t a = (S << ll) | (G ^ toggle);
           const uint64_t b = (Sr << ll) | (Gr ^ toggle);
-          pal = gm_centre::mirror_key(key, gk) == key;
+          pal = gm_center::mirror_key(key, gk) == key;
           fullval = ((uint64_t)tbl->primary(key) << (2 * ll)) | (a < b ? a : b);
           // the rank_or_inf, min tuple is exactly this packed integer
           return (uint64_t)tbl->primary(key);
@@ -783,7 +783,7 @@ int main() {
         };
         for (int it = 0; it < 1700000; it++) {
           uint64_t a = rand_lmer(g, ll, it % 5), b = rand_lmer(g, ll, (it / 5) % 5);
-          if (it & 1) {  // same centre, different tails -> equal ranks
+          if (it & 1) {  // same center, different tails -> equal ranks
             const int i = (ll - gk) / 2;
             const uint64_t cmask = ((1ULL << (2 * gk)) - 1ULL) << (2 * (ll - i - gk));
             b = (b & ~cmask) | (a & cmask);
@@ -829,7 +829,7 @@ int main() {
 
     // rank_at: window of a longer Sigma plane.
     {
-      gm_centre::Order ord(tbl, ll, 0, true);
+      gm_center::Order ord(tbl, ll, 0, true);
       bool ok = true;
       for (int it = 0; it < 100000 && ok; it++) {
         const uint64_t P = g() & ((1ULL << 40) - 1ULL);
@@ -840,7 +840,7 @@ int main() {
     }
     // Injective on canonical l-mers (including infinite windows).
     {
-      gm_centre::Order ord(tbl, ll, 0x15a5a5, true);
+      gm_center::Order ord(tbl, ll, 0x15a5a5, true);
       std::vector<std::pair<uint64_t, uint64_t>> v;
       for (int it = 0; it < 1500000; it++) {
         const uint64_t x = rand_lmer(g, ll, it % 5);
@@ -861,22 +861,22 @@ int main() {
     {
       bool t = false;
       try {
-        gm_centre::Order bad(tbl, 31, 0, true);
+        gm_center::Order bad(tbl, 31, 0, true);
       } catch (const std::invalid_argument &) {
         t = true;
       }
       check(t, "injective mode rejects 16 + 2l > 64");
-      gm_centre::Order ok(tbl, 31, 0, false);
+      gm_center::Order ok(tbl, 31, 0, false);
       check(ok.value_bits() <= 64, "compressed packing fits l = 31");
     }
   }
 
   // ---- injective mode == sshash's hash: the 384 Python-reference vectors of
-  // sshash/test/gm_centre_vectors.inc (sshash packs A=0,C=1,G=3,T=2; seed 1234;
+  // sshash/test/gm_center_vectors.inc (sshash packs A=0,C=1,G=3,T=2; seed 1234;
   // cfg 0/1 = w11_k13 at0-cg1/at1-cg0, cfg 2/3 = w11_k15). Read-only include.
   {
     static const struct { int cfg; uint64_t x, h; } vectors[] = {
-#include "../../sshash/test/gm_centre_vectors.inc"
+#include "../../sshash/test/gm_center_vectors.inc"
     };
     const char *tn[2] = {"w11_k13_canonical.gm", "w11_k15_canonical.gm"};
     const int ll = 21;
@@ -888,11 +888,11 @@ int main() {
         tb[t] = load_gm_table(tp);
     }
     if (tb[0] && tb[1]) {
-      gm_centre::Order ords[4] = {
-          gm_centre::Order(tb[0], ll, 1234 & smask, true),
-          gm_centre::Order(tb[0], ll, 1234 & smask, true),
-          gm_centre::Order(tb[1], ll, 1234 & smask, true),
-          gm_centre::Order(tb[1], ll, 1234 & smask, true)};
+      gm_center::Order ords[4] = {
+          gm_center::Order(tb[0], ll, 1234 & smask, true),
+          gm_center::Order(tb[0], ll, 1234 & smask, true),
+          gm_center::Order(tb[1], ll, 1234 & smask, true),
+          gm_center::Order(tb[1], ll, 1234 & smask, true)};
       uint64_t n = 0, bad = 0;
       for (const auto &v : vectors) {
         uint64_t S = 0, G = 0;

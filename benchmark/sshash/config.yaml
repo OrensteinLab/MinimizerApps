@@ -35,7 +35,7 @@ defaults:
 # time with sshash_bench.sh --gm-tables / --gm-projections.
 #
 # greedymini: sshash --scheme greedymini, the table's gm_k-mer extended to the m-mer around its
-# centre (see orders/README.md; needs m - gm_k even, so at m=21 only gm_k 13 and 15).
+# center (see orders/README.md; needs m - gm_k even, so at m=21 only gm_k 13 and 15).
 # projection: the DNA->binary polarity (sshash --gm-projection): at0-cg1 = A,T->0 and
 # C,G->1 (default), at1-cg0 = flipped. Both are run.
 greedymini:

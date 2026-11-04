@@ -162,7 +162,7 @@ unrelated -- they size the skew index's bucket-size partitioning, not `m`.
 parsing".
 
 *GreedyMini order.* An explicit canonical
-(mirror-symmetric) table of `gm_k`-mers is extended to the m-mer by its centre: view the
+(mirror-symmetric) table of `gm_k`-mers is extended to the m-mer by its center: view the
 m-mer as `xyz`, `|x| = |z| = i = (m - gm_k) / 2`, `|y| = gm_k`; rank by `rank[Sigma(y)]`
 (Sigma = the {A,T} vs {C,G} bit of each base; one table probe, strand invariant because
 the table is mirror symmetric and `rc` maps `y` to its mirror), break ties by
@@ -176,9 +176,9 @@ indexes are refused.
 *Mod-minimizer schemes.* `--scheme mod-minimizer-xor` and `--scheme mod-minimizer-greedymini` (with `--mod-t T`) sample by
 strand-symmetric mod-sampling: the k-mer's `T = k - t + 1` t-mers are ranked (canonical t-mer
 XOR the seed, or the GreedyMini hash of a table of t-mers, `gm_k = t`, or of a smaller table
-extended to the t-mer by its centre as above, `t - gm_k` even); a minimal t-mer at `x` offers
+extended to the t-mer by its center as above, `t - gm_k` even); a minimal t-mer at `x` offers
 the m-mer at `x mod w`; a unique minimum samples it, and several minimal t-mers are resolved by
-the centre rule of the plain orders: the offset closest to the centre `(w-1)/2`, and between
+the center rule of the plain orders: the offset closest to the center `(w-1)/2`, and between
 two equally close ones (mirror images) the smaller if `!(kmer_rc < kmer)`, else the larger.
 The builder requires `t == m (mod w)` (e.g. `t = 4 + (m - 4) mod w`, 10 at k=31, m=21), so a
 k-mer and its reverse complement sample mirrored m-mers of the same canonical value
@@ -203,14 +203,14 @@ with the magic precomputed, and xor/xor-pcg-hash to a xor and a PCG scramble). A
 `(rank, tie-break)` with the rank in its top bits, so windows with different ranks are ordered
 by their ranks alone: `hash()` is computed from the Sigma/Gamma bit planes of the m-mer and of
 its reverse complement (`hash_from_planes`; two `pext` and one bit reversal), but the code
-that scans windows needs only `centre_rank` (one table load from the Sigma plane of the whole
+that scans windows needs only `center_rank` (one table load from the Sigma plane of the whole
 k-mer) and takes full hashes only of windows that share the minimum rank. The streaming
 iterator rolls the Sigma plane one base per call, keeps the window ranks in a ring (each rank
 stored twice so a window set is contiguous; a re-scan takes the minimum 8 ranks at a time
 with SSE4.1), and requires either consecutive one-base slides or a `reset()`/`set_position()`
 before the first k-mer of a read or string. `util::compute_minimizer` (used by `lookup`) is
 rank-first too. `custom_scheme_hasher.hpp` keeps the slow per-base `hash_reference()` and
-`test/minimizer_reference.hpp` the all-windows `compute_minimizer_reference()`; `test/test_gm_centre.cpp`
+`test/minimizer_reference.hpp` the all-windows `compute_minimizer_reference()`; `test/test_gm_center.cpp`
 (fast == reference == independent string implementation == Python-reference vectors,
 rc-invariance, injectivity, rejections) and `test/test_gm_rolling.cpp` (ranks, rolling,
 iterator vs the pre-ring iterator, `compute_minimizer` vs the reference, tie-heavy synthetic

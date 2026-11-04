@@ -685,7 +685,7 @@ def sshash_tables(R):
                         [stat_of(r, "bits_per_kmer", "{:.2f}", fl(r["n_kmers"]) / 8e9)])
     yield Table("sshash_build",
                 "SSHash: index build, k=21, w=11, 16 threads. Columns: the collection; the scheme and its order (the GreedyMini "
-                "order built for 15-mers, centre-extended to 21-mers); the particular density factor; the distinct selected "
+                "order built for 15-mers, center-extended to 21-mers); the particular density factor; the distinct selected "
                 "k-mers (millions); the build wall time; the build peak memory; and the index size, in bits per L-mer and in "
                 "GB. Mean and standard deviation over the 5 seeds.",
                 ["block"] + SCHEME_COLS + ["particular density factor", "distinct selected k-mers (10^6)",

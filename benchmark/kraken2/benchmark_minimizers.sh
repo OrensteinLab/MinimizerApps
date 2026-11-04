@@ -61,7 +61,7 @@ $(bench_common_options_help)
 
 Microbench-only:
   -l INT        minimizer length ℓ (default: 31). greedymini needs ℓ = gm_k + 2i
-                (w5_k15_canonical: 15, 17, ..., 31); the centre extension then
+                (w5_k15_canonical: 15, 17, ..., 31); the center extension then
                 keeps the table's density factor (~1.467) at every such ℓ.
                 See kraken2/minimizers/README.md for the sweep commands.
   -k INT        k-mer length (default: l+4 ⇒ w=5)

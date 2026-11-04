@@ -33,7 +33,7 @@ constexpr int backward_orientation = -1;
    serialized field set/order changes. This fork's format (x >= 14) serializes the hasher's
    order fields (GreedyMini table, mod_t) and is not compatible with upstream indexes. An
    index built by an older binary must not be silently misread by a newer one. x = 15: the
-   mod-minimizer orders switched from the G/T-strand tie rule to the centre rule (same fields,
+   mod-minimizer orders switched from the G/T-strand tie rule to the center rule (same fields,
    different sampled positions). */
 namespace current_version_number {
 constexpr uint8_t x = 15;
