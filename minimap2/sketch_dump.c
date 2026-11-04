@@ -2,11 +2,13 @@
 // from stdin and prints each emitted minimizer's raw end position, one per
 // line. benchmark/minimap2/tests/test_mod_minimizer_sketch.py compares this against a brute-force
 // reference, so the check covers the compiled scheme.cpp, not a port of it.
+// -x prints each minimizer's mm128_t instead (x and y in hex, as stored in the
+// index; test_scheme.sh pins their checksums), -H sketches homopolymer-
+// compressed k-mers (minimap2 -H).
 //
-// Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq.txt
+// Usage: sketch_dump [-x] [-H] <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq.txt
 // (order: native, xor, xor-pcg-hash, greedymini, mod-minimizer-xor,
-// mod-minimizer-greedymini; HPC off;
-// t = 0 for non-mod orders)
+// mod-minimizer-greedymini; t = 0 for non-mod orders)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +23,15 @@ int main(int argc, char *argv[])
 	mm128_v p = {0, 0, 0};
 	char errbuf[256], *seq = 0;
 	size_t cap = 0, len = 0, i;
-	int c, w, k;
+	int c, w, k, full = 0, hpc = 0;
+	while (argc > 1 && argv[1][0] == '-') {
+		if (strcmp(argv[1], "-x") == 0) full = 1;
+		else if (strcmp(argv[1], "-H") == 0) hpc = 1;
+		else break;
+		--argc, ++argv;
+	}
 	if (argc < 6) {
-		fprintf(stderr, "Usage: sketch_dump <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq\n");
+		fprintf(stderr, "Usage: sketch_dump [-x] [-H] <order> <w> <k> <seed> <t> [gm_file [at0-cg1|at1-cg0]] < seq\n");
 		return 1;
 	}
 	w = atoi(argv[2]), k = atoi(argv[3]);
@@ -49,10 +57,12 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "%s\n", errbuf);
 			return 1;
 		}
-		mm_sketch_scheme(ord, 0, seq, (int)len, w, k, 0, 0, &p);
-	} else mm_sketch(0, seq, (int)len, w, k, 0, 0, &p);
-	for (i = 0; i < p.n; ++i)
-		printf("%u\n", (uint32_t)p.a[i].y >> 1);
+		mm_sketch_scheme(ord, 0, seq, (int)len, w, k, 0, hpc, &p);
+	} else mm_sketch(0, seq, (int)len, w, k, 0, hpc, &p);
+	for (i = 0; i < p.n; ++i) {
+		if (full) printf("%016llx\t%016llx\n", (unsigned long long)p.a[i].x, (unsigned long long)p.a[i].y);
+		else printf("%u\n", (uint32_t)p.a[i].y >> 1);
+	}
 	free(p.a); free(seq);
 	mm_scheme_destroy(ord);
 	return 0;

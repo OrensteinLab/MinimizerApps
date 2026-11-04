@@ -316,6 +316,32 @@ if [ "$rc" = 0 ] && [ -s "$TMP/ms0.txt" ] && [ -s "$TMP/ms1.txt" ] && [ "$n0" !=
 if $BIN -a --scheme mod-minimizer-greedymini --mod-t 9 -k 19 "$REF" "$QRY" >/dev/null 2>&1; then bad "without --greedymini-file should be rejected"; else ok "without --greedymini-file rejected"; fi
 if $BIN -a --scheme mod-minimizer-greedymini --greedymini-file "$GM_MOD_FILE" --mod-t 5 -k 15 "$REF" "$QRY" >/dev/null 2>&1; then bad "t = 5 with a gm_k = 9 table should be rejected"; else ok "t = 5 with a gm_k = 9 table rejected"; fi
 
+echo "== 16. greedymini schemes: pinned sketches (every x and y; MT-human + N run + MT-orang) =="
+# Checksums of `sketch_dump -x` (each minimizer's x and y) from the reference
+# implementation of both schemes (the full order value per k-mer / t-mer, the
+# templates of scheme.cpp before the rank-first sketch_gm.c), so a change of
+# the code cannot silently change the selection or the stored keys. Columns:
+# md5, minimizer count, HPC (-H or -), scheme, w, k, seed, t, table, projection.
+{ grep -v '>' "$REF"; printf 'NNNNNNNNNN'; grep -v '>' "$QRY"; } | tr -d '\n' > "$TMP/pin.seq"
+while read -r md5 n h scheme w k seed t table proj; do
+	[ "$h" = "-" ] && h=""
+	out=$(./sketch_dump -x $h "$scheme" "$w" "$k" "$seed" "$t" "$(cd .. && pwd)/orders/GreedyMini/$table.gm" "$proj" < "$TMP/pin.seq")
+	got=$(echo "$out" | md5sum | cut -c1-32); gn=$(echo "$out" | grep -c .)
+	label="$scheme ${h:-noHPC} w=$w k=$k seed=$seed t=$t $proj"
+	if [ "$got" = "$md5" ] && [ "$gn" = "$n" ]; then ok "pinned sketch: $label"; else bad "pinned sketch: $label (got $gn minimizers, md5 $got)"; fi
+done <<'EOF'
+b055c1ee30ee6679174b21da5ec12109 4605 - greedymini 10 15 0 0 w10_k15_canonical at0-cg1
+7f63a5c74d7537c5c41abbefec207e95 3336 -H greedymini 10 15 0x2545F4914F6CDD1D 0 w10_k15_canonical at1-cg0
+866276c251067553000c20ce6f9e26da 3324 -H greedymini 10 19 0x9E3779B97F4A7C15 0 w10_k15_canonical at0-cg1
+abadb5729ee1a1f0dcb111a366e5300a 4535 - greedymini 10 19 0xA5A5A5A5A5A5A5A5 0 w10_k15_canonical at1-cg0
+27d1aae10d8591617b2e3304d1b96640 1367 - greedymini 50 23 0xFFFFFFFFFFFFFFFF 0 w10_k15_canonical at0-cg1
+e350544dd5e24e0b87238e14dbbd5ccd 14977 -H greedymini 2 17 0xDEADBEEFCAFEBABE 0 w10_k15_canonical at1-cg0
+d41c0735c8593c24ffae3b3d63f68164 3107 -H mod-minimizer-greedymini 10 19 0x2545F4914F6CDD1D 9 w20_k9_canonical at0-cg1
+e39add55f1a3e1e71365cb71b60a5fc4 4378 - mod-minimizer-greedymini 10 19 0xDEADBEEFCAFEBABE 9 w20_k9_canonical at1-cg0
+53ce8129e33d5a6cb77d6726c0758b42 8028 - mod-minimizer-greedymini 5 19 0 9 w20_k9_canonical at0-cg1
+a3718d97370732a597cb742553891233 2629 -H mod-minimizer-greedymini 12 21 0x1234567890ABCDEF 9 w20_k9_canonical at1-cg0
+EOF
+
 echo
 echo "== summary: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
