@@ -6,6 +6,7 @@ Standard library only; the charts are plain SVG elements, composed into a figure
 """
 
 import math
+import re
 
 SANS = "DejaVu Sans, Helvetica, Arial, sans-serif"
 # grey for the pseudo-random orders (default, xor, xor-pcg-hash), colours for the advanced schemes: GreedyMini green, the
@@ -48,14 +49,45 @@ class Fig:
         self.el.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{c}" stroke-width="{sw}"/>')
 
 
-def xlabel(f, x, base, lines, size=21):
+def xlabel(f, x, base, lines, size=None):
+    size = size or XLAB_SIZE
     """A scheme name (its lines) under the bar at x, rotated by 45 degrees; every line ends below the bar, the next line
     XLABEL_STEP lower, i.e. one line height further across the text direction."""
     for j, ln in enumerate(lines):
         f.t(round(x + 4, 1), round(base + 12 + j * XLABEL_STEP * size, 1), ln, size, "end", "normal", "#444", rot=-45)
 
 
+XLAB_SIZE = 23                 # the font size of the scheme names under the bars
 XLABEL_STEP = 1.1 * 2 ** 0.5   # the vertical step between the lines of a scheme name, per unit of font size
+GROUP_PREFIX = "mod-minimizer"   # schemes whose bars share one horizontal group name under their own short labels
+
+
+def xlabels_of(f, xs, base, xlabels, size=None):
+    """The scheme names under the bars at xs ({scheme: x}): each name rotated under its bar, except the schemes of the
+    group (xlabels["_group"]: the lines of its name), which get their short name horizontal under the bar and, below
+    them, the group name once, centered under the group's bars and kept inside the chart's right end xlabels["_right"]."""
+    size = size or XLAB_SIZE
+    group = [s for s in xs if s.startswith(GROUP_PREFIX)] if "_group" in xlabels else []
+    for s, x in xs.items():
+        if s.startswith("_"):
+            continue
+        if s in group:
+            for j, ln in enumerate(xlabels[s]):
+                f.t(round(x, 1), round(base + 24 + j * 1.15 * size, 1), ln, size, "middle", "normal", "#444")
+        else:
+            xlabel(f, x, base, xlabels[s], size)
+    if group:
+        lo, hi = min(xs[s] for s in group), max(xs[s] for s in group)
+        y0 = base + 24 + max(len(xlabels[s]) for s in group) * 1.15 * size - size * 0.55
+        lines = xlabels["_group"]
+        half = max(len(re.sub("<[^>]+>", "", ln)) for ln in lines) * size * 0.58 / 2
+        xm = min((lo + hi) / 2, xlabels.get("_right", 1e9) - half)
+        if hi > lo:                                  # a bracket joining the group's bars
+            f.l(lo - 20, y0, hi + 20, y0, "#555", 2)
+            f.l(lo - 20, y0 - 7, lo - 20, y0, "#555", 2)
+            f.l(hi + 20, y0 - 7, hi + 20, y0, "#555", 2)
+        for j, ln in enumerate(lines):
+            f.t(round(xm, 1), round(y0 + 6 + (j + 1) * 1.15 * size - size * 0.25, 1), ln, size, "middle", "normal", "#444")
 
 
 def fmtv(v, extra=0):
@@ -175,6 +207,7 @@ def minibars(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
     axis(f, x0, x + w, base, sc, bot, ymax, st)
     bw = (w - AXW) / (len(vals) + 0.6)
     gx = x0 + bw * 0.3
+    xs = {}
     for i, (s, v, sd, stars) in enumerate(vals):
         hh, eh, xc = sc(v), k * sd, gx + i * bw + bw / 2
         f.r(gx + i * bw + 3, base - hh, bw - 6, hh, COL[s])
@@ -183,8 +216,9 @@ def minibars(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
         if s != "default":
             above = pct_label(f, xc, base - hh - eh - 28, v, ref, bw, (base - hh, hh, COL[s], 1.0, eh))
             stars_label(f, xc, base - hh - eh - (28 if above else 5), stars)
-        if xlabels:
-            xlabel(f, xc, base, xlabels[s])
+        xs[s] = xc
+    if xlabels:
+        xlabels_of(f, xs, base, {**xlabels, "_right": x + w})
     f.l(x0, base, x + w, base)
 
 
@@ -204,6 +238,7 @@ def stacked_mini(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
     axis(f, x0, x + w, base, sc, bot, ymax, st)
     bw = (w - AXW) / (len(vals) + 0.6)
     gx = x0 + bw * 0.3
+    xs = {}
     for i, (s, a, b, sd, stars) in enumerate(vals):
         h1, h2, eh, xc = sc(a), sc(b), sc(sd), gx + i * bw + bw / 2
         f.r(gx + i * bw + 3, base - h1, bw - 6, h1, COL[s])
@@ -213,6 +248,7 @@ def stacked_mini(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
         if s != "default":
             above = pct_label(f, xc, base - h1 - h2 - eh - 28, a + b, ref, bw, (base - h1 - h2, h2, COL[s], STAGE2_OPACITY, eh))
             stars_label(f, xc, base - h1 - h2 - eh - (28 if above else 5), stars)
-        if xlabels:
-            xlabel(f, xc, base, xlabels[s])
+        xs[s] = xc
+    if xlabels:
+        xlabels_of(f, xs, base, {**xlabels, "_right": x + w})
     f.l(x0, base, x + w, base)

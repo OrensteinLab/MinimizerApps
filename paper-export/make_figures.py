@@ -32,7 +32,7 @@ SCH4 = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)", "mod-min
 SCM = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)"]   # Minimap2 at k = 15 (ONT): no GreedyMini O_t
 SCK = ["default", "xor-pcg-hash", "GreedyMini"]                          # KMC3: no mod-minimizer
 XLAB = {"default": ["default"], "xor-pcg-hash": ["xor-pcg-hash"], "GreedyMini": ["C-GreedyMini"],
-        "mod-minimizer (xor)": ["C-mod (xor)"], "mod-minimizer (GreedyMini)": ["C-mod (GM)"]}   # short, so that each
+        "mod-minimizer (xor)": ["(xor)"], "mod-minimizer (GreedyMini)": ["(GM)"]}   # short, so that each
 # name stays under its bar
 # Minimap2: (dataset, chart title key, t of the mod-minimizers, schemes); the mod-minimizer with a GreedyMini order on
 # t-mers only at k = 19 (t = 9, the w20_k9 order)
@@ -119,21 +119,27 @@ def svg_text(t):
 
 
 def xlabels(t, schemes):
-    """The scheme names on the x axis, with the t of the mod-minimizers once, as a second line of the rightmost one."""
+    """The scheme names on the x axis: the C-mod-minimizers get their order, (xor) or (GM), under their bars and the
+    group name with their t once, horizontal, under both (C.xlabels_of)."""
     lab = {s: list(v) for s, v in XLAB.items()}
-    mods = [s for s in schemes if s.startswith("mod-minimizer")]
-    if mods:
-        lab[mods[-1]].append(f'<tspan font-style="italic">t</tspan> = {t}')
+    if any(s.startswith("mod-minimizer") for s in schemes):
+        lab["_group"] = ["C-mod-minimizer", f'<tspan font-style="italic">t</tspan> = {t}']
     return lab
 
 
-def xlab_h(lines_of, size=21):
-    """The room below the axis for the scheme names of a chart (lines_of: their lines): the lowest point of the rotated
-    labels, as C.xlabel draws them."""
+def xlab_h(lab, names, size=C.XLAB_SIZE):
+    """The room below the axis for the scheme names of a chart (lab: the lines of each name; names: its schemes): the
+    lowest point of the rotated labels, as C.xlabel draws them, and of the group name, as C.xlabels_of draws it."""
     low = 0
-    for lines in lines_of:
-        for j, ln in enumerate(lines):
+    group = [s for s in names if s.startswith(C.GROUP_PREFIX)] if "_group" in lab else []
+    for s in names:
+        if s in group:
+            continue
+        for j, ln in enumerate(lab[s]):
             low = max(low, 12 + j * C.XLABEL_STEP * size + 0.7071 * len(re.sub("<[^>]+>", "", ln)) * size * 0.52)   # 0.52: mean glyph width / size
+    if group:
+        y0 = 24 + max(len(lab[s]) for s in group) * 1.15 * size - size * 0.55
+        low = max(low, y0 + 6 + len(lab["_group"]) * 1.15 * size)
     return round(low + 12)
 
 
@@ -199,7 +205,7 @@ def make_charts(charts, W, lab, head=None):
             for j, ln in enumerate(lines):
                 f.t(round(10 + yl - 6 - (len(lines) - 1 - j) * 24, 1), round(yc, 1), svg_text(ln), 21, "middle", "normal", "#333", rot=-90)
         names = [b[0] for b in (c[1] if stacked else c)]
-        out.append((f.W, h + (xlab_h([lab[s] for s in names]) if o["xlab"] else 14), f.el))
+        out.append((f.W, h + (xlab_h(lab, names) if o["xlab"] else 14), f.el))
     return out
 
 
