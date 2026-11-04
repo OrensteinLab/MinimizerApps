@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-validation of the greedymini order (scheme.cpp RankState<MM_SCHEME_GREEDYMINI>: the
+"""Cross-validation of the greedymini order (sketch_gm.c mm_sketch_gm: the
 shared GreedyMini center extension, injective packing) against two
 independent Python implementations:
 
@@ -19,8 +19,8 @@ The compiled sketch (minimap2/sketch_dump driver, `make sketch_dump` in minimap2
 - on sequences with N runs, a Python port of minimap2's own mm_sketch loop
   (sketch.c) fed the reference values. minimap2 does not flush the pending
   minimum at an N (l resets, min is overwritten), so a segment's last
-  minimizer can be dropped -- upstream behaviour that scheme.cpp's
-  sketch_single_window copies on purpose; the port is itself checked against
+  minimizer can be dropped -- upstream behaviour that sketch_gm.c
+  copies on purpose; the port is itself checked against
   the compiled native order (mm_hash64) on the same sequences.
 Covers k = 15 (no extension), 17, 19, 21, 23 and both projections, plus
 strand invariance of the value, and --order-seed (the Gamma toggle).

@@ -12,9 +12,10 @@ C++), so the schemes are a small, self-contained addition:
 |---|---|
 | `scheme.h` | Plain C-callable declarations (extern-"C" guarded, like `minimap.h`) |
 | `scheme.cpp` | The only C++ translation unit: wraps `common/minimizer-schemes/` **unmodified** behind that flat API |
+| `sketch_gm.c` | The `greedymini` sketch, `mm_sketch_gm()`: `mm_sketch()`'s loop in plain C with the GreedyMini order compared rank first (see below) |
 | `sketch.c`, `index.c`, `map.c`, `minimap.h`, `main.c` | Small, targeted edits -- see below |
-| `Makefile`, `setup.py` | Build `scheme.cpp` with CXX and link `-lstdc++` (Makefile also: `sketch_dump`, `make test`); `setup.py` builds it into `mappy` |
-| `sketch_dump.c`, `test_scheme.sh` | Test driver (one sketch to stdout) and the `make test` suite |
+| `Makefile`, `setup.py` | Build `scheme.cpp` with CXX and link `-lstdc++`, and `sketch_gm.c` (Makefile also: `sketch_dump`, `make test`); `setup.py` builds both into `mappy` |
+| `sketch_dump.c`, `test_scheme.sh` | Test driver (one sketch to stdout; `-x` prints every minimizer's x and y, `-H` HPC) and the `make test` suite |
 | `.gitignore` | Ignores `sketch_dump` |
 
 Everything else in this folder is unmodified upstream (`git diff --stat
@@ -74,7 +75,10 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
 - The native scheme's own sketching path (`sketch.c`'s `mm_sketch()`) is
   byte-for-byte untouched; only the new `mm_sketch_scheme()` (`scheme.cpp`)
   is added, dispatched on `mi->scheme != NULL`. Zero added cost for the
-  default case.
+  default case. `mm_sketch_scheme()` runs `mm_sketch_gm()` (`sketch_gm.c`)
+  for `greedymini`, `sketch_mod_minimizer<Kind>` for the mod-minimizer
+  schemes and `sketch_single_window<Kind>` (a port of `mm_sketch()`'s loop)
+  for `xor` and `xor-pcg-hash`, in index building and in mapping alike.
 - `mm_idx_str()` (the in-memory index-from-strings API) and `mappy`'s
   index-from-FASTA path do not take a custom scheme -- only the CLI path
   through `mm_idx_reader_open`/`mm_idx_gen` does. Indexes built this way are
@@ -87,8 +91,20 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   its low k bits into Gamma (as kraken2's and sshash's greedymini seeds).
   `-k - gm_k` must be
   even and `-k <= 23` (the packed value must stay below UINT64_MAX).
+  `mm_sketch_gm()` (`sketch_gm.c`) is `mm_sketch()`'s loop (HPC, palindrome
+  skip, N reset, duplicate flush, `>=` tie rule) in plain C, comparing the
+  order rank first, as Kraken2's scanner does: per base it rolls one Sigma
+  bit of the forward strand and reads the k-mer's rank (the center's table
+  entry, 0xFFFF outside the UHS) directly from the `uint16_t` table; only
+  when two candidates' ranks are equal does it compute their tie-break
+  fields (min over both strands of Sigma and Gamma XOR the toggle) from the
+  stored canonical k-mers, which gives the same comparisons as the full
+  value. The stored `x` is `mm_hash64()` of each selected k-mer, computed
+  when it is output.
   `benchmark/minimap2/tests/test_greedymini_sketch.py` checks the compiled rank and sketch against two
-  independent Python versions.
+  independent Python versions; `test_scheme.sh` pins the x and y of both
+  greedymini schemes' sketches (checksums from the reference implementation
+  that computes the full value per k-mer).
 - `mod-minimizer-xor` / `mod-minimizer-greedymini` are a canonical variant of mod-sampling (Groot
   Koerkamp & Pibiri, WABI 2024), with the rule shared with kraken2 and sshash
   in `common/minimizer-schemes/mod_minimizer_rule.h`: `--mod-t` must satisfy
@@ -100,10 +116,12 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
   complement thus select the same loci, and the selection never moves back.
   The order on t-mers is a template parameter of the one scan
   (`sketch_mod_minimizer<Kind>`, `TmerRank`): xor ranks the canonical t-mer
-  XOR the seed; the GreedyMini order is `RankState<MM_SCHEME_GREEDYMINI>` at
-  length t (the shared center-extension order, built for t, with the same
-  projection and `--order-seed` Gamma toggle as `greedymini`), stored in the
-  `.mmi` with its table and length.
+  XOR the seed; the GreedyMini order is `TmerRank<MM_SCHEME_MOD_GREEDYMINI>`,
+  the injective center-extension value at length t (rank << 2t | min over
+  both strands of Sigma << t | Gamma XOR the toggle, with the same projection
+  and `--order-seed` Gamma toggle as `greedymini`) from the two strands'
+  words rolled one base per step and one table load, its table and length
+  stored in the `.mmi`.
   The scan keeps the window minimum and its leftmost/rightmost t-mers by
   conditional moves and rescans only when the minimum leaves the window (as
   native `mm_sketch()` does), and emits a selected k-mer when it leaves the

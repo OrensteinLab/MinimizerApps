@@ -24,7 +24,7 @@ inside backticks all mean the k-mer.
 |---|---|---|---|---|---|
 | `pcg_rxs_m_xs.h` | `pcg_rxs_m_xs64(x)`: `count = x>>59; x ^= x>>(5+count); x *= 12605985483714917081; return x ^ (x>>43)` | `PcgRanker` | `plain_hasher` | `RankState<XOR_PCG_HASH>` | `build_gm_rank_by_dna` |
 | `greedymini_rank.h` | key/tie-break extraction (`gm_acgt_to_atcg`, `gm_extract_dna_key/_tb`, `pext`/SWAR), `GreedyMiniTable` (uint16 ranks, `kInfRank = 0xFFFF`), `.gm` I/O (`load_gm_file_raw`, `write_gm_file_raw`, `load_gm_table`) | yes (via `kraken2/src/greedymini_rank.h`) | yes | yes | yes (`CMmer::DnaToBinaryKey`, `load_gm_file_raw`) |
-| `greedymini_center.h` | namespace `gm_center`: `Order` (center extension, two packings), `TwoBitPlanes<SigmaXor>`, `roll_in_low/high`, `validate_table`, `Reference`, `density_factor` | `GMRanker` | `custom_scheme_hasher` | `scheme.cpp` | not used |
+| `greedymini_center.h` | namespace `gm_center`: `Order` (center extension, two packings), `TwoBitPlanes<SigmaXor>`, `roll_in_low/high`, `validate_table`, `Reference`, `density_factor` | `GMRanker` | `custom_scheme_hasher` | `scheme.cpp` (`Order` validates the table and length; the sketches roll their own planes) | not used |
 | `mod_minimizer_rule.h` | namespace `mod_rule`: `t_is_canonical`, `center_dist2`, `CenterPick`, `center_tie_offset`, `le_revcomp_planes`, `window_le_revcomp` (tested by `test_mod_minimizer_rule.cpp`, `make test`) | `ModSampler` | `util.hpp` | `sketch_mod_minimizer` | not used |
 | `dna_revcomp.h` | `dna_reverse_complement` on packed 2-bit k-mers | own copy in `dna_kmer.h` | own encoding | own loops | `CMmer::DnaReverseComplement` |
 | `gm_serializer.cpp` (+ `Makefile`) | builds a `.gm` from a rank-list `.txt`; `--canonical` gives each listed k-mer and its reverse the same rank | tool | tool | tool | tool |
@@ -40,13 +40,14 @@ the sentinel `N` for non-UHS keys (`greedymini_rank.h` header comment).
 
 - Planes. `TwoBitPlanes<SigmaXor>` extracts an n-bit Sigma and Gamma plane from
   a word of 2-bit bases, first base in the MSB, by `pext` (BMI2) or the SWAR
-  fallback `compress_even_bits`. `SigmaXor = true` (Kraken2, KMC3, Minimap2:
-  ACGT = 0..3) uses Sigma = bit0 ^ bit1 (A,T -> 0; C,G -> 1), Gamma = bit1;
+  fallback `compress_even_bits`. `SigmaXor = true` (Kraken2, KMC3; Minimap2's
+  own rolled planes follow it too: ACGT = 0..3) uses Sigma = bit0 ^ bit1 (A,T -> 0; C,G -> 1), Gamma = bit1;
   `SigmaXor = false` (SSHash: A=00 C=01 G=11 T=10) uses Sigma = bit0,
   Gamma = bit1. The `flip` argument complements Sigma (`at1-cg0`); Gamma is
   untouched.
-- Rolling. `roll_in_low` (newest base lowest, Kraken2/Minimap2 forward strand)
-  and `roll_in_high` (newest base highest, SSHash and Minimap2's rc strand)
+- Rolling. `roll_in_low` (newest base lowest, Kraken2; Minimap2's forward strand
+  rolls the same way in C) and `roll_in_high` (newest base highest, SSHash;
+  Minimap2's rc strand for `mod-minimizer-greedymini`)
   slide a Sigma plane by one base instead of a `pext` per window.
 - Mirror-symmetric canonical table: `rank[key] == rank[reverse_bits(key)]`
   (`mirror_key`); `validate_table` checks it and, when `require_rank_pairs`,
@@ -134,7 +135,7 @@ into Gamma only. `Reference` is the slow per-base specification used by tests.
 Projection `at0-cg1`/`at1-cg0`: Sigma polarity. Applied as the `flip` flag of
 `TwoBitPlanes` in Kraken2 (`GMRanker::flip_`, also `key_flip_` for the
 `k == gm_k` path), SSHash (`derive`: `TwoBitPlanes<false>(k, projection==AT1_CG0)`)
-and Minimap2 (`build_gm_order`). KMC3 has no planes: `install_table` permutes the
+and Minimap2 (`build_gm_order`: `mm_gm_params_t::flip`, XORed into each base's Sigma bit). KMC3 has no planes: `install_table` permutes the
 table once, `flipped[key] = ranks[key ^ key_mask]`.
 
 Per method:
@@ -166,12 +167,21 @@ Per method:
   canonicalize only the winner's value. The injective packing means the Sigma
   plane is folded into the value below the rank, so hash ties are value ties.
   The table is stored in the `.sshash` file (`m_gm_ranks`).
-- Minimap2 (`scheme.cpp`, `RankState<MM_SCHEME_GREEDYMINI>`). Injective packing,
-  `TwoBitPlanes<true>`, seed toggles Gamma; forward Sigma/Gamma rolled with
-  `roll_in_low`, rc Sigma with `roll_in_high`, rc Gamma shifted in as `g ^ 1`;
-  rank = `value_of_both_strands`. The value is never `UINT64_MAX` (k <= 23), which
-  matters because `sketch_single_window` flushes every tied candidate and uses
-  `UINT64_MAX` as "no candidate".
+- Minimap2 (`sketch_gm.c`, `mm_sketch_gm`; parameters from `scheme.cpp`'s
+  `build_gm_order`, which builds an `Order` to validate the table and length).
+  Injective packing, seed toggles Gamma, plain C (no `gm_center` code at sketch
+  time). Rank first, like Kraken2's scanner: per base one forward Sigma bit is
+  rolled (newest base lowest, as `roll_in_low`), the rank is one `uint16_t`
+  table load of the center, candidates compare ranks, and only on equal ranks
+  is the tie-break (min over both strands of `Sigma << k | Gamma ^ toggle`)
+  computed from the stored canonical k-mers, so the comparisons are those of
+  the full injective value. Equal values are equal canonical k-mers, which
+  matters because the loop (`mm_sketch()`'s) flushes every tied candidate;
+  `UINT64_MAX` is "no candidate". `mod-minimizer-greedymini`
+  (`TmerRank<MM_SCHEME_MOD_GREEDYMINI>`, `scheme.cpp`) computes the full value
+  of each t-mer from the two strands' `Sigma << t | Gamma` words, rolled one base
+  per step (forward newest base lowest, rc newest base highest, rc Gamma `g ^ 1`),
+  and one table load; never `UINT64_MAX` (t <= 23).
 - KMC3: see 4.
 
 ### `mod-minimizer-xor` / `mod-minimizer-greedymini`
@@ -260,7 +270,7 @@ canonical t-mer for PCG; xor needs none (`select_kind`: `K_XOR`, `K_LUT_RAW`,
 |---|---|---|
 | Kraken2 | `std::deque` of `{rank, candidate, pos}` (`queue_`; the default xor path uses a 16-byte `xq_`, `NextMinimizerXor`). New k-mer pops the back while worse (`PopDominatedRankFirst`/`PopDominatedGM`, plain `>` for xor/pcg); front expires when `pos < queue_pos_ - (L - k)` (code: `k` = L, `l` = k) | strict `>` keeps the leftmost on equal ranks; GM equal finite values: `KeyKeepsBack` (hash key ^ toggle) |
 | SSHash | no deque. `minimizer_iterator<Kmer, Mode>`: keeps the current min, re-scans all `w` loci (`rescan`) only when it leaves the window (`m_min_pos_in_kmer == 0`), otherwise one new hash and a compare; counts ties in `m_num_mins`. `strand_invariant_minimizer_iterator` (GreedyMini): ring of 16-bit ranks (`m_ring[136]`: 64 slots, every rank stored twice so a window's ranks are contiguous; SSE min 8 at a time), rolled Sigma plane (`roll_sigma`), full hash only on rank ties | `break_tie`: tied locus closest to the center, mirror images by `kmer <= rc(kmer)` |
-| Minimap2 | native `mm_sketch()` structure ported in `sketch_single_window<Kind>`: a circular `buf[w]` of `Cand{rank, kmer, span, y}`, `min`/`min_pos`; new min on `info.rank <= min.rank`, rescan of `buf` when the old min leaves; HPC span via `tiny_queue_t` | ties flush as extra minimizers when `y` differs (native behaviour kept); stored `x` is always `mm_hash64(selected k-mer)`, not the rank (`cand_to_mm128`) |
+| Minimap2 | native `mm_sketch()` structure ported in `sketch_single_window<Kind>` (xor, pcg): a circular `buf[w]` of `Cand{rank, kmer, span, y}`, `min`/`min_pos`; new min on `info.rank <= min.rank`, rescan of `buf` when the old min leaves; HPC span via `tiny_queue_t`. GM: the same loop in C, `mm_sketch_gm` (`sketch_gm.c`), `buf[w]` of `{rank, k-mer << 8 \| span, y}`, compared rank first (tie-break from the k-mer only on equal ranks; the rescan finds the minimal rank and its count first) | ties flush as extra minimizers when `y` differs (native behaviour kept); stored `x` is always `mm_hash64(selected k-mer)`, not the rank (`cand_to_mm128`, `gm_out`) |
 | KMC3 | no queue. `CSplitter` (`kmc_core/splitter.cpp`, `CalcStatsT`/`ProcessReadsT`, templated on `CMmer::LutMode()`) holds `current_signature` and `end_mmer`: each base `end_mmer.insert_sym<Mode>`; `<` replaces, `==` also moves the start, and when the current signature leaves the k-mer (`signature_start_pos + kmer_len - 1 < i`) the k-mer is rescanned with `<=` (rightmost on ties) | equal `current_val` moves to the newer position; for GM the value is `(rank << 32) \| min(str^seed, rc^seed)` |
 
 ## 3. Per-method summary
@@ -269,7 +279,7 @@ canonical t-mer for PCG; xor needs none (`select_kind`: `K_XOR`, `K_LUT_RAW`,
 |---|---|---|---|---|---|
 | Kraken2 | canonical k-mer (xor/pcg); raw k-mer with strand handling inside `GMRanker` (greedymini); canonical t-mers (mod xor/pcg), raw t-mers (mod GM) | 2-bit, ACGT = 0..3, `lookup_table_` | binary only (`GreedyMiniTable`); center extension, compressed packing | deque (minimizer); monotone ring deque (mod) | `kraken2/src/{mmscanner.cc,minimizer_rankers.h,mod_minimizer.h}` |
 | SSHash | canonical k-mer (xor/pcg), raw k-mer with strand-invariant hash (GM), t-mers for mod | 2-bit, A=00 C=01 G=11 T=10 (traditional encoding not supported for GM) | binary only; center extension, injective packing, table embedded in the index | re-scan iterator; rank ring + rolled Sigma (GM); hash ring (mod) | `sshash/include/{custom_scheme_hasher.hpp,minimizer_iterator.hpp,util.hpp}` |
-| Minimap2 | lex-min strand k-mer, k <= 28 (GM: k <= 23) | 2-bit, ACGT = 0..3 (`seq_nt4_table`), pure C caller via extern "C" | binary only; center extension, injective packing; table stored in `.mmi` | circular `buf[w]` with rescan; ring of t-mer ranks (mod) | `minimap2/scheme.cpp`, `scheme.h` |
+| Minimap2 | lex-min strand k-mer, k <= 28 (GM: k <= 23) | 2-bit, ACGT = 0..3 (`seq_nt4_table`), pure C caller via extern "C" | binary only; center extension, injective packing; table stored in `.mmi` | circular `buf[w]` with rescan (GM: rank first); ring of t-mer ranks (mod) | `minimap2/scheme.cpp`, `sketch_gm.c`, `scheme.h` |
 | KMC3 | signature (a k-mer, k = 5..11) | 2-bit, ACGT = 0..3 | DNA LUT (`4^k`) for xor/pcg and `_dna.gm`; binary LUT (`2^k`, default for `.gm`) | `current_signature`/`end_mmer` rescan | `kmc/kmc_api/{custom_order.cpp,mmer.h,mmer.cpp}`, `kmc/kmc_core/splitter.cpp` |
 
 ## 4. KMC3's two backends and why k == gm_k
