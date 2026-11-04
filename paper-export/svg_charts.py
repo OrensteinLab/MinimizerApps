@@ -193,22 +193,27 @@ def stars_label(f, xc, y, stars):
 def minibars(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
     """Bars of one chart: vals = list of (scheme, value[, std[, stars]]); head: the room above the top tick; xlabels:
     {scheme: lines of its name} drawn under the axis, or None."""
-    vals = [(t[0], t[1], (t[2] if len(t) > 2 else None) or 0.0, t[3] if len(t) > 3 else "") for t in vals if t[1] is not None]
+    vals = [(t[0], t[1], (t[2] if len(t) > 2 else None) or 0.0, t[3] if len(t) > 3 else "") for t in vals]
+    real = [t for t in vals if t[1] is not None]     # a None value keeps the scheme's slot, marked "n/a"
     if title:
         f.t(x + AXW + (w - AXW) / 2, y + 20, title, 22, "middle", "bold")   # centered on the plot area
     base = y + h
     top = y + (32 if title else 14)
-    bot, ymax, st = adaptive(vals, base - top - head)
+    bot, ymax, st = adaptive(real, base - top - head)
     x0 = x + AXW
     k = (base - top - head) / (ymax - bot)
     sc = lambda v: k * (v - bot)
-    ref = next((v for s, v, _, _ in vals if s == "default"), None)
-    fmt = chart_fmt([u for _, u, _, _ in vals], ref)
+    ref = next((v for s, v, _, _ in real if s == "default"), None)
+    fmt = chart_fmt([u for _, u, _, _ in real], ref)
     axis(f, x0, x + w, base, sc, bot, ymax, st)
     bw = (w - AXW) / (len(vals) + 0.6)
     gx = x0 + bw * 0.3
     xs = {}
     for i, (s, v, sd, stars) in enumerate(vals):
+        if v is None:
+            xs[s] = gx + i * bw + bw / 2
+            f.t(round(xs[s], 1), base - 10, "n/a", 20, "middle", "normal", "#888")
+            continue
         hh, eh, xc = sc(v), k * sd, gx + i * bw + bw / 2
         f.r(gx + i * bw + 3, base - hh, bw - 6, hh, COL[s])
         errbar(f, xc, base - hh, eh)

@@ -29,10 +29,11 @@ import svg_charts as C  # noqa: E402
 from common import APPS, ResultSets, fl, key_label, label, minimap2_blocks  # noqa: E402
 
 SCH4 = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)", "mod-minimizer (GreedyMini)"]
-SCM = ["default", "xor-pcg-hash", "GreedyMini", "mod-minimizer (xor)"]   # Minimap2 at k = 15 (ONT): no GreedyMini O_t
+SCM = SCH4   # Minimap2 at k = 15 (ONT): no GreedyMini O_t, so its slot is marked n/a (NA_SCHEMES)
+NA_SCHEMES = {"mod-minimizer (GreedyMini)"}   # schemes whose missing bar keeps its slot
 SCK = ["default", "xor-pcg-hash", "GreedyMini"]                          # KMC3: no mod-minimizer
 XLAB = {"default": ["default"], "xor-pcg-hash": ["xor-pcg-hash"], "GreedyMini": ["C-GreedyMini"],
-        "mod-minimizer (xor)": ["(xor)"], "mod-minimizer (GreedyMini)": ["(GM)"]}   # short, so that each
+        "mod-minimizer (xor)": ["xor"], "mod-minimizer (GreedyMini)": ["GM"]}   # short, so that each
 # name stays under its bar
 # Minimap2: (dataset, chart title key, t of the mod-minimizers, schemes); the mod-minimizer with a GreedyMini order on
 # t-mers only at k = 19 (t = 9, the w20_k9 order)
@@ -108,7 +109,8 @@ class Data:
 
 def bars(data, d, key, schemes, sig):
     """The bars of a chart: (scheme, mean, std, stars) of each scheme that has the metric key; sig = (app, setting)."""
-    return [(s, d[s][key][0], d[s][key][2] or 0, data.stars(*sig, key, s)) for s in schemes if s in d and key in d[s]]
+    return [(s, d[s][key][0], d[s][key][2] or 0, data.stars(*sig, key, s)) if s in d and key in d[s] else (s, None)
+            for s in schemes if (s in d and key in d[s]) or s in NA_SCHEMES]
 
 
 # ---------------------------------------------------------------- layout
@@ -159,7 +161,7 @@ def head_need(chart, W, P):
         vals = [(t[0], t[1], (t[2] if len(t) > 2 else None) or 0.0, t[3] if len(t) > 3 else "", None) for t in chart if t[1] is not None]
         bot, ymax, _ = C.adaptive([v[:4] for v in vals], P)
     k = P / (ymax - bot)
-    bw = (W - C.AXW) / (len(vals) + 0.6)
+    bw = (W - C.AXW) / (len(chart[1] if chart and chart[0] == "stacked" else chart) + 0.6)
     size = min(18, round(bw / 5.2, 1))
     ref = next((v for s, v, *_ in vals if s == "default"), None)
     need = 12                                                    # the number of the top tick
