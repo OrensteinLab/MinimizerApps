@@ -12,18 +12,20 @@ KMC is one of many projects developed by [REFRESH Bioinformatics Group](http://s
 
 For accessing k-mers stored in database produced by KMC there is an API (kmc_api directory). Note that for KMC versions 0.x and 1.x dababase format differs from produced by KMC version 2.x. From version 2.2.0 API is unified for both formats and all new features/bug fixes are present only for 2.x branch (standalone API for older KMC version is not longer under development, so new version of API  should be used even for databases produced by older KMC version).
 
-For the counting-performance benchmark harness, see
+For the counting-performance benchmark, see
 [`../benchmark/kmc/README.md`](../benchmark/kmc/README.md).
 
 Custom minimizer
 =
 
 This fork adds custom k-mer signature orders (`-or`, `-co`) on top of
-upstream KMC's own default order, including a shared GreedyMini-based
-low-density order also used by this monorepo's
-[kraken2 fork](../kraken2/README.md#custom-minimizer). With a binary `.gm`
-table, `-oat1` flips its DNA->binary projection (A,T -> 1, C,G -> 0 instead of
-A,T -> 0, C,G -> 1). See
+KMC's default order: `xor`, `xor-pcg-hash` and the GreedyMini tables, whose
+low-density order is shared with this repository's
+[Kraken2](../kraken2/README.md#custom-minimizer),
+[SSHash](../sshash/README.md#custom-minimizer) and
+[Minimap2](../minimap2/README.fork.md#custom-minimizer-scheme) forks. With a
+binary `.gm` table, `-oat1` flips the polarity of Φ, the DNA->binary
+projection (A,T -> 1, C,G -> 0 instead of A,T -> 0, C,G -> 1). See
 [`../orders/README.md`](../orders/README.md) for the option/CLI reference
 and shared implementation.
 

@@ -1,29 +1,29 @@
-# Benchmark harnesses: shared protocol and tools
+# Benchmarks: shared protocol and tools
 
-Four apps are benchmarked across minimizer schemes (random xor / xor-pcg-hash, GreedyMini, mod-minimizer
-variants, and each app's own baseline): `minimap2/` (read mapping), `sshash/` (k-mer dictionary),
-`kraken2/` (taxonomic classification) and `kmc/` (k-mer counting). Each folder has its own README (data,
+Four methods are benchmarked across minimizer schemes (random xor / xor-pcg-hash, GreedyMini, mod-minimizer
+variants, and each method's own baseline): Minimap2 (`minimap2/`, read mapping), SSHash (`sshash/`, k-mer
+dictionary), Kraken2 (`kraken2/`, taxonomic classification) and KMC3 (`kmc/`, k-mer counting). Each folder has its own README (data,
 `.env`, usage, outputs); this file describes what they share.
 
 ## Measurement protocol
 
 Timings on a shared host are only comparable if every timed step is made under the same conditions. Pinning
-the CPUs is not enough on its own: single-threaded, memory-latency-bound steps (sshash query and bench,
-kraken2 classify) also depend on whether their memory comes in 2 MB transparent huge pages and stays on their
-own NUMA node. Every timed step of every app therefore follows the same protocol
+the CPUs is not enough on its own: single-threaded, memory-latency-bound steps (SSHash query and bench,
+Kraken2 classify) also depend on whether their memory comes in 2 MB transparent huge pages and stays on their
+own NUMA node. Every timed step of every method therefore follows the same protocol
 (`common/compare_result_sets.py` compares the run-to-run stability of two result sets, to check a protocol).
 
-1. **Slots: one NUMA node per app** (`full_run_all.sh`, `BENCH_NODE`). The apps run in two slots, one per node,
-   in parallel; the apps of a slot run one after the other. Every timed step of an app runs on its slot's node,
-   so all schemes and seeds of an app are measured on the same node.
+1. **Slots: one NUMA node per method** (`full_run_all.sh`, `BENCH_NODE`). The methods run in two slots, one per
+   node, in parallel; the methods of a slot run one after the other. Every timed step of a method runs on its
+   slot's node, so all schemes and seeds of a method are measured on the same node.
    - The two slots share no cores, L3 cache, memory controller or memory.
-   - They do share the disk (`/localdata`: kmc's temp files, kraken2's library reads, sshash's external sort)
+   - They do share the disk (`/localdata`: KMC3's temp files, Kraken2's library reads, SSHash's external sort)
      and the inter-socket link. Interleaving the schemes (point 5) keeps this from favouring one scheme, and the
      step records keep the disk's busy share and each step's start and end, so overlaps can be checked afterwards.
-   - Default assignment: node 0 runs minimap2 then kmc, node 1 runs kraken2 then sshash. Node 1 usually has more
+   - Default assignment: node 0 runs Minimap2 then KMC3, node 1 runs Kraken2 then SSHash. Node 1 usually has more
      free 2 MB blocks, which the huge-page-sensitive steps need.
-   - Without `BENCH_NODE` (an app run by hand), each step takes the node whose best cores are least busy.
-2. **Node gate before each step** (`common/wait_low_load.sh` -> `common/node_gate.py`). The harness waits, while
+   - Without `BENCH_NODE` (a method run by hand), each step takes the node whose best cores are least busy.
+2. **Node gate before each step** (`common/wait_low_load.sh` -> `common/node_gate.py`). The benchmark waits, while
    its slot is idle, until its node has:
    - **CPUs**: as many quiet physical cores as the step will be pinned to (both hardware threads under 25% busy),
      and fewer than `BENCH_NODE_LOAD_MAX` (default 8) busy cores over the node's CPUs. Measured from `/proc/stat`
@@ -31,7 +31,7 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
    - **Memory**: the step's memory available (`wait_low_load MEM_GB`, set above each step's peak RSS). Available
      means free plus reclaimable page cache and slab: with the memory bound to the node, a long run fills the
      node's page cache with its own input reads.
-   - **Huge pages**, for the memory-latency-bound steps (sshash bench and query, kraken2 classify): `HUGE_GB` free
+   - **Huge pages**, for the memory-latency-bound steps (SSHash bench and query, Kraken2 classify): `HUGE_GB` free
      in blocks of 2 MB or more, the memory huge pages come from (`wait_low_load MEM_GB HUGE_GB`). On this host
      THP is `enabled=always` but `defrag=madvise`, so a program that does not madvise never compacts memory.
      When the node is short, the gate compacts it, untimed and without privileges: a helper bound to the node
@@ -50,8 +50,8 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
    - **one logical CPU per physical core**: a core counts as busy if *either* hardware thread is, so a pinned
      thread never shares its core with its own sibling or with someone else's job;
    - **N threads + spare cores** for helper threads (readers, I/O, the main thread). Multi-threaded steps get
-     N + 2 (`BENCH_PIN_SPARE`). The single-threaded sshash bench and query get 1 + 1, so the OS cannot move
-     them across many cores; kraken2 classify (`--threads 1`, worker + reader) gets 2 + 2.
+     N + 2 (`BENCH_PIN_SPARE`). The single-threaded SSHash bench and query get 1 + 1, so the OS cannot move
+     them across many cores; Kraken2 classify (`--threads 1`, worker + reader) gets 2 + 2.
 
    Pinning is not optional: if the selection fails, the benchmark stops instead of timing unpinned.
    `BENCH_CPUS=<list>` forces an explicit list.
@@ -65,11 +65,11 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
      of 4 KB pages.
    - The kernel's automatic NUMA balancing skips a process bound with `MPOL_BIND`, so bound steps run without
      balancing scans.
-5. **Repeats for every scheme, baseline included.** Each scheme runs for each seed in `config.yaml`; minimap2
-   `native`, sshash `native` and kmc `default` are repeated like the others (their repeats only measure timing
-   noise), so every comparison has replicates on both sides. kraken2 has no native run, so its reference scheme
-   is `xor`. Schemes are interleaved within a repeat, so drift hits all schemes alike: kmc runs one `-S all -n N`
-   call, sshash and kraken2 classify loop over the schemes inside each seed, and the minimap2 `sweep` is
+5. **Repeats for every scheme, baseline included.** Each scheme runs for each of the five seeds (`config.yaml`
+   of Minimap2, SSHash and KMC3; `bench_const.DEFAULT_SEEDS` of Kraken2); Minimap2 `native`, SSHash `native` and
+   KMC3 `default` are repeated like the others (their repeats only measure timing noise), so every comparison
+   has replicates on both sides. Kraken2 has no native run, so its reference scheme is `xor`. Schemes are interleaved within a repeat, so drift hits all schemes alike: KMC3 runs one `-S all -n N`
+   call, SSHash and Kraken2 classify loop over the schemes inside each seed, and the Minimap2 `sweep` is
    seed-major (all schemes for seed 0, then seed 1, ...).
 6. **What is recorded for every step**:
    - from `/usr/bin/time -v`: wall seconds, CPU seconds (`*_cpu_s` = user + system, all threads), peak RSS
@@ -95,12 +95,12 @@ own NUMA node. Every timed step of every app therefore follows the same protocol
      reclaim) and the commit.
 7. **Headline metrics.**
    - Wall time of each step.
-   - For kraken2 classify, `classify_run_s`: the read processing without the database load, which depends on
+   - For Kraken2 classify, `classify_run_s`: the read processing without the database load, which depends on
      the page cache much more than the processing does.
-   - For sshash, `query_run_s` and the `bench` lookup times, read together with `query_huge_fraction` /
+   - For SSHash, `query_run_s` and the `bench` lookup times, read together with `query_huge_fraction` /
      `bench_huge_fraction`.
 8. **A fresh results directory per protocol or code change** (`full_run_all.sh` refuses a non-empty one). The
-   harnesses skip runs that already have results, so resuming into an older directory would mix conditions
+   benchmarks skip runs that already have results, so resuming into an older directory would mix conditions
    (another protocol, or another version of a scheme such as the mod-minimizer's tie rule).
 
 ### Wall time or CPU time
@@ -114,35 +114,50 @@ and memory bandwidth inflate it, which is why pinning uses one thread per core).
 ### Significance tests (`common/scheme_tests.py`)
 
 ```bash
-python common/scheme_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir <results dir> [--exclude-cold-gb 1]
+python3 benchmark/common/scheme_tests.py --app {minimap2,sshash,kraken2,kmc} --results-dir <results dir> [--exclude-cold-gb 1]
 ```
 
 Per context (dataset, repeat-filter condition, ...) and timed metric (wall and CPU seconds of each step) it
 compares every GreedyMini / mod-minimizer variant, xor and xor-pcg-hash with the baseline scheme and with xor:
 Welch's t-test on log times over the repeats (ratio of geometric means, 90% CI, p, Bonferroni-adjusted over the
 candidates of a block), plus TOST equivalence at +-5%. No scipy (`common/stats_util.py`). Output:
-`<results dir>/csvs/scheme_tests_<app>.csv` and a per-metric verdict count. `--exclude-cold-gb G` drops the
+`<results dir>/csvs/scheme_tests_<method>.csv` and a per-metric verdict count. `--exclude-cold-gb G` drops the
 steps that read more than G GB from disk, a sensitivity check for the page-cache confound.
 
 ## Running everything
 
+Each method's `experiments/full_run.sh` runs that method's experiments of the paper; `full_run_all.sh` runs all
+four. Prerequisites: each method's `.env` (`<METHOD>_BENCH_ROOT`; `full_run_all.sh` exits without it), its built
+binaries and its datasets under the bench root (each method's README). Results go to
+`<bench root>/<RESULTS_NAME>/` (default `RESULTS_NAME=results`): `runs/`, `csvs/`, the workbook and
+`host_settings.txt`; the log to `<bench root>/<RESULTS_NAME>.log`.
+
+Build flags matter for the runtimes: Kraken2 and Minimap2 are built with `-march=native` and SSHash with
+`-mbmi2`, so on CPUs with BMI2 (as in the paper) their GreedyMini schemes extract the k-mer's binary key with
+`pext`; KMC3 is built without BMI2 and uses the portable fallback (`common/minimizer-schemes/greedymini_rank.h`).
+SSHash's `-mbmi2` also means its build needs a CPU with BMI2.
+
 ```bash
-benchmark/full_run_all.sh                                    # two slots, default results directory name
+benchmark/full_run_all.sh                                    # two slots, RESULTS_NAME=results
 SLOTS="0:minimap2,kmc 1:kraken2,sshash" RESULTS_NAME=<name> benchmark/full_run_all.sh   # the default slots, explicit
-SLOTS="1:sshash" RESULTS_NAME=<name> benchmark/full_run_all.sh                         # one app, on node 1
+SLOTS="1:sshash" RESULTS_NAME=<name> benchmark/full_run_all.sh                         # one method, on node 1
 RESUME=1 RESULTS_NAME=<name> benchmark/full_run_all.sh       # continue an interrupted run (finished runs are skipped)
 ```
 
-- **Refusals and exit status:** it refuses to start in a results directory that already holds runs, refuses an
-  app listed in two slots, and exits 1 if any app failed. Within an app's `experiments/full_run.sh` a failed step
-  is reported and the rest still runs (a re-run resumes); the script then exits 1, which counts as that app failing.
-- **Logs:** `<app root>/<RESULTS_NAME>.log`, appended to on `RESUME=1`. Each app's `experiments/full_run.sh` ends
-  with its export. The kmc export reuses its expected and per-dataset density caches from `OLD_RESULTS` (default
-  `<kmc root>/results`); point it at an archived summary's `csvs/` parent when that directory is gone.
-- **Disk:** the peak comes from kmc's temporary files (largest for the human datasets), kraken2's databases (all
-  kept until classification ends) and minimap2's indexes. minimap2 keeps only seed 0's index of every variant,
-  for the scheme analysis; the others are deleted after mapping and their size kept in `index_bytes.txt`
-  (`KEEP_ALL_INDEXES=1` keeps them all).
+- **Refusals and exit status:** it refuses to start in a results directory that already holds runs, refuses a
+  method listed in two slots, and exits 1 if any method failed. Within a method's `experiments/full_run.sh` a
+  failed step is reported and the rest still runs (a re-run resumes); the script then exits 1, which counts as
+  that method failing. Each `experiments/full_run.sh` ends with its export.
+- **KMC3 density caches:** the KMC3 export only reads its expected and per-dataset density caches
+  (`kmc3_density_expected*.csv`, `kmc3_density_particular.csv`); `kmc/experiments/full_run.sh` copies them from
+  `OLD_RESULTS/csvs/` (default `<kmc root>/results`). On a first run, compute them there beforehand, from
+  `benchmark/kmc/`: `python3 -m scripts expected-density` and `python3 -m scripts density particular` (see
+  [`kmc/README.md`](kmc/README.md)).
+- **KMC3 GreedyMini:** the paper reports the binary-table runs (`gm_proj_n1024_t24`, both polarities of Φ).
+- **Disk:** about 0.5 TB in all. Kraken2 keeps all 35 databases (up to 10 GB each; export reads them), about
+  290 GB; Minimap2 keeps only seed 0's index of every variant (44 indexes, about 165 GB; the others are deleted
+  after mapping, their size kept in `index_bytes.txt`; `KEEP_ALL_INDEXES=1` keeps them all); KMC3's temporary
+  files (largest on the human datasets) are removed after every run; SSHash's results are small.
 
 ## Workbook and column naming (all four exporters)
 
@@ -153,32 +168,32 @@ RESUME=1 RESULTS_NAME=<name> benchmark/full_run_all.sh       # continue an inter
   `{step}_read_gb`, `{step}_pinned_cpus`; the split is `{step}_load_s` / `{step}_run_s`. I/O and pinning
   columns are in the runs sheets only.
 - The xlsx headers are the CSV headers; the overview sheet has one legend row per column (checked by each
-  app's tests).
+  method's tests).
 
 ## How each metric follows the density (`common/density_effect.py`)
 
-Each app's export adds the sheets `density_effect` and `density_effect_points` to its workbook and writes
-`<results dir>/csvs/density_effect_<app>.csv` (by hand: `python common/density_effect.py APP=RESULTS_DIR ...
+Each method's export adds the sheets `density_effect` and `density_effect_points` to its workbook and writes
+`<results dir>/csvs/density_effect_<method>.csv` (by hand: `python3 benchmark/common/density_effect.py APP=RESULTS_DIR ...
 [--out WORKBOOK.xlsx]`).
 - **Pairing.** Every run of a non-default scheme is paired with the default scheme's run of the same setting
   (dataset and its parameters) and seed, i.e. of the same round of the protocol; when the default has several
   runs there, their mean is used.
 - **Points.** Each pair gives the density factor and the metric as ratios to the default's; the ratios make
   the datasets comparable, whereas raw values would correlate mostly through the size of the dataset.
-- **Correlation.** Per (app, metric), the Pearson r of the two ratios over the runs of all settings (`all`)
+- **Correlation.** Per (method, metric), the Pearson r of the two ratios over the runs of all settings (`all`)
   and of each setting, with the number of runs and of schemes: r near 1 means that the metric follows the
   density, near 0 that it does not depend on it.
-- **minimap2.** Only the fixed-threshold block (`-f` = native's threshold) is paired, found by position as in
+- **Minimap2.** Only the fixed-threshold block (`-f` = native's threshold) is paired, found by position as in
   `scheme_tests.py`: a derived threshold differs between schemes, and one that happens to equal native's does
   not make the run comparable. A result set without a fixed block has no `density_effect` sheets.
 - **Runs left out** (`density_effect.unreported`, also in `significance.py`): those the paper does not report --
   the GreedyMini-based schemes with the polarity at1-cg0 (the paper reports at0-cg1), KMC3's GreedyMini with
-  the DNA-alphabet table, the SSHash 13-mer GreedyMini tables, and kraken2 at minimum hit groups 0.
+  the DNA-alphabet table, the SSHash 13-mer GreedyMini tables, and Kraken2 at minimum hit groups 0.
 
 ## Whether each scheme changes each metric (`common/significance.py`)
 
-Each app's export adds the sheet `significance` to its workbook and writes
-`<results dir>/csvs/significance_<app>.csv` (by hand: `python common/significance.py APP=RESULTS_DIR ...`), for
+Each method's export adds the sheet `significance` to its workbook and writes
+`<results dir>/csvs/significance_<method>.csv` (by hand: `python3 benchmark/common/significance.py APP=RESULTS_DIR ...`), for
 the metrics of the paper's figures (build and processing times, KMC3 stages, peak memory, index size,
 temporary disk, bits per k-mer).
 - **Pairing.** As in `density_effect`: every run is paired with the default scheme's run of the same setting
@@ -190,9 +205,9 @@ temporary disk, bits per k-mer).
 - Not tested: the runs the paper does not report, as in `density_effect`, so the Bonferroni families are
   the schemes of the paper. Unlike `scheme_tests.py` (Welch's test, wall and CPU time, run by hand), the test is paired by round.
 
-## Profiling (`<app>/experiments/profile_run.sh`)
+## Profiling (`<method>/experiments/profile_run.sh`)
 
-To explain the runtime, each app has a profiling script for a finished full run. It first mirrors the
+To explain the runtime, each method has a profiling script for a finished full run. It first mirrors the
 result set `SOURCE_RESULTS` (default `results`) into `RESULTS_NAME` (default `results-prof`) with
 `common/mirror_results.py` -- files of 8 MiB or more hard-linked (databases, indexes: only read), smaller ones
 copied (logs, caches, tables an export rewrites) -- so the source result set is never modified. It builds an
@@ -201,15 +216,15 @@ databases or indexes for the five seeds under the measurement protocol, writes t
 and re-exports the mirror, which adds the profile columns and the `significance` sheet. The instrumentation
 compiles to nothing in the default builds.
 
-| app | flag | what it measures | file per run | columns |
+| method | flag | what it measures | file per run | columns |
 |---|---|---|---|---|
-| kraken2 | `make ENABLE_MINIMIZER_PROF=1` (classify) | time of the three phases of classifying a read pair (selected k-mers into a token stream, hash-table lookups, resolving the hits), lookups, lookups that miss, GreedyMini ranks on the finite (UHS) and infinite path | `results/classify_profile_<ds>_mhg<m>.txt` | `profile` sheet: `scan_s`, `lookup_s`, `resolve_s`, `scan_pct_of_phases`, `lookups_per_mbp`, `ns_per_lookup`, `lookup_miss_pct`, `uhs_pct` |
-| sshash | `cmake -DSSHASH_PROFILE=On` | streaming query: lookups that decode a bucket and the positions they decode, lookups that verify positions and the positions they verify (index rebuilt from the run's recorded command, temporary) | `query_profile.log` | `query_prof_*` |
-| minimap2 | `CFLAGS+=-DMM_PHASE_PROF` | one-thread mapping of the first 3000 reads (fixed threshold): time of computing the selected k-mers, collecting their hits, chaining, aligning | `map_profile.log` | `map_prof_*_pct` |
-| kmc | `tools/bench_signature_impls` | kmc's signature code with the default order and the GreedyMini order (DNA-alphabet and binary table), with the window minimum, per base, one core | `<results>/profile/signature_<ds>_<seed>.txt` | `signature_cost` sheet |
+| Kraken2 | `make ENABLE_MINIMIZER_PROF=1` (classify) | time of the three phases of classifying a read pair (selected k-mers into a token stream, hash-table lookups, resolving the hits), lookups, lookups that miss, GreedyMini ranks on the finite (UHS) and infinite path | `results/classify_profile_<ds>_mhg<m>.txt` | `profile` sheet: `scan_s`, `lookup_s`, `resolve_s`, `scan_pct_of_phases`, `lookups_per_mbp`, `ns_per_lookup`, `lookup_miss_pct`, `uhs_pct` |
+| SSHash | `cmake -DSSHASH_PROFILE=On` | streaming query: lookups that decode a bucket and the positions they decode, lookups that verify positions and the positions they verify (index rebuilt from the run's recorded command, temporary) | `query_profile.log` | `query_prof_*` |
+| Minimap2 | `CFLAGS+=-DMM_PHASE_PROF` | one-thread mapping of the first 3000 reads (fixed threshold): time of computing the selected k-mers, collecting their hits, chaining, aligning | `map_profile.log` | `map_prof_*_pct` |
+| KMC3 | `tools/bench_signature_impls` | KMC3's signature code with the default order and the GreedyMini order (DNA-alphabet and binary table), with the window minimum, per base, one core | `<results>/profile/signature_<ds>_<seed>.txt` | `signature_cost` sheet |
 
-Two build phases come from the timed runs' own logs, without profiling: kraken2's `build_estimate_s` /
-`build_db_s` (its log's time stamps) and minimap2's `build_collect_s` / `build_collect_pct` (its "collected
+Two build phases come from the timed runs' own logs, without profiling: Kraken2's `build_estimate_s` /
+`build_db_s` (its log's time stamps) and Minimap2's `build_collect_s` / `build_collect_pct` (its "collected
 minimizers" stamp).
 
 ## Shared code (`common/`)
@@ -226,5 +241,5 @@ minimizers" stamp).
 | `compare_result_sets.py` | run-to-run stability of two result sets |
 | `units.py` | decimal-GB conversions (bytes, KiB, 512-byte blocks) |
 | `xlsx_book.py`, `xlsx_util.py`, `xlsx_check.py` | workbook writing and validation |
-| `expected_density_driver.py`, `expected_density/` | the expected density of every app's schemes: one C++ tool per app that counts the selected k-mers of 10^9 random bases per seed with the app's own selection code (its tie rule and its own count), and the Python driver that runs it and caches the results (`expected_density/README.md`) |
+| `expected_density_driver.py`, `expected_density/` | the expected density of every method's schemes: one C++ tool per method that counts the selected k-mers of 10^9 random bases per seed with the method's own selection code (its tie rule and its own count), and the Python driver that runs it and caches the results (`expected_density/README.md`) |
 | `scheme_names.py`, `schemes_sheet.py`, `density.py`, `correlation.py`, `paths.py`, `yaml_util.py`, `experiments_lib.py` | scheme identities and the shared analysis helpers |

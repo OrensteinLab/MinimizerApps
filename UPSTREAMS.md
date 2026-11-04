@@ -1,10 +1,10 @@
 # Tracking upstream
 
-This repo folds four tools into one monorepo. Each lives in its own top-level
-folder, starts from one **import commit** that is a byte-exact copy of an
-upstream commit, and is followed by lab-specific commits (orders, modifications,
-benchmark harness). The import commits are plain single-parent commits; no
-upstream history is carried in this repo.
+This repo folds the upstream projects of the four methods into one monorepo.
+Each lives in its own top-level folder, starts from one **import commit** that
+is a byte-exact copy of an upstream commit, and is followed by lab-specific
+commits (orders, modifications, benchmark scripts). The import commits are
+plain single-parent commits; no upstream history is carried in this repo.
 
 ## Pinned versions
 
@@ -33,9 +33,9 @@ Each `Import ...` commit message repeats the version, upstream URL and SHA.
 ## Checking an import
 
 ```
-git remote add upstream-<app> <url>   # once; see the table
-git fetch upstream-<app>
-git rev-parse <import-commit>:<app>   # tree of the import
+git remote add upstream-<dir> <url>   # once; see the table
+git fetch upstream-<dir>
+git rev-parse <import-commit>:<dir>   # tree of the import
 git rev-parse <upstream-sha>^{tree}   # must be equal (KMC: apart from .gitmodules)
 ```
 
@@ -45,9 +45,9 @@ git rev-parse <upstream-sha>^{tree}   # must be equal (KMC: apart from .gitmodul
 2. Replace `<dir>/` with the new upstream tree in its own commit, so the lab
    changes stay separable:
    `git rm -r -q <dir>` and `git read-tree --prefix=<dir>/ -u <new-upstream-sha>`,
-   then `git commit -m "Import <app> <version> @ <sha>"` and update the table above.
+   then `git commit -m "Import <dir> <version> @ <sha>"` and update the table above.
 3. Re-apply the lab-specific changes on top (they are the later commits that
-   touch `<dir>/`: orders wrappers, modifications, harness). Expect conflicts
+   touch `<dir>/`: orders wrappers, modifications, benchmark scripts). Expect conflicts
    in the files marked as modifications; reconcile them as with any fork, scoped
    to one subfolder.
 4. If a submodule pin moved (`sshash/external/pthash`,
