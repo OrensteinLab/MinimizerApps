@@ -43,12 +43,14 @@
 // logic) -- correct for native's near-injective hash64, but if reused
 // naively for GreedyMini's rank (which collapses many distinct non-UHS
 // k-mers to the same value) it would pathologically over-select right where
-// GreedyMini is supposed to reduce density. RankState<MM_SCHEME_GREEDYMINI> below uses the
+// GreedyMini is supposed to reduce density. The greedymini schemes use the
 // shared center-extension order in its injective packing (UHS rank, then the
 // Sigma and Gamma planes of the k-mer), which is a total order on canonical
 // k-mers, so ties only occur where the original algorithm intends duplicate
 // detection to fire (genuine repeats), not as an artifact of the ranking's
-// own coarseness.
+// own coarseness. greedymini compares it rank first (sketch_gm.c: the rank,
+// then the planes only on a rank tie); mod-minimizer-greedymini ranks t-mers
+// by the packed value (TmerRank below).
 
 #include "scheme.h"
 #include "kvec.h" // kv_resize/kv_push (also pulls in kalloc.h for kmalloc/krealloc)
@@ -81,18 +83,16 @@ struct mm_scheme_s {
 	uint64_t seed;
 	int t;
 	std::shared_ptr<const GreedyMiniTable> gm; // GREEDYMINI and MOD_GREEDYMINI only
-	// GREEDYMINI / MOD_GREEDYMINI only, built once at init/deserialize for the
-	// index's k, respectively the mod-minimizer's t (read-only afterwards, so shared by all sketching threads and by
-	// mm_scheme_clone's copies): the center-extension order of the gm_k table
-	// at length l = k or t (l = gm_k + 2i), and the Sigma/Gamma planes of
-	// minimap2's ACGT=0123 l-mers. --gm-projection at1-cg0 complements Sigma (sshash's
+	// GREEDYMINI / MOD_GREEDYMINI only, set once at init/deserialize for the
+	// index's k, respectively the mod-minimizer's t (read-only afterwards, so
+	// shared by all sketching threads and by mm_scheme_clone's copies, whose
+	// gm keeps gm_params.ranks alive): the center extension of the gm_k table
+	// at length l = k or t (l = gm_k + 2i), as the parameters of
+	// mm_sketch_gm (sketch_gm.c) and of TmerRank<MM_SCHEME_MOD_GREEDYMINI>.
+	// --gm-projection at1-cg0 complements Sigma (sshash's
 	// custom_scheme_hasher.hpp does the same on its own encoding).
 	int gm_l = 0;
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
-	std::shared_ptr<const gm_center::Order> gm_order;
-	gm_center::TwoBitPlanes<true> gm_planes;
-	// the same, as the parameters of mm_sketch_gm (sketch_gm.c) and of
-	// TmerRank<MM_SCHEME_MOD_GREEDYMINI>; gm keeps gm_params.ranks alive
 	mm_gm_params_t gm_params = {};
 };
 
@@ -122,27 +122,13 @@ int gm_length(mm_scheme_kind_t kind, int k, int t) {
 	return kind == MM_SCHEME_MOD_GREEDYMINI ? t : k;
 }
 
-// GreedyMini rank of a k-mer: the shared center extension
-// (common/minimizer-schemes/greedymini_center.h), as kraken2's GMRanker and
-// sshash's custom_scheme_hasher use it. With k = gm_k + 2i the k-mer is
-// x y z (|x| = |z| = i, |y| = gm_k): rank the binary (AT/CG) projection of
-// the center y by the table, then break ties by the smaller of the two
-// strands' (Sigma, Gamma ^ toggle), toggle = the low k bits of --order-seed
-// (as kraken2's and sshash's greedymini seeds) -- the injective packing, a total
-// order on canonical k-mers that is strand invariant (the reverse
-// complement's center is the mirror of y, and the table is mirror
-// symmetric). A center outside the UHS has rank 0xFFFF in the top field, so
-// the value is never UINT64_MAX (k <= 23, checked at init) and such k-mers
-// still compete, ordered by their planes. i = 0 (k == gm_k) is the plain
-// table order.
-//
-// Per-sketch rank state of the single-window path, one specialisation per
-// order kind (sketch_single_window is a template on it, so the order is
-// resolved at compile time, not per k-mer): push(c) sees every base of the
-// current N-free run, in order, before the palindrome skip; rank(kmer)
-// ranks the k-mer ending at the last pushed base. `kmer` is the lex-min
-// canonical strand (native's z = kmer[0]<kmer[1]?0:1); the GreedyMini order
-// is strand invariant and ignores it.
+// Per-sketch rank state of the single-window path (xor, xor-pcg-hash), one
+// specialisation per order kind (sketch_single_window is a template on it, so
+// the order is resolved at compile time, not per k-mer): push(c) sees every
+// base of the current N-free run, in order, before the palindrome skip;
+// rank(kmer) ranks the k-mer ending at the last pushed base. `kmer` is the
+// lex-min canonical strand (native's z = kmer[0]<kmer[1]?0:1). greedymini has
+// its own sketch, mm_sketch_gm (sketch_gm.c).
 template <int Kind> struct RankState;
 
 // xor: the seed's bits above the 2k k-mer bits add the same constant to every
@@ -167,37 +153,11 @@ template <> struct RankState<MM_SCHEME_XOR_PCG_HASH> {
 	}
 };
 
-// GreedyMini: the Sigma (AT/CG) and Gamma planes of both strands are rolled
-// one base per step, as kraken2's GMRanker and sshash's iterator do with the
-// same header's helpers, instead of extracted (two pext) and bit-reversed per
-// k-mer; Order::value_of_both_strands then costs one table load. Planes:
-// bit p = base p of the strand word, first base = most significant bit. The
-// forward word's newest base is its lowest (roll_in_low); the reverse
-// complement's newest base is its highest (roll_in_high), and complementing
-// a base keeps its AT/CG class (same Sigma bit) and flips Gamma.
-template <> struct RankState<MM_SCHEME_GREEDYMINI> {
-	const gm_center::Order &order;
-	const gm_center::TwoBitPlanes<true> &planes;
-	int k;
-	uint64_t mask, sigma_f = 0, gamma_f = 0, sigma_r = 0, gamma_r = 0;
-	RankState(const mm_scheme_t *ord, int k_)
-		: order(*ord->gm_order), planes(ord->gm_planes), k(k_), mask((1ULL << k_) - 1) {}
-	void push(int c) {
-		const uint64_t s = planes.base_sigma((uint64_t)c);
-		const uint64_t g = (uint64_t)c >> 1;
-		sigma_f = gm_center::roll_in_low(sigma_f, s, mask);
-		gamma_f = ((gamma_f << 1) | g) & mask;
-		sigma_r = gm_center::roll_in_high(sigma_r, s, k);
-		gamma_r = (gamma_r >> 1) | ((g ^ 1ULL) << (k - 1));
-	}
-	uint64_t rank(uint64_t) const { return order.value_of_both_strands(sigma_f, gamma_f, sigma_r, gamma_r); }
-};
-
 // Rank of the t-mer ending at the last pushed base, for the mod-minimizer
 // sketch (one specialisation per O_t). xor: the canonical t-mer XOR the seed.
-// GreedyMini: RankState<MM_SCHEME_GREEDYMINI> on t-mers (ord->gm_order is
-// built for length t), the same strand-invariant injective order, so equal
-// ranks mean equal canonical t-mers, as with xor.
+// GreedyMini: the injective center-extension value of the t-mer (below), a
+// strand-invariant total order on canonical t-mers, so equal ranks mean equal
+// canonical t-mers, as with xor.
 template <int Kind> struct TmerRank;
 
 template <> struct TmerRank<MM_SCHEME_MOD_XOR> {
@@ -263,7 +223,8 @@ inline int tq_shift(tiny_queue_t *q) {
 }
 
 // ---------------------------------------------------------------------------
-// Single-window ordered sketch (xor / xor-pcg-hash / greedymini).
+// Single-window ordered sketch (xor / xor-pcg-hash; greedymini: the same
+// loop, rank first, in sketch_gm.c).
 //
 // Mechanical port of mm_sketch()'s own robust-winnowing loop (sketch.c),
 // with the per-candidate scoring function swapped for RankState::rank() and the
@@ -563,13 +524,13 @@ namespace {
 
 // Max ranked length for the greedymini schemes (k, or t for
 // mod-minimizer-greedymini): the injective packing takes 16 + 2l bits, and a
-// value must stay below UINT64_MAX (sketch_single_window's "no candidate").
+// value must stay below UINT64_MAX (the sketches' "no candidate").
 const int kGmMaxK = 23;
 
-// Builds ord->gm_order for minimizer length l (ord->gm and ord->gm_projection
-// already set). Returns false with a message in errbuf on an invalid length
-// (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the center extension
-// rejects (not mirror symmetric).
+// Sets ord->gm_params for minimizer length l (ord->gm, ord->seed and
+// ord->gm_projection already set). Returns false with a message in errbuf on
+// an invalid length (l < gm_k, l - gm_k odd, l > kGmMaxK) or a table the
+// center extension rejects (not mirror symmetric).
 bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	if (!ord->gm) return true;
 	if (l > kGmMaxK) {
@@ -579,19 +540,20 @@ bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 		return false;
 	}
 	try {
-		// the seed toggles the Gamma tie-break (its low l bits), as kraken2's
-		// and sshash's greedymini seeds do; seed 0 is the untoggled order
-		ord->gm_order = std::make_shared<const gm_center::Order>(ord->gm, l, ord->seed, /*injective=*/true);
+		// gm_center::Order checks the length and the table's mirror symmetry
+		// (which the one table load per l-mer relies on) and gives gm_k and i
+		const gm_center::Order order(ord->gm, l, ord->seed, /*injective=*/true);
+		ord->gm_params.gm_k = order.gm_k();
+		ord->gm_params.i = order.center_offset();
 	} catch (const std::exception &e) {
 		set_err(errbuf, errbuf_len, e.what());
 		return false;
 	}
 	ord->gm_l = l;
-	ord->gm_planes = gm_center::TwoBitPlanes<true>(l, ord->gm_projection == MM_GM_PROJ_AT1_CG0);
 	ord->gm_params.ranks = ord->gm->data();
 	ord->gm_params.l = l;
-	ord->gm_params.i = ord->gm_order->center_offset();
-	ord->gm_params.gm_k = ord->gm_order->gm_k();
+	// the seed toggles the Gamma tie-break (its low l bits), as kraken2's
+	// and sshash's greedymini seeds do; seed 0 is the untoggled order
 	ord->gm_params.toggle = ord->seed & ((1ULL << l) - 1);
 	ord->gm_params.flip = ord->gm_projection == MM_GM_PROJ_AT1_CG0 ? 1 : 0;
 	return true;
@@ -678,7 +640,7 @@ extern "C" int mm_scheme_validate(const mm_scheme_t *ord, int k, int w, char *er
 		return -1;
 	}
 	const int l = gm_length(ord->kind, k, ord->t);
-	if (ord->gm && (!ord->gm_order || ord->gm_l != l)) {
+	if (ord->gm && (!ord->gm_params.ranks || ord->gm_l != l)) {
 		std::snprintf(msg, sizeof msg, "GreedyMini order built for length %d, the scheme ranks length %d", ord->gm_l, l);
 		set_err(errbuf, errbuf_len, msg);
 		return -1;
