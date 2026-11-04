@@ -69,6 +69,21 @@ int mm_scheme_validate(const mm_scheme_t *ord, int k, int w, char *errbuf, size_
 // GreedyMini table. Used to warn when a prebuilt index overrides the options.
 int mm_scheme_matches_conf(const mm_scheme_t *ord, const mm_scheme_conf_t *conf);
 
+// The greedymini sketch (sketch_gm.c; mm_sketch_scheme calls it for
+// MM_SCHEME_GREEDYMINI) and what it needs of the scheme, set when the scheme
+// is created or loaded and read-only afterwards: ranks, the GreedyMini table
+// (0xFFFF for a key outside the UHS); l, the ranked length (the k-mer length
+// k = gm_k + 2i); i, the center offset; toggle, the Gamma tie-break toggle
+// (the low l bits of the seed); flip, the Sigma polarity of the projection
+// (0 = at0-cg1, 1 = at1-cg0). Same contract as mm_sketch().
+typedef struct {
+	const uint16_t *ranks;
+	int l, i, gm_k;
+	uint64_t toggle, flip;
+} mm_gm_params_t;
+void mm_sketch_gm(void *km, const char *str, int len, int w, int k, uint32_t rid, int is_hpc,
+                  const mm_gm_params_t *gp, mm128_v *p);
+
 // CLI helpers (main.c): name <-> kind, both directions.
 const char *mm_scheme_kind_name(mm_scheme_kind_t kind);
 int mm_scheme_parse_kind(const char *s, mm_scheme_kind_t *out); // 0 on success, -1 on unknown name

@@ -10,7 +10,7 @@ CPPFLAGS=	-DHAVE_KALLOC
 INCLUDES=
 OBJS=		kthread.o kalloc.o misc.o bseq.o sketch.o sdust.o options.o index.o \
 			lchain.o align.o hit.o seed.o jump.o map.o format.o pe.o esterr.o splitidx.o \
-			ksw2_ll_sse.o scheme.o
+			ksw2_ll_sse.o scheme.o sketch_gm.o
 PROG=		minimap2
 PROG_EXTRA=	sdust minimap2-lite
 # scheme.o is C++ (libstdc++ exceptions/std::vector/shared_ptr); the rest of
@@ -157,4 +157,5 @@ pe.o: mmpriv.h minimap.h bseq.h kseq.h kvec.h kalloc.h ksort.h
 sdust.o: kalloc.h kdq.h kvec.h sdust.h
 seed.o: mmpriv.h minimap.h bseq.h kseq.h kalloc.h ksort.h
 sketch.o: kvec.h kalloc.h mmpriv.h minimap.h bseq.h kseq.h scheme.h
+sketch_gm.o: kvec.h kalloc.h mmpriv.h minimap.h bseq.h kseq.h scheme.h
 splitidx.o: mmpriv.h minimap.h bseq.h kseq.h

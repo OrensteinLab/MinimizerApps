@@ -91,6 +91,9 @@ struct mm_scheme_s {
 	mm_gm_projection_t gm_projection = MM_GM_PROJ_AT0_CG1;
 	std::shared_ptr<const gm_center::Order> gm_order;
 	gm_center::TwoBitPlanes<true> gm_planes;
+	// the same, as the parameters of mm_sketch_gm (sketch_gm.c) and of
+	// TmerRank<MM_SCHEME_MOD_GREEDYMINI>; gm keeps gm_params.ranks alive
+	mm_gm_params_t gm_params = {};
 };
 
 namespace {
@@ -208,9 +211,34 @@ template <> struct TmerRank<MM_SCHEME_MOD_XOR> {
 	uint64_t rank() const { return (fwd < rc ? fwd : rc) ^ seed; }
 };
 
-template <> struct TmerRank<MM_SCHEME_MOD_GREEDYMINI> : RankState<MM_SCHEME_GREEDYMINI> {
-	TmerRank(const mm_scheme_t *ord, int t) : RankState<MM_SCHEME_GREEDYMINI>(ord, t) {}
-	uint64_t rank() const { return RankState<MM_SCHEME_GREEDYMINI>::rank(0); }
+// GreedyMini (common/minimizer-schemes/greedymini_center.h, injective
+// packing; ord->gm_params is set for length t = gm_k + 2i): with Sigma (AT/CG
+// projection) and Gamma (A,C -> 0, G,T -> 1) the t-mer's planes, first base in
+// the most significant bit, the value is
+//   table[Sigma(center)] << 2t | min(F ^ toggle, R ^ toggle)
+// with F = Sigma << t | Gamma of the forward strand and R the same of the
+// reverse complement (one table load: the reverse complement's center is the
+// mirror and the table is mirror symmetric; 0xFFFF for a center outside the
+// UHS). Both words are rolled one base per step: F's newest base is its
+// lowest bit in each plane, R's its highest, and complementing a base keeps
+// its Sigma bit and flips Gamma.
+template <> struct TmerRank<MM_SCHEME_MOD_GREEDYMINI> {
+	const uint16_t *ranks;
+	int t, sh_key;
+	uint64_t key_mask, toggle, flip, f_mask, r_mask, F = 0, R = 0;
+	TmerRank(const mm_scheme_t *ord, int t_)
+		: ranks(ord->gm_params.ranks), t(t_), sh_key(t_ + ord->gm_params.i),
+		  key_mask((1ULL << ord->gm_params.gm_k) - 1), toggle(ord->gm_params.toggle), flip(ord->gm_params.flip),
+		  f_mask(((1ULL << 2 * t_) - 1) & ~(1ULL << t_)), r_mask(~(1ULL << (t_ - 1))) {}
+	void push(int c) {
+		const uint64_t s = (uint64_t)((c ^ c >> 1) & 1) ^ flip, g = (uint64_t)c >> 1;
+		F = ((F << 1) & f_mask) | s << t | g;
+		R = ((R >> 1) & r_mask) | s << (2 * t - 1) | (g ^ 1) << (t - 1);
+	}
+	uint64_t rank() const {
+		const uint64_t ft = F ^ toggle, rt = R ^ toggle;
+		return (uint64_t)ranks[(F >> sh_key) & key_mask] << (2 * t) | (ft < rt ? ft : rt);
+	}
 };
 
 // ---------------------------------------------------------------------------
@@ -560,6 +588,12 @@ bool build_gm_order(mm_scheme_t *ord, int l, char *errbuf, size_t errbuf_len) {
 	}
 	ord->gm_l = l;
 	ord->gm_planes = gm_center::TwoBitPlanes<true>(l, ord->gm_projection == MM_GM_PROJ_AT1_CG0);
+	ord->gm_params.ranks = ord->gm->data();
+	ord->gm_params.l = l;
+	ord->gm_params.i = ord->gm_order->center_offset();
+	ord->gm_params.gm_k = ord->gm_order->gm_k();
+	ord->gm_params.toggle = ord->seed & ((1ULL << l) - 1);
+	ord->gm_params.flip = ord->gm_projection == MM_GM_PROJ_AT1_CG0 ? 1 : 0;
 	return true;
 }
 
@@ -693,7 +727,7 @@ extern "C" void mm_sketch_scheme(const mm_scheme_t *ord, void *km, const char *s
 			sketch_single_window<MM_SCHEME_XOR_PCG_HASH>(ord, km, str, len, w, k, rid, is_hpc, p);
 			return;
 		case MM_SCHEME_GREEDYMINI:
-			sketch_single_window<MM_SCHEME_GREEDYMINI>(ord, km, str, len, w, k, rid, is_hpc, p);
+			mm_sketch_gm(km, str, len, w, k, rid, is_hpc, &ord->gm_params, p);
 			return;
 		case MM_SCHEME_MOD_XOR:
 			sketch_mod_minimizer<MM_SCHEME_MOD_XOR>(ord, km, str, len, w, k, rid, is_hpc, p);
