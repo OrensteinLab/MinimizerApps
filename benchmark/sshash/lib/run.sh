@@ -229,7 +229,7 @@ run_sweep() {
   schemes_list="$(resolve_schemes)"
   expand_scheme_variants "$schemes_list" "$K" "$M"
 
-  # A plain greedymini variant extends its gm_k table to the m-mer by the centre
+  # A plain greedymini variant extends its gm_k table to the m-mer by the center
   # extension, which needs m - gm_k even: fail up front with a clear message
   # instead of after the first (failing) sshash build.
   local v

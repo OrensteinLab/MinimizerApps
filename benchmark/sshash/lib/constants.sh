@@ -4,8 +4,8 @@ CURL_RESUME_CODES=(18 26 28 52 55 56 7)
 ENA_FASTQ="https://ftp.sra.ebi.ac.uk/vol1/fastq"
 TIME_BIN="/usr/bin/time"
 REPO_ROOT="$(cd "$HERE/../../sshash" && pwd)"
-# The harness's own venv lives under benchmark/sshash/ (not sshash/, which is
-# upstream-tracked source we don't touch -- see Makefile's `venv` target).
+# The harness's own venv lives under benchmark/sshash/, so the harness never writes
+# into the sshash/ fork (see Makefile's `venv` target).
 if [[ -x "$HERE/.venv/bin/python" ]]; then
   PYTHON="${PYTHON:-$HERE/.venv/bin/python}"
 else
@@ -22,7 +22,7 @@ SCHEMES="all"
 GM_TABLES=""       # --gm-tables: comma-separated table names (default: config.yaml's)
 GM_PROJECTIONS=""  # --gm-projections: at0-cg1 / at1-cg0 (default: config.yaml's)
 MODALITY="canonical"
-THREADS=8
+THREADS=16
 N_SEEDS=5
 FORCE=0
 KEEP_INDEX=0

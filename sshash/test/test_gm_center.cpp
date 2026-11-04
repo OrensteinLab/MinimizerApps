@@ -3,13 +3,13 @@
 // the binary projection of y (one table probe), breaking ties by min(Sigma(xyz),
 // reverse(Sigma(xyz))) and then by Gamma.
 //  (a) fast hash() == hash_reference() (per-base loop) == an independent std::string
-//      implementation, over random / AT- and CG-rich / palindromic / repeat / shared-centre
+//      implementation, over random / AT- and CG-rich / palindromic / repeat / shared-center
 //      m-mers;
-//  (b) hash() == precomputed vectors of the Python reference (gm_centre_vectors.inc);
+//  (b) hash() == precomputed vectors of the Python reference (gm_center_vectors.inc);
 //  (c) hash(x) == hash(rc(x)); injectivity on canonical m-mers (and hash tie => same m-mer
-//      up to reverse complement even for raw m-mers sharing a centre);
+//      up to reverse complement even for raw m-mers sharing a center);
 //  (d) rejection: m - gm_k odd (a 2^14-entry table at m = 21), asymmetric table, non-greedymini with a projection.
-// Usage: test_gm_centre DIR_WITH_GM_TABLES [num_random_samples_per_config=30000000]
+// Usage: test_gm_center DIR_WITH_GM_TABLES [num_random_samples_per_config=30000000]
 #include <atomic>
 #include <cstdio>
 #include <iostream>
@@ -145,7 +145,7 @@ static uint64_t run_checks(hasher_type const& h, string_ref const* sr, uint64_t 
 }
 
 /* hash tie => same m-mer up to reverse complement, over canonical samples AND over raw
-   samples that share their centre gm_k-mer (so ranks tie constantly). */
+   samples that share their center gm_k-mer (so ranks tie constantly). */
 static void run_injectivity(hasher_type const& h, uint64_t l) {
     const uint64_t num_samples = 4000000;
     std::mt19937_64 rng(42);
@@ -153,13 +153,13 @@ static void run_injectivity(hasher_type const& h, uint64_t l) {
     const int gk = h.gm_k(), i0 = (int)(l - gk) / 2;
     std::unordered_map<uint64_t, uint64_t> seen;
     seen.reserve(num_samples * 2);
-    const uint64_t centre_mask = ((uint64_t(1) << (2 * gk)) - 1) << (2 * i0);
-    uint64_t fixed_centre = rng() & centre_mask;
+    const uint64_t center_mask = ((uint64_t(1) << (2 * gk)) - 1) << (2 * i0);
+    uint64_t fixed_center = rng() & center_mask;
     for (uint64_t i = 0; i != num_samples; ++i) {
         uint64_t x = rng() & mask;
         if (i & 1) x &= (rng() | rng());
-        if ((i & 3) == 3) x = (x & ~centre_mask) | fixed_centre;  // shared centre
-        if ((i & 0xFFFF) == 0xFFFF) fixed_centre = rng() & centre_mask;
+        if ((i & 3) == 3) x = (x & ~center_mask) | fixed_center;  // shared center
+        if ((i & 0xFFFF) == 0xFFFF) fixed_center = rng() & center_mask;
         const uint64_t canon = std::min(x, rc_mmer(x, l));
         const uint64_t hv = h.hash(x);
         auto it = seen.find(hv);
@@ -206,7 +206,7 @@ static bool throws(F f, std::string const& what_contains) {
 }
 
 static const struct { int cfg; uint64_t x, h; } vectors[] = {
-#include "gm_centre_vectors.inc"
+#include "gm_center_vectors.inc"
 };
 
 int main(int argc, char** argv) {
@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
         run_injectivity(hs[c], l);
         std::cout << cfgs[c].table << " " << gm_projection_name(cfgs[c].proj) << " l=" << l << ": "
                   << total << " m-mers: fast == loop reference == string reference, "
-                  << "rc-invariant; injective (4M canonical + shared-centre samples)"
+                  << "rc-invariant; injective (4M canonical + shared-center samples)"
                   << (failures == before ? "" : "  FAILED") << std::endl;
     }
     std::cout << "total m-mers compared against both references: " << grand_total << std::endl;
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
     {  // rejections
         std::cout << "rejections:" << std::endl;
         hasher_type h;
-        const char* tmp = "/tmp/test_gm_centre_synth.gm";
+        const char* tmp = "/tmp/test_gm_center_synth.gm";
         make_table(tmp, 14, true, 3);  // symmetric, but m - gm_k = 7 is odd
         if (!throws([&] { h.configure(custom_scheme_mode::GREEDYMINI, 21, tmp,
                                       gm_projection::AT0_CG1); },
@@ -293,7 +293,7 @@ int main(int argc, char** argv) {
 
     {  // synthetic symmetric tables: exhaustive sweep (l small), incl. gm_k == l and i = 1..3
         struct Case { int gk; uint64_t l; };
-        const char* tmp = "/tmp/test_gm_centre_synth.gm";
+        const char* tmp = "/tmp/test_gm_center_synth.gm";
         for (Case c : {Case{9, 11}, Case{8, 12}, Case{7, 7}, Case{6, 12}, Case{10, 12}}) {
             make_table(tmp, c.gk, true, 5 + c.gk);
             for (auto proj : {gm_projection::AT0_CG1, gm_projection::AT1_CG0}) {

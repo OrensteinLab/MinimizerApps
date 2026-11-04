@@ -171,9 +171,9 @@ def expected_density_polarities(R):
                              Stat(mean_text(r["expected_density_factor_mean"], 5), sd1(r["expected_density_factor_std"])),
                              "yes" if p == POLARITY else None])
     return Table("expected_density_polarities",
-                 "All methods: expected density factor of each polarity of Phi. GreedyMini-based schemes, counted by the "
+                 "All methods: expected density factor of each polarity of Φ. GreedyMini-based schemes, counted by the "
                  "selection code of each method on 10^9 uniformly random bases, a different string for each of the five "
-                 "seeds. Columns: the method, k and w; the scheme and its order; the polarity of Phi (at0-cg1: {A,T} mapped to 0; "
+                 "seeds. Columns: the method, k and w; the scheme and its order; the polarity of Φ (at0-cg1: {A,T} mapped to 0; "
                  "at1-cg0: {A,T} mapped to 1); the expected density factor (mean and standard deviation over the seeds); and "
                  "whether the polarity is the one reported in the paper (at0-cg1, chosen arbitrarily).",
                  ["method", "k", "w"] + SCHEME_COLS + ["polarity", "expected density factor", "reported in the paper"], rows)
@@ -198,7 +198,7 @@ def particular_density(R):
                  "All methods: particular density factor of each scheme on each dataset. Columns: the method, dataset, k and "
                  "w; the scheme and its order; and the particular density factor (mean and standard deviation over the 5 "
                  "seeds; the default schemes of Minimap2 and KMC3 have no seed). The GreedyMini orders are built as in Table 2 "
-                 "of the paper, with {A,T} mapped to 0 by Phi. Minimap2 uses a GreedyMini order on t-mers in the "
+                 "of the paper, with {A,T} mapped to 0 by Φ. Minimap2 uses a GreedyMini order on t-mers in the "
                  "mod-minimizer only with k=19 (CHM13 chrX, GRCh38).",
                  ["method", "dataset", "k", "w"] + SCHEME_COLS + ["particular density factor"], rows)
 
@@ -240,7 +240,7 @@ POLARITY_METRICS = {
 
 
 def polarity_comparison(R):
-    """Every metric of the GreedyMini-based schemes with each polarity of Phi, and the paired test of at1-cg0 / at0-cg1."""
+    """Every metric of the GreedyMini-based schemes with each polarity of Φ, and the paired test of at1-cg0 / at0-cg1."""
     rows = []
     for app in APPS:
         tests = []
@@ -286,7 +286,7 @@ def polarity_comparison(R):
                          *scheme_order(GM_SCHEMES[t["scheme"]], app), t["name"], t["a"], t["b"], "%.3f" % ratio,
                          "[%.3f, %.3f]" % (lo, hi), p_text(t["p"]), significance.verdict(t["mean_log"], t["p"], eq)])
     return Table("polarity_comparison",
-                 "All methods: the two polarities of Phi. Each metric of the GreedyMini-based schemes on each dataset, with "
+                 "All methods: the two polarities of Φ. Each metric of the GreedyMini-based schemes on each dataset, with "
                  "{A,T} mapped to 0 (at0-cg1, reported in the paper) and to 1 (at1-cg0). Columns: the method, dataset, k and w; "
                  "the scheme and its order; the metric, with its unit; its mean and standard deviation over the 5 seeds with "
                  "each polarity; the ratio at1-cg0 / at0-cg1 (geometric mean over the paired seeds) and its 95% confidence "
@@ -685,7 +685,7 @@ def sshash_tables(R):
                         [stat_of(r, "bits_per_kmer", "{:.2f}", fl(r["n_kmers"]) / 8e9)])
     yield Table("sshash_build",
                 "SSHash: index build, k=21, w=11, 16 threads. Columns: the collection; the scheme and its order (the GreedyMini "
-                "order built for 15-mers, centre-extended to 21-mers); the particular density factor; the distinct selected "
+                "order built for 15-mers, center-extended to 21-mers); the particular density factor; the distinct selected "
                 "k-mers (millions); the build wall time; the build peak memory; and the index size, in bits per L-mer and in "
                 "GB. Mean and standard deviation over the 5 seeds.",
                 ["block"] + SCHEME_COLS + ["particular density factor", "distinct selected k-mers (10^6)",

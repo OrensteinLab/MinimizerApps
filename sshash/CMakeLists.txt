@@ -116,8 +116,8 @@ if(SSHASH_BUILD_EXECUTABLES)
     sshash_static
   )
 
-  add_executable(test_gm_centre test/test_gm_centre.cpp)
-  target_link_libraries(test_gm_centre
+  add_executable(test_gm_center test/test_gm_center.cpp)
+  target_link_libraries(test_gm_center
     sshash_static
   )
 

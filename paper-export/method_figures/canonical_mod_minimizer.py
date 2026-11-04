@@ -74,7 +74,7 @@ assert i0+ir==w-1 and P0==Pr and all(r0[m]==rr[T-1-m] for m in range(T))
 yb0=14; bases(yb0,v,it("v"),i0,P0,GREEN)
 ym0=yb0+BH+20; positions(ym0)
 yt0=ym0+14; ranks(yt0,r0,M0,i0,GREEN)
-yo=yt0+RH+26                                                        # the offset track (centre line of the numbers)
+yo=yt0+RH+26                                                        # the offset track (center line of the numbers)
 ytr=yo+26
 label(yo,f"{it('m')} mod {it('w')}")
 for o in range(w):

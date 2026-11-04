@@ -28,7 +28,7 @@ fi
 DEFAULT_SCHEMES="$ALL_SCHEMES"
 
 # GreedyMini table stems under $GM_DIR (their k, gm_k, is parsed from the name):
-# greedymini's table of k-mers (centre-extended to k) and mod-minimizer-greedymini's
+# greedymini's table of k-mers (center-extended to k) and mod-minimizer-greedymini's
 # table of t-mers (t = gm_k; the w20_k9 table is KMC3's); the projections `sweep`
 # covers, and the one a single `run` uses.
 GM_TABLE=${GM_TABLE:-w10_k15_canonical}

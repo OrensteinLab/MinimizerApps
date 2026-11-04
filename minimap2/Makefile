@@ -152,7 +152,7 @@ misc.o: mmpriv.h minimap.h bseq.h kseq.h ksort.h
 options.o: mmpriv.h minimap.h bseq.h kseq.h
 scheme.o: scheme.h minimap.h kvec.h kalloc.h
 scheme.o: ../common/minimizer-schemes/pcg_rxs_m_xs.h
-scheme.o: ../common/minimizer-schemes/greedymini_rank.h ../common/minimizer-schemes/greedymini_centre.h ../common/minimizer-schemes/mod_minimizer_rule.h
+scheme.o: ../common/minimizer-schemes/greedymini_rank.h ../common/minimizer-schemes/greedymini_center.h ../common/minimizer-schemes/mod_minimizer_rule.h
 pe.o: mmpriv.h minimap.h bseq.h kseq.h kvec.h kalloc.h ksort.h
 sdust.o: kalloc.h kdq.h kvec.h sdust.h
 seed.o: mmpriv.h minimap.h bseq.h kseq.h kalloc.h ksort.h

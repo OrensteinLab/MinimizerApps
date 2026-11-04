@@ -138,10 +138,10 @@ def pct_label(f, xc, y, v, ref, bw, inside):
         halo, above = False, False
     tw = len(txt) * size * 0.6                       # text width (estimate)
     aw = size * 0.75                                 # arrow width
-    x0 = xc - (tw + aw + 3) / 2                      # the arrow and the text, centred together on xc
+    x0 = xc - (tw + aw + 3) / 2                      # the arrow and the text, centered together on xc
     xt, ax = x0 + aw + 3 + tw / 2, x0 + aw / 2
     f.t(xt, y, txt, size, "middle", "normal", col, halo=halo)
-    h = size * 0.9                                   # the arrow, centred on the text's x-height
+    h = size * 0.9                                   # the arrow, centered on the text's x-height
     yt = y - size * 0.35 - h / 2
     yb = yt + h
     hw, hh = aw / 2, size * 0.45
@@ -163,7 +163,7 @@ def minibars(f, x, y, w, h, title, vals, head=HEAD, xlabels=None):
     {scheme: lines of its name} drawn under the axis, or None."""
     vals = [(t[0], t[1], (t[2] if len(t) > 2 else None) or 0.0, t[3] if len(t) > 3 else "") for t in vals if t[1] is not None]
     if title:
-        f.t(x + AXW + (w - AXW) / 2, y + 20, title, 22, "middle", "bold")   # centred on the plot area
+        f.t(x + AXW + (w - AXW) / 2, y + 20, title, 22, "middle", "bold")   # centered on the plot area
     base = y + h
     top = y + (32 if title else 14)
     bot, ymax, st = adaptive(vals, base - top - head)

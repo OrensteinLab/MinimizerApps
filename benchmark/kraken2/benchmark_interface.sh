@@ -29,11 +29,10 @@ bench_scheme_help_line() {
     echo "  ${BENCH_SCHEME_CHOICES}"
 }
 
-# Common -o/-d/-S/-g/-G/-M/-m/-z option text (callers add their own extras).
+# Common -o/-S/-g/-M/-P/-m/-z/-N/-E/-a option text (callers add their own extras).
 bench_common_options_help() {
     cat <<EOF
   -o BASE_DIR   Base directory (default: \$KRAKEN2_BENCH_ROOT or ./benchmark_data)
-  -d DATA_SRC   (ignored; kept for compat)
   -S SCHEME...  Run only these schemes (space-separated; repeatable):
                   ${BENCH_SCHEME_CHOICES}
                 Examples: -S xor mod-minimizer-xor
@@ -84,7 +83,6 @@ bench_append_schemes() {
 bench_handle_common_opt() {
     case "$1" in
         o) BASE_DIR="${OPTARG}" ;;
-        d) : ;; # compat no-op
         g) GM_FILE="${OPTARG}" ;;
         M) MOD_GM_FILE="${OPTARG}" ;;
         P)
@@ -129,45 +127,6 @@ bench_is_paper_accuracy_mode() {
     [[ "${USE_STREX_LIB}" -eq 1 ]]
 }
 
-bench_is_kraken_lib_dir() {
-    [[ -d "$1/library" || -d "$1/taxonomy" ]]
-}
-
-# Prefer canonical if it is already a Kraken library; else first legacy hit; else canonical.
-bench_pick_kraken_lib() {
-    local canonical="$1"
-    shift
-    if bench_is_kraken_lib_dir "${canonical}"; then
-        echo "${canonical}"
-        return
-    fi
-    local d
-    for d in "$@"; do
-        if bench_is_kraken_lib_dir "${d}"; then
-            echo "${d}"
-            return
-        fi
-    done
-    echo "${canonical}"
-}
-
-bench_pick_dir() {
-    local canonical="$1"
-    shift
-    if [[ -d "${canonical}" ]]; then
-        echo "${canonical}"
-        return
-    fi
-    local d
-    for d in "$@"; do
-        if [[ -d "${d}" ]]; then
-            echo "${d}"
-            return
-        fi
-    done
-    echo "${canonical}"
-}
-
 bench_canonical_shared_db() {
     echo "${BASE_DIR}/db/$1"
 }
@@ -183,19 +142,7 @@ bench_canonical_run_root() {
 
 bench_shared_db_for() {
     case "$1" in
-        standard)
-            bench_pick_kraken_lib "${BASE_DIR}/db/standard" "${BASE_DIR}/db"
-            ;;
-        standard_p10)
-            bench_pick_kraken_lib "${BASE_DIR}/db/standard_p10" "${BASE_DIR}/sample_db"
-            ;;
-        standard_p0.5)
-            bench_pick_kraken_lib "${BASE_DIR}/db/standard_p0.5" "${BASE_DIR}/sample_db_smoke"
-            ;;
-        strain_exclusion)
-            bench_pick_kraken_lib "${BASE_DIR}/db/strain_exclusion" \
-                "${BASE_DIR}/db_strain_exclusion"
-            ;;
+        standard|standard_p10|standard_p0.5|strain_exclusion) bench_canonical_shared_db "$1" ;;
         *)
             echo "Error: unknown library id '$1'" >&2
             return 1
@@ -205,23 +152,7 @@ bench_shared_db_for() {
 
 bench_run_root_for() {
     case "$1" in
-        standard)
-            bench_pick_dir "$(bench_runs_dir)/standard" \
-                "$(bench_runs_dir)/standard_p100" \
-                "${BASE_DIR}/standard/p100" "${BASE_DIR}/p100"
-            ;;
-        standard_p10)
-            bench_pick_dir "$(bench_runs_dir)/standard_p10" \
-                "${BASE_DIR}/standard/p10" "${BASE_DIR}/p10"
-            ;;
-        standard_p0.5)
-            bench_pick_dir "$(bench_runs_dir)/standard_p0.5" \
-                "${BASE_DIR}/standard/p0.5" "${BASE_DIR}/p0.5"
-            ;;
-        strain_exclusion)
-            bench_pick_dir "$(bench_runs_dir)/strain_exclusion" \
-                "${BASE_DIR}/strain-exclusion"
-            ;;
+        standard|standard_p10|standard_p0.5|strain_exclusion) bench_canonical_run_root "$1" ;;
         *)
             echo "Error: unknown library id '$1'" >&2
             return 1
@@ -246,7 +177,7 @@ bench_resolve_shared_db() {
     local db="${SHARED_DB:-}"
     if [[ -n "${db}" ]]; then
         case "${db%/}" in
-            */db/strain_exclusion|*/db_strain_exclusion) USE_STREX_LIB=1 ;;
+            */db/strain_exclusion) USE_STREX_LIB=1 ;;
         esac
     fi
     if bench_is_paper_accuracy_mode && [[ "${SIZE_EXPLICIT}" -eq 1 ]]; then

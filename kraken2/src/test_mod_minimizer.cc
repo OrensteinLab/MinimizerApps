@@ -39,8 +39,8 @@ static uint64_t xor_rank(uint64_t canonical, uint64_t toggle_mask) {
 }
 
 // Slow reference MOD stream (no fast-path LUTs/counters): w residue deques,
-// and the centre rule over the offsets x mod w of the minimal t-mers: the
-// offset closest to the centre (w-1)/2; between two equally close ones the
+// and the center rule over the offsets x mod w of the minimal t-mers: the
+// offset closest to the center (w-1)/2; between two equally close ones the
 // left if the window (its k bases) <= its reverse complement, else the right.
 class NaiveModReference {
  public:
@@ -637,7 +637,7 @@ static void test_deterministic_checksum() {
   // Regression anchor: if sampled ℓ-mer stream changes, update this.
   // Warm-up batching does not change window samples (only drops pre-window
   // returns of ~0, which XOR out of the old L-length checksum).
-  // Centre tie rule (was 0x240fd3bb257f260e under the G/T-strand rule).
+  // Center tie rule (was 0x240fd3bb257f260e under the G/T-strand rule).
   const uint64_t expect = 0x0ab95cceb8c9bf3cULL;
   if (checksum != expect) {
     std::cerr << "FAIL: checksum regression got=0x" << std::hex << checksum
@@ -890,7 +890,7 @@ static void test_gm_scanner_spaced_seed() {
 // Rank-first scanning (compare table ranks, full packed values only on equal
 // finite ranks; Sigma plane pext'd or rolled) must select exactly the
 // minimizers of the Rank() path. Random mirror-symmetric tables with many
-// equal and infinite ranks, centre extension l = gm_k + 2i, with and without
+// equal and infinite ranks, center extension l = gm_k + 2i, with and without
 // (also non-base-aligned) spaced seeds, sequences with N and low complexity.
 static std::shared_ptr<const GreedyMiniTable> random_symmetric_table(
     int gm_k, std::mt19937_64 &rng) {
@@ -898,7 +898,7 @@ static std::shared_ptr<const GreedyMiniTable> random_symmetric_table(
   std::vector<uint64_t> raw(n, n);
   uint64_t next_rank = 0;
   for (size_t key = 0; key < n; key++) {
-    const size_t mir = (size_t)gm_centre::mirror_key((uint32_t)key, gm_k);
+    const size_t mir = (size_t)gm_center::mirror_key((uint32_t)key, gm_k);
     if (mir < key || raw[key] != n || (rng() & 3ULL) == 0)
       continue;
     raw[key] = raw[mir] = next_rank++;
@@ -982,8 +982,8 @@ static void test_gm_rank_first_matches_rank_path() {
 // MINIMIZER+GM: a read and its reverse complement select the same minimizer
 // for every k-mer, also in windows where no l-mer has a finite rank (non-UHS
 // l-mers break ties by a strand-invariant key, not by position). Real table
-// (centre extension, rank-first and Rank() paths) and random mirror-symmetric
-// tables with many infinite ranks (l == gm_k and centre); random and
+// (center extension, rank-first and Rank() paths) and random mirror-symmetric
+// tables with many infinite ranks (l == gm_k and center); random and
 // low-complexity sequences.
 static std::vector<uint64_t> gm_strand_keys(MinimizerScanner &sc,
                                             const std::string &seq) {
@@ -1257,7 +1257,7 @@ static std::string revcomp_string(const std::string &s) {
 }
 
 // The definition, per k-mer window (no shared state with ModSampler): over the
-// minimal t-mers x, the offset x mod w closest to the centre (w-1)/2, between
+// minimal t-mers x, the offset x mod w closest to the center (w-1)/2, between
 // two equally close ones the left if window <= revcomp(window) (strings),
 // else the right; the window's canonical l-mer at that offset. `offsets`
 // (optional) receives the sampled offsets.
@@ -1312,7 +1312,7 @@ static void test_matches_string_definition() {
   }
 }
 
-// The centre rule is forward: the sampled position (window start + offset)
+// The center rule is forward: the sampled position (window start + offset)
 // never decreases. Low-complexity sequence forces many ties.
 static void test_forward() {
   std::mt19937_64 rng(35);
@@ -1329,7 +1329,7 @@ static void test_forward() {
       size_t back = 0;
       for (size_t i = 1; i < off.size(); i++)
         back += (ssize_t)i + off[i] < (ssize_t)(i - 1) + off[i - 1];
-      check(back == 0, ("MOD centre rule is forward k=" + std::to_string(k)).c_str());
+      check(back == 0, ("MOD center rule is forward k=" + std::to_string(k)).c_str());
     }
   }
 }

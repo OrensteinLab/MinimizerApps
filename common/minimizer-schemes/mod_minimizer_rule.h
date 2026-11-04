@@ -13,10 +13,10 @@
  * t-mers of RC(v) offer exactly the mirror offsets of those of v.
  *
  * Ties at the minimum (several minimal t-mers in different residue classes,
- * which select different k-mers) are broken by the centre rule of Cologni and
+ * which select different k-mers) are broken by the center rule of Cologni and
  * Pibiri ("Canonical Schemes and Minimizers", Proposition 24; SSHash v6.0.0,
  * PR 93, which applies it to plain minimizers):
- *   1. the offset closest to the window centre (w-1)/2, i.e. the smallest
+ *   1. the offset closest to the window center (w-1)/2, i.e. the smallest
  *      doubled distance |2p - (w-1)|;
  *   2. between the two equally close mirror offsets p and w-1-p, the left one
  *      if v <= RC(v), the right one otherwise.
@@ -40,22 +40,22 @@
 
 namespace mod_rule {
 
-// Whether the centre rule applies: t == k (mod w).
+// Whether the center rule applies: t == k (mod w).
 inline bool t_is_canonical(int k, int w, int t) {
   return w > 0 && t > 0 && t % w == k % w;
 }
 
-// Doubled distance of offset p from the centre (w-1)/2 of w offsets.
-inline uint64_t centre_dist2(uint64_t p, uint64_t w) {
+// Doubled distance of offset p from the center (w-1)/2 of w offsets.
+inline uint64_t center_dist2(uint64_t p, uint64_t w) {
   return 2 * p > w - 1 ? 2 * p - (w - 1) : (w - 1) - 2 * p;
 }
 
-// The centre rule over candidate offsets added one by one (any order).
-struct CentrePick {
+// The center rule over candidate offsets added one by one (any order).
+struct CenterPick {
   uint64_t best = ~uint64_t(0), lo = 0, hi = 0;
 
   void add(uint64_t p, uint64_t w) {
-    const uint64_t d = centre_dist2(p, w);
+    const uint64_t d = center_dist2(p, w);
     if (d < best) {
       best = d;
       lo = hi = p;
@@ -74,9 +74,9 @@ struct CentrePick {
 
 // The offset over the loci x in [x_l, x_r] with is_min(x).
 template <typename IsMin, typename LeRc>
-inline uint64_t centre_tie_offset(uint64_t x_l, uint64_t x_r, uint64_t w,
+inline uint64_t center_tie_offset(uint64_t x_l, uint64_t x_r, uint64_t w,
                                   IsMin is_min, LeRc le_rc) {
-  CentrePick c;
+  CenterPick c;
   for (uint64_t x = x_l; x <= x_r; ++x)
     if (is_min(x))
       c.add(x % w, w);

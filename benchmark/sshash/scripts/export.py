@@ -1285,9 +1285,9 @@ def overview_rows() -> list[dict]:
         return {"sheet": sheet, "column": column, "meaning": meaning}
 
     return [
-        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every scheme; see README 'Choice of m'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
+        row("all", "dataset / k / w / L", "dataset id and the unified parameter names shared by all apps: k = minimizer length (sshash's m, fixed at 21 for every scheme; see README 'Choice of k'), w = window size in minimizer-length k-mers = L - k + 1 (11), L = span of a window = k + w - 1 = sshash's k-mer length (31)"),
         row("all", "scheme", "canonical minimizer scheme name: native (sshash's own baseline) | xor | xor-pcg-hash | greedymini | mod-minimizer-xor | mod-minimizer-greedymini (strand-symmetric mod-minimizer). Never carries parameters: a variant is the five columns scheme, gm_k, projection, gm_table, mod_t"),
-        row("all", "gm_k", "GreedyMini table k (the table's gm_k-mer is extended to the m-mer around its centre for greedymini, which needs m - gm_k even; for mod-minimizer-greedymini it is the t-mer table); blank for the other schemes"),
+        row("all", "gm_k", "GreedyMini table k (the table's gm_k-mer is extended to the m-mer around its center for greedymini, which needs m - gm_k even; for mod-minimizer-greedymini it is the t-mer table); blank for the other schemes"),
         row("all", "projection", "GreedyMini DNA->binary projection polarity (sshash --gm-projection): at0-cg1 = A,T->0 and C,G->1 (default), at1-cg0 = flipped. GreedyMini schemes only; blank otherwise. Choices: config.yaml's greedymini / mod_minimizer_greedymini projections (or sshash_bench.sh --gm-projections)"),
         row("all", "gm_table", "stem of the GreedyMini table file under orders/GreedyMini (e.g. w11_k15_canonical); GreedyMini schemes only. Choices: config.yaml's tables (or --gm-tables)"),
         row("all", "mod_t", "t-mer length of the mod-minimizer schemes (--mod-t): 4 + (m - 4) mod w for mod-minimizer-xor, the table's gm_k for mod-minimizer-greedymini; blank otherwise"),
@@ -1379,9 +1379,9 @@ def scheme_info(v: dict) -> dict:
                 if flipped else "")
     if sn.is_mod_minimizer(scheme):
         common = ("Strand-symmetric mod-minimizer (mod-sampling, Groot Koerkamp & Pibiri 2024, with the "
-                  "centre tie rule of the plain-minimizer schemes; this repo): the k-mer's t-mers are ranked, the "
+                  "center tie rule of the plain-minimizer schemes; this repo): the k-mer's t-mers are ranked, the "
                   "minimal t-mer at x samples the m-mer at x mod w (t == m mod w), a tie the offset "
-                  "closest to the k-mer's centre, so a k-mer and its reverse complement share the bucket; ")
+                  "closest to the k-mer's center, so a k-mer and its reverse complement share the bucket; ")
         if scheme == "mod-minimizer-xor":
             return {"description": common + "t-mers ranked by xor, t = 4 + (m - 4) mod w",
                     "cli": "--scheme mod-minimizer-xor --mod-t T -s SEED"}
@@ -1392,7 +1392,7 @@ def scheme_info(v: dict) -> dict:
         return {
             "description": (
                 f"Ranks minimizers by the GreedyMini {table} table extended to the m-mer around its "
-                "centre gm_k-mer (ties by min(Sigma, reverse Sigma) then Gamma)" + flip_txt
+                "center gm_k-mer (ties by min(Sigma, reverse Sigma) then Gamma)" + flip_txt
             ),
             "cli": f"--scheme greedymini --greedy-mini-file orders/GreedyMini/{table}" + proj_cli + " -s SEED",
         }

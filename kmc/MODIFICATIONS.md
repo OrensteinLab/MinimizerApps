@@ -23,4 +23,6 @@ GPL-compatible). `git diff 3e38ae98 -- kmc` shows every change.
 | `kmc_core/splitter.cpp`, `kmc_core/splitter.h` | custom orders in the splitter; superwindow statistics |
 | `Makefile` | dynamic link by default, Python autodetect, raduls flags; the new sources |
 | `*.vcxproj` | the new sources in the Visual Studio projects |
-| `README.md`, `.gitignore` | this notice; build outputs |
+| `MODIFICATIONS.md` | added: this notice |
+| `README.md` | a pointer to this notice and the benchmark; the "Custom minimizer" section |
+| `.gitignore` | build outputs |

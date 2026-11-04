@@ -9,37 +9,35 @@ The second version of the Kraken taxonomic sequence classification system
 Please refer to the Operating Manual (in `docs/MANUAL.html`) for details on
 how to use Kraken 2.
 
-For minimizer / mod-minimizer sketching benchmarks and library setup, see
-[`../benchmark/kraken2/README.md`](../benchmark/kraken2/README.md). On a fresh machine, run
-[`../benchmark/kraken2/setup.sh`](../benchmark/kraken2/setup.sh) (host build deps, Miniconda if needed, and a
-conda env with [bioconda `kraken2`](https://anaconda.org/channels/bioconda/packages/kraken2/overview)).
+This fork adds the schemes of this repository. For the benchmark, see
+[`../benchmark/kraken2/README.md`](../benchmark/kraken2/README.md); on a fresh
+machine, [`../benchmark/kraken2/setup.sh`](../benchmark/kraken2/setup.sh)
+installs the build packages and a conda env with
+[bioconda `kraken2`](https://anaconda.org/channels/bioconda/packages/kraken2/overview).
 
 Custom minimizer
 ----------------
 
-This fork adds pluggable minimizer orders (`--order xor|xor-pcg-hash|greedymini`)
-and a sketching choice (`--sketching minimizer|mod-minimizer`; on DNA the
-mod-minimizer is strand-symmetric, see `src/mod_minimizer.h`; with
-`--greedymini-file FILE` for the greedymini order) on top of upstream
-Kraken 2's own default order (`--sketching minimizer --order xor`), including a shared GreedyMini-based
-low-density order also used by this monorepo's
-[KMC fork](../kmc/README.md#custom-minimizer). See
-[`../orders/README.md`](../orders/README.md) for the option/CLI reference
-and shared implementation.
+The fork adds the order (`--order xor|xor-pcg-hash|greedymini`, with
+`--greedymini-file FILE` for `greedymini`) and the sketching
+(`--sketching minimizer|mod-minimizer`) to upstream Kraken 2, whose default is
+`--sketching minimizer --order xor`. The mod-minimizer is canonical: a read and
+its reverse complement give the same selected k-mers (`src/mod_minimizer.h`).
+Option and CLI reference for all four methods:
+[`../orders/README.md`](../orders/README.md).
 
-With `--order greedymini` and `--sketching minimizer`, a table with `gm_k < l` is
-extended by its **centre** (rank of the middle `gm_k` bases, then tie-breaks),
-which keeps the table's designed density (`w5_k15_canonical`: 1.466 at every
-valid `l`).
-`l - gm_k` must be even (`w5_k15_canonical`: `l` = 15, 17, …, 31). The
-GreedyMini order is DNA only: protein databases (`--protein`) refuse it.
-`--gm-projection at1-cg0` flips its DNA->binary projection (A,T -> 1, C,G -> 0;
-default `at0-cg1`), as in the sshash and minimap2 forks; it is stored in the
-database. Databases
-by other Kraken 2 builds (any `db_version` other than 2, including upstream
-databases, and databases built before the opts.k2d layout change: wrong size or
-missing magic) are refused by `classify` and `dump_table` and must be rebuilt. Details, numbers and the commands to reproduce them:
-[`minimizers/README.md`](minimizers/README.md).
+Kraken2's minimizer length ℓ (`-l`) is the paper's k (selected k-mer length)
+and its k-mer length (`-k`) is L = k + w − 1. A GreedyMini table with
+`gm_k < ℓ` is extended by its center (rank of the middle `gm_k` bases, then
+tie-breaks), which keeps the table's designed density (`w5_k15_canonical`:
+1.466 at every valid ℓ); `ℓ - gm_k` must be even (`w5_k15_canonical`:
+ℓ = 15, 17, …, 31). The GreedyMini order is DNA only (`--protein` refuses it).
+`--gm-projection at0-cg1|at1-cg0` sets the polarity of Φ, the DNA-to-binary
+projection (default `at0-cg1`, A,T -> 0), as in the SSHash and Minimap2 forks;
+it is stored in the database. `classify` and `dump_table` accept only
+databases built by this fork (`db_version` 2 with the fork's `opts.k2d`);
+others, including upstream ones, must be rebuilt. Details, density numbers
+and how to reproduce them: [`minimizers/README.md`](minimizers/README.md).
 
 Publications
 ------------

@@ -116,7 +116,9 @@ $(bench_common_options_help)
   --dry-run     List the run variants (scheme x projection x seed) and whether
                 each database already exists (skipped by the build); builds and
                 classifies nothing
-  -c            Compare only (existing results + manifest; also plots).
+  -c            Compare only: no builds or classification; fills missing density
+                rows, then re-runs the comparison and export (benchmark_comparison.txt,
+                kraken2_results.xlsx, csvs/) from the existing results + manifest.
                 Reuses -m/-z/-N/-E when given; otherwise auto-detects a single
                 tree under runs/ that has a manifest
   -h, --help    Show help
@@ -131,7 +133,7 @@ for _a in "$@"; do
 done
 set -- "${_args[@]}"
 
-while getopts ":o:d:S:g:M:P:n:j:t:mzaNEcATCQDh-" opt; do
+while getopts ":o:S:g:M:P:n:j:t:mzaNEcCQDh-" opt; do
     case "${opt}" in
         S)
             bench_handle_S_opt "$@"
@@ -144,8 +146,6 @@ while getopts ":o:d:S:g:M:P:n:j:t:mzaNEcATCQDh-" opt; do
         C) SKIP_CAMI=1 ;;
         Q) EXTRA_SETS=1 ;;
         D) SKIP_DENSITY=1 ;;
-        A) : ;; # ARGOS on by default in paper mode (compat with old run_eval.sh -A)
-        T) : ;; # seed list already includes the paper toggle (old run_eval.sh -T)
         h) show_help ;;
         -)
             case "${OPTARG}" in
@@ -277,27 +277,11 @@ configure_seed_paths() {
 
 # Paper (Wood et al. Methods): Mason + FDA-ARGOS are both classified against
 # the strain-exclusion library only. NCBI -m/-z/-N use an unlabeled speed set.
-# Prefer data/{strain-exclusion,fda-argos,speed}/R1.fastq; accept older names.
+# Each query set is data/<set>/{R1,R2}.fastq (<set> = strain-exclusion, fda-argos, cami, speed).
 pe_pair_in_dir() {
     local dir="$1"
-    local r1 r2
-    [[ -d "${dir}" ]] || return 1
-    for r1 in \
-        "${dir}/R1.fastq" \
-        "${dir}/accuracy_1.fq" \
-        "${dir}/argos_R1.fastq" \
-        "${dir}/benchmark_R1.fastq"
-    do
-        [[ -s "${r1}" ]] || continue
-        r2="${r1/R1.fastq/R2.fastq}"
-        r2="${r2/_1.fq/_2.fq}"
-        r2="${r2/_R1.fastq/_R2.fastq}"
-        if [[ -s "${r2}" ]]; then
-            printf '%s\t%s\n' "${r1}" "${r2}"
-            return 0
-        fi
-    done
-    return 1
+    [[ -s "${dir}/R1.fastq" && -s "${dir}/R2.fastq" ]] || return 1
+    printf '%s\t%s\n' "${dir}/R1.fastq" "${dir}/R2.fastq"
 }
 
 add_dataset() {
@@ -331,21 +315,11 @@ setup_datasets() {
         if pair="$(pe_pair_in_dir "${se_dir}")"; then
             IFS=$'\t' read -r r1 r2 <<< "${pair}"
             add_dataset "strain-exclusion" "${r1}" "${r2}" "${se_dir}/truth.tsv"
-        elif pair="$(pe_pair_in_dir "${DATA_DIR}/simulated")"; then
-            IFS=$'\t' read -r r1 r2 <<< "${pair}"
-            add_dataset "strain-exclusion" "${r1}" "${r2}" "${DATA_DIR}/simulated/truth.tsv"
-        elif pair="$(pe_pair_in_dir "${BASE_DIR}/evaluation/reads")"; then
-            IFS=$'\t' read -r r1 r2 <<< "${pair}"
-            add_dataset "strain-exclusion" "${r1}" "${r2}" "${BASE_DIR}/evaluation/reads/truth.tsv"
         fi
         if [[ "${SKIP_ARGOS}" -eq 0 ]]; then
             if pair="$(pe_pair_in_dir "${arg_dir}")"; then
                 IFS=$'\t' read -r r1 r2 <<< "${pair}"
                 add_dataset "fda-argos" "${r1}" "${r2}" "${arg_dir}/truth.tsv"
-            elif pair="$(pe_pair_in_dir "${BASE_DIR}/evaluation/reads/argos")"; then
-                IFS=$'\t' read -r r1 r2 <<< "${pair}"
-                add_dataset "fda-argos" "${r1}" "${r2}" \
-                    "${BASE_DIR}/evaluation/reads/argos/truth.tsv"
             fi
         fi
         add_extra_datasets
@@ -361,9 +335,6 @@ setup_datasets() {
 
     # NCBI -m/-z/-N: unlabeled speed corpus only (not Table S1 / S5).
     if pair="$(pe_pair_in_dir "${DATA_DIR}/speed")"; then
-        IFS=$'\t' read -r r1 r2 <<< "${pair}"
-        add_dataset "speed" "${r1}" "${r2}" ""
-    elif pair="$(pe_pair_in_dir "${DATA_DIR}")"; then
         IFS=$'\t' read -r r1 r2 <<< "${pair}"
         add_dataset "speed" "${r1}" "${r2}" ""
     fi

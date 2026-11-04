@@ -75,7 +75,7 @@ scheme_dir_name() {
     default|lex|xor|xor-pcg-hash) bench_py gm scheme-dir --scheme "$1" ;;
     greedymini)
       echo "$(bench_py gm scheme-dir --scheme greedymini --gm-k "$(signature_len_effective)" \
-        --projection "${GM_PROJECTION:-at0-cg1}")/lut_${GM_LUT:-dna}"
+        --projection "${GM_PROJECTION:-at0-cg1}")/lut_${GM_LUT:-binary}"
       ;;
     *) die "unknown scheme: $1" ;;
   esac
@@ -134,7 +134,7 @@ run_one() {
   elif [[ "$scheme" == "greedymini" ]]; then
     kmc_cmd+=("-p$(signature_len_effective)")
   fi
-  local gm_lut="${GM_LUT:-dna}" projection="${GM_PROJECTION:-at0-cg1}"
+  local gm_lut="${GM_LUT:-binary}" projection="${GM_PROJECTION:-at0-cg1}"
   if [[ "$scheme" == "greedymini" ]]; then
     local gm_file="$custom_order" embedded="$custom_order" embedded
     [[ -n "$gm_file" ]] || gm_file="$(resolve_gm_path "$k" "${seed:-0}")"
@@ -150,8 +150,7 @@ run_one() {
     else
       [[ -n "$seed" ]] || die "GM binary .gm requires a seed; use a _dna.gm table or -n with predefined seeds"
       kmc_cmd+=("-co$gm_file" "-ol$order_label" "-os$((seed))")
-      # -ode (DNA-expanded) is opt-in now that the binary rank LUT + runtime
-      # projection is kmc's default backend for a binary-alphabet .gm source.
+      # kmc uses the binary rank LUT for a binary .gm (-ode would DNA-expand it).
     fi
     custom_order="$gm_file"
   elif [[ "$scheme" == "lex" ]]; then
@@ -258,9 +257,8 @@ run_schemes() {
 
   case "$SCHEME" in
     default)
-      # -n repeats lex the same way custom schemes repeat seeds: it has no
-      # real "seed", but repeating it gives it a mean/std instead of a
-      # single unrepeatable sample (see README: lex baseline noise).
+      # -n repeats the default scheme the way the seeded schemes repeat seeds:
+      # it has no seed, but repeating it gives it a mean/std.
       [[ -z "$CUSTOM_ORDER" && -z "$ORDER_LABEL" ]] || die "--custom-order/--order-label require -S xor|xor-pcg-hash|greedymini|all"
       for ds in "${ds_arr[@]}"; do
         for kind in "${in_arr[@]}"; do
@@ -317,14 +315,10 @@ run_schemes() {
       ;;
     all)
       [[ -z "$ORDER_LABEL" ]] || die "--order-label is not used with -S all"
-      # Interleave default/xor/xor-pcg-hash/greedymini within each repetition `i` instead of
-      # running all of one scheme, then all of the next: back-to-back
-      # scheme blocks let any time-of-day/machine-state drift land as a
-      # step change between schemes, which reads as a fake ordering
-      # effect. Interleaving spreads that drift evenly across all four
-      # schemes, and repeating lex (instead of running it once, first)
-      # gives it the same mean/std as the others so the /lex ratio has an
-      # actual error bar. See README: "Run order and the lex baseline".
+      # Interleave default/xor/xor-pcg-hash/greedymini within each repetition `i`, so
+      # time-of-day/machine drift spreads evenly over the schemes instead of
+      # landing as a step change between them; default is repeated like the
+      # others, so the ratio to it has an error bar (README: kmc3_bench.sh).
       for ds in "${ds_arr[@]}"; do
         for kind in "${in_arr[@]}"; do
           for k in "${k_arr[@]}"; do

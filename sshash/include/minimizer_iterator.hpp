@@ -208,7 +208,7 @@ private:
     with the rank in its top bits, so two windows with different ranks are ordered by their
     ranks alone. The iterator therefore keeps only the Sigma plane of the kmer, slid by one
     base per call, and the rank of every window (one table load, custom_scheme_hasher::
-    centre_rank), in a ring (m_ring: 64 slots, each rank stored twice so that the k-m+1 window
+    center_rank), in a ring (m_ring: 64 slots, each rank stored twice so that the k-m+1 window
     ranks of the current kmer are contiguous, window i at slot (m_base + i) mod 64; a re-scan
     takes their minimum 8 ranks at a time). The full hash of a window (pext + bit reversal, hash_gm) is
     computed only when ranks tie: a new window whose rank equals the minimum rank, or the
@@ -350,11 +350,11 @@ private:
 #endif
             m_sigma = hasher().roll_sigma(m_sigma, kmer.at(m_k - 1), int(m_k));
             m_base = (m_base + 1) & 63;
-            set_rank(last_slot(), hasher().centre_rank(m_sigma, int(w - 1)));
+            set_rank(last_slot(), hasher().center_rank(m_sigma, int(w - 1)));
         } else {
             m_sigma = sigma_of(hasher(), kmer, m_k);
             m_base = 0;
-            for (uint64_t i = 0; i != w; ++i) set_rank(i, hasher().centre_rank(m_sigma, int(i)));
+            for (uint64_t i = 0; i != w; ++i) set_rank(i, hasher().center_rank(m_sigma, int(i)));
         }
         m_sigma_valid = true;
 #ifndef NDEBUG
@@ -362,7 +362,7 @@ private:
         const uint64_t kmask = (uint64_t(1) << m_k) - 1;
         assert((m_sigma & kmask) == sigma_of(hasher(), kmer, m_k));
         for (uint64_t i = 0; i != w; ++i) {
-            assert(m_ring[slot_of(i)] == hasher().centre_rank(m_sigma, int(i)));
+            assert(m_ring[slot_of(i)] == hasher().center_rank(m_sigma, int(i)));
             assert(m_ring[slot_of(i) + 64] == m_ring[slot_of(i)]);
         }
 #endif
@@ -472,7 +472,7 @@ private:
         finish_rescan(kmer, begin, rc);
     }
 
-    /* Centre-closest tie-break, see `minimizer_iterator::break_tie`. */
+    /* Center-closest tie-break, see `minimizer_iterator::break_tie`. */
     void break_tie(Kmer kmer, Kmer const& kmer_rc, minimizer_info& mini_info) const {
         assert(m_num_mins > 1);
 
@@ -510,7 +510,7 @@ private:
     The strand-symmetric mod-minimizer (util::compute_mod_minimizer), incrementally (GreedyMini:
     rank first, see next_gm): the hashes of the kmer's T = k - t + 1 t-mers live in a ring (64 slots, locus x of the current kmer at
     slot (m_base + x) & 63), with the minimum hash and its leftmost and rightmost loci (a tie
-    between them is resolved from the ring by the centre rule, util::mod_tie_offset). A slide
+    between them is resolved from the ring by the center rule, util::mod_tie_offset). A slide
     hashes the one new t-mer; the whole ring is re-scanned only when the leftmost minimum leaves
     the kmer (the "re-scan" method of minimizer_iterator). A unique minimum samples offset
     x mod w in O(1). If the kmer passed to `next` is the first one after
@@ -609,14 +609,14 @@ private:
             m_base = 0;
             m_sigma = sigma_of(kmer);
             for (uint64_t x = 0; x != m_T; ++x) {
-                m_rank[x] = hasher().centre_rank(m_sigma, int(x));
+                m_rank[x] = hasher().center_rank(m_sigma, int(x));
             }
             rescan_gm(kmer);
             m_valid = true;
         } else {
             m_base = (m_base + 1) & 63;
             m_sigma = hasher().roll_sigma(m_sigma, kmer.at(m_k - 1), int(m_k));
-            const uint16_t rank = hasher().centre_rank(m_sigma, int(m_T - 1));
+            const uint16_t rank = hasher().center_rank(m_sigma, int(m_T - 1));
             m_rank[slot(m_T - 1)] = rank;
             if (m_left == 0) {  // the leftmost minimum left the kmer
                 rescan_gm(kmer);

@@ -88,7 +88,7 @@ def check_gm_scheme(scheme: str, m: int, gm_file: Path) -> str | None:
 
     ranks = read_gm_ranks(gm_file)
     gm_k = _gm_k_from_table(ranks)
-    if not sn.gm_centre_fits(m, gm_k):
+    if not sn.gm_center_fits(m, gm_k):
         return (
             f"{scheme}: needs m - gm_k even and >= 0, but m={m} and the table "
             f"{gm_file.name} has gm_k={gm_k} (m - gm_k = {m - gm_k})"

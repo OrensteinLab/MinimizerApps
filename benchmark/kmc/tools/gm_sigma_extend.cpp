@@ -12,8 +12,8 @@
 // differently from each other.
 //
 // (Extend-k here is kmc's prefix extension; kraken2 and sshash extend a
-// binary table to longer l with the centre extension of
-// common/minimizer-schemes/greedymini_centre.h instead.)
+// binary table to longer l with the center extension of
+// common/minimizer-schemes/greedymini_center.h instead.)
 
 #include "../../../common/minimizer-schemes/greedymini_rank.h"
 #include "../../../common/minimizer-schemes/dna_revcomp.h"

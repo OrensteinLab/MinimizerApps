@@ -7,12 +7,12 @@ comes from these scripts; the result sets provide only the measured data.
 | Script | Writes |
 |---|---|
 | `make_tables.py` | the supplementary tables (`supplementary_tables/S<nn>_*.csv` and their list in `supplementary_tables/README.md`); with `--labels FILE`, their LaTeX labels; with `--density-table FILE`, the rows of Table 2 |
-| `make_figures.py` | the results figures, `results_runtime` and `results_space` (PDF, and their SVG sources) |
+| `make_figures.py` | the results figures, `results_runtime` and `results_space` (PDF, by default in `paper-export/figures/`, and their SVG sources) |
 | `common.py` | shared by both: the result sets, the schemes and datasets the paper reports, and their names |
 | `svg_charts.py` | the bar charts of the figures, drawn as SVG |
 | `method_figures/` | the figures of the Methods, which illustrate the schemes on one window: `center_rule.py` (the center rule), `greedymini_order.py` (the canonical GreedyMini order, on the real table `w5_k6_canonical.gm`) and `canonical_mod_minimizer.py` (the canonical mod-minimizer) |
 
-Both take the result set of each method:
+Both take the result set of each method (commands from the repository root):
 
 ```
 R="kraken2=KRAKEN2_DIR minimap2=MINIMAP2_DIR kmc=KMC_DIR sshash=SSHASH_DIR"   # the result set of each method
@@ -35,14 +35,14 @@ They write the PDF to `--out` (default: the current folder) and, with `--vector-
 The paper's result sets are the full runs of the four methods together with their profiling
 runs (`benchmark/<method>/experiments/profile_run.sh`). The scripts read the CSVs that the export
 of each method writes to `<results>/csvs/` and, for Minimap2's mapping profile, the
-`map_profile.log` of each run. Python 3.7 or later (with `benchmark/common`), standard library
+`map_profile.log` of each run. Python >= 3.9 (with `benchmark/common`), standard library
 only; `make_figures.py` and the scripts of `method_figures/` also need `rsvg-convert` (librsvg) for the PDF.
 
 ## What the paper reports
 
 - The schemes: the default scheme of each method, `xor-pcg-hash` (and `xor` in the tables),
   GreedyMini, and the mod-minimizer with a `xor` or a GreedyMini order on t-mers. Every
-  GreedyMini-based scheme is reported with the polarity of Phi that maps A,T to 0 (`at0-cg1`),
+  GreedyMini-based scheme is reported with the polarity of Φ that maps A,T to 0 (`at0-cg1`),
   chosen arbitrarily; the table `polarity_comparison` compares it with the other polarity.
 - Kraken2 at minimum hit groups 2 (its default); Minimap2 with the occurrence threshold fixed to
   that of the default scheme (and, in `minimap2_build_mapping`, also derived from each index); SSHash with the
@@ -60,7 +60,7 @@ Computed in the scripts with `benchmark/common`:
   metric. A change is significant if the corrected p-value is below 0.05; otherwise the
   performance is equivalent to that of the default scheme if the 90% confidence interval lies
   within +-5% (two one-sided tests), and inconclusive if not.
-- The two polarities of Phi (`polarity_comparison`): the same test, pairing the run of each GreedyMini-based
+- The two polarities of Φ (`polarity_comparison`): the same test, pairing the run of each GreedyMini-based
   scheme with A,T mapped to 1 with its run with A,T mapped to 0 of the same seed, Bonferroni-
   corrected over the GreedyMini-based schemes of a dataset and metric.
 - Correlations with density (`density_effect.py`; the tables `*_density_correlations`): the Pearson

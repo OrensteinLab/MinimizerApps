@@ -22,7 +22,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import expected_density_driver as shared
-from scripts.density import gm_centre_valid
+from scripts.density import gm_center_valid
 import scheme_names as sn
 from scripts.config import gm_table_file
 from scripts.schemes import SCHEMES, expand_variants, mod_t, scheme_dir_name, variant_key
@@ -53,7 +53,7 @@ def compute_all_schemes(
             path = v.get("gm_file") or gm_table_file(v["gm_table"])
             if not Path(path).is_file():
                 raise shared.Unavailable  # no table: n_seeds 0
-            if scheme == "greedymini" and not gm_centre_valid(m, int(v["gm_k"])):
+            if scheme == "greedymini" and not gm_center_valid(m, int(v["gm_k"])):
                 raise shared.Unavailable  # needs m - gm_k even (sshash rejects it too)
             opts.update({"gm": path, "projection": sn.projection_from_flag(v.get("projection"))})
         return opts
@@ -71,7 +71,7 @@ def compute_all_schemes(
 EXPECTED_SCHEMES_FIELDS = (*sn.ID_FIELDS, "k", "w", "L", *shared.STAT_FIELDS, "mod_tie_rule", "n_bases")
 # The mod-minimizer tie rule the cached rows were computed with; a cache without it
 # (the retired G/T-strand rule) is recomputed.
-MOD_TIE_RULE = "centre"
+MOD_TIE_RULE = "center"
 
 
 def expected_schemes_csv_path(results: Path) -> Path:

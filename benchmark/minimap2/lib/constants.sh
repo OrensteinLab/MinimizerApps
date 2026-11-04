@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # Shell defaults, mirroring benchmark/sshash/lib/constants.sh's shape.
-# config.yaml is the single source of truth for the cross-tool seed list
-# (shared with kmc/sshash for cross-app consistency of any seed-dependent
-# order); load_bench_config() below pulls just the fields this harness needs
+# config.yaml is the single source of truth for the seed list (the same
+# five seeds as kmc/sshash); load_bench_config() below pulls just the fields this harness needs
 # out of it with awk, same approach as sshash's own constants.sh.
 
 HERE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$HERE_DIR/../.." && pwd)"
 
-# The system's bare python3 is 3.6 (too old for this harness's type hints);
-# prefer the `minimap2_bench` conda env's once set up (setup.sh/environment.yml
+# Python >= 3.9: prefer the `minimap2_bench` conda env's once set up (setup.sh/environment.yml
 # -- `conda env list` shows where it actually lands, typically
 # ~/.conda/envs/minimap2_bench), else fall back to the newest system python3.
 _CONDA_ENV_DIR="$(command -v conda >/dev/null 2>&1 && conda env list 2>/dev/null | awk '$1=="minimap2_bench"{print $NF}')"
@@ -68,8 +66,8 @@ preset_default_k() {
 }
 DATASET=${DATASET:-smoke}
 GM_DIR=${GM_DIR:-"$REPO_ROOT/orders/GreedyMini"}
-N_SEEDS=${N_SEEDS:-1}
-THREADS=${THREADS:-4}
+# minimap2 -t for build and map; the pinning reserves THREADS + 2 cores (16 = the paper's runs).
+THREADS=${THREADS:-16}
 FORCE=${FORCE:-0}
 
 load_bench_config() {

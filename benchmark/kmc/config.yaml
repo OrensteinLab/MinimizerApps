@@ -19,5 +19,5 @@ paths:
 
 defaults:
   datasets: f_vesca,g_gallus,m_balbisiana,h_sapiens_2,h_sapiens_3
-  k: "28,55"
+  k: "28"
   signature_len: 9

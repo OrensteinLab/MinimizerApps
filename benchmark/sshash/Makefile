@@ -1,9 +1,8 @@
 # Run the lab-authored benchmark harness's test suite (see tests/).
 #
 # `make venv` creates .venv here (same venv lib/constants.sh's bench_py()
-# auto-detects and prefers) and installs pytest into it -- kept inside
-# benchmark/sshash/ rather than under sshash/ itself, since sshash/ is
-# upstream-tracked source this benchmark harness doesn't touch. `make test`
+# auto-detects and prefers) and installs pytest into it; it stays in
+# benchmark/sshash/ so the harness never writes into the sshash/ fork. `make test`
 # then picks it up automatically; override with PYTHON= to use something else.
 
 VENV := $(abspath .venv)

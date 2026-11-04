@@ -204,7 +204,7 @@ void MinimizerScanner::init_ranker(
 // value of every l-mer, the reference behaviour); roll_sigma = true keeps the
 // Sigma plane by one shift per base instead of one pext per l-mer. All
 // combinations select the same minimizers. No-op unless the ranker supports
-// rank-first comparison (GM centre order, revcom version 1).
+// rank-first comparison (GM center order, revcom version 1).
 void MinimizerScanner::SetRankFirst(bool rank_first, bool roll_sigma) {
   gm_rf_ = (gm_ && gm_->rank_first() && rank_first) ? gm_ : nullptr;
   roll_sigma_ = gm_rf_ && roll_sigma;
@@ -601,7 +601,7 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
       else {
         lmer_ |= lookup_code;
         if (roll_sigma_)
-          sigma_ = gm_centre::roll_in_low(sigma_, gm_rf_->sigma_bit(lookup_code),
+          sigma_ = gm_center::roll_in_low(sigma_, gm_rf_->sigma_bit(lookup_code),
                                           sigma_mask_);
         seq_pos_++;
       }
@@ -645,7 +645,7 @@ __attribute__((noinline)) uint64_t *MinimizerScanner::NextMinimizerGeneral() {
 #if defined(KRAKEN2_MINIMIZER_BENCHMARK)
     const uint64_t t_rank0 = nm_rdtsc();
 #endif
-    // GM centre order, rank first: the rank is one table load of the Sigma
+    // GM center order, rank first: the rank is one table load of the Sigma
     // plane (rolled, or one pext of lmer_); the full packed value is only
     // computed when a finite rank ties with the back of the queue.
     const uint64_t rank =

@@ -23,7 +23,7 @@ const uint64_t DEFAULT_SPACED_SEED_MASK = 0;
 const int BITS_PER_CHAR_DNA = 2;
 const int BITS_PER_CHAR_PRO = 4;
 const int CURRENT_REVCOM_VERSION = 1;
-// GM centre order: compare table ranks first (see GMRanker::rank_first), with
+// GM center order: compare table ranks first (see GMRanker::rank_first), with
 // the Sigma plane rolled one base per step or recomputed (pext) per l-mer.
 const bool kDefaultRollSigma = false;
 
@@ -209,7 +209,7 @@ class MinimizerScanner {
   SketchingScheme sketching_;
   Order order_;
   std::unique_ptr<MinimizerRanker> ranker_;
-  // GM centre order compared rank first (see GMRanker::rank_first); null
+  // GM center order compared rank first (see GMRanker::rank_first); null
   // otherwise. sigma_ is the rolled Sigma plane of lmer_ when roll_sigma_.
   GMRanker *gm_ = nullptr, *gm_rf_ = nullptr;
   uint64_t sigma_ = 0, sigma_mask_ = 0;

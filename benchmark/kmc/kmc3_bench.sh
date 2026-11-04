@@ -35,11 +35,11 @@ Commands (default: run):
 
 Run options:
   -d, --datasets LIST     Comma-separated dataset ids (default: all five paper sets)
-  -k, --k LIST            k values (default: 28,55)
+  -k, --k LIST            kmc -k values (L-mer length; default: 28, the only one with a GreedyMini table)
   --input LIST            gzip,plain (default: gzip)
-  -t, --threads N         kmc -t (default: 12)
+  -t, --threads N         kmc -t (default: 24)
   --mem N                 Override -m for all datasets (default: from datasets.csv)
-  --bins N                kmc -n number of bins (64..2000; default: 512)
+  --bins N                kmc -n number of bins (64..2000; default: 1024)
   --strict-mem            kmc -sm (hard RAM cap; stresses bin/memory path)
   --run-tag TAG           Replace auto config dir name (see Results layout)
   --kmc PATH              kmc binary (default: $REPO_ROOT/bin/kmc)
@@ -51,12 +51,12 @@ Run options:
                           not used with -S all)
   --projection P          greedymini DNA->binary projection: at0-cg1 (default) | at1-cg0 (kmc -oat1;
                           needs --gm-lut binary). Same as GM_PROJECTION=...
-  --gm-lut L              greedymini table LUT backend: dna (default) | binary. Same as GM_LUT=...
+  --gm-lut L              greedymini table LUT backend: binary (default) | dna. Same as GM_LUT=...
   -n, --n-seeds N         First N predefined seeds for custom schemes; also repeats the
-                          default (lex) baseline N times (default: 1, max: ${#BENCH_SEEDS[@]})
+                          default scheme N times (default: 1, max: ${#BENCH_SEEDS[@]})
   --signature-len N       Pass -pN to kmc
-  --data-dir PATH         dataset root (default: KMC3_DATA_DIR or $KMC3_BENCH_ROOT/data)
-  --results-dir PATH      Results root (default: KMC3_RESULTS_DIR or .../results)
+  --data-dir PATH         dataset root (default: \$KMC3_DATA_DIR or \$KMC3_BENCH_ROOT/data)
+  --results-dir PATH      Results root (default: \$KMC3_RESULTS_DIR or \$KMC3_BENCH_ROOT/results)
   --paper-csv PATH        Paper reference CSV
   --paper-platform P      xeon_hdd|xeon_ssd (default: xeon_hdd)
   --force                 Re-run / re-decompress even if outputs exist

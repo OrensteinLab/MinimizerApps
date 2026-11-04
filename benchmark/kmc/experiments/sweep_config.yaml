@@ -7,6 +7,7 @@ defaults:
   k: 28
   input: gzip
   scheme: all
+  gm_lut: dna
   n_seeds: 5
   force: true
 

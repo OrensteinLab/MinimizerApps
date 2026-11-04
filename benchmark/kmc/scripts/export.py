@@ -1808,7 +1808,8 @@ def datasets_field_order() -> list[str]:
 
 
 def datasets_rows(main_rows: Sequence[dict], out_root: Path, paper_rows: Sequence[dict]) -> list[dict]:
-    """One row per dataset: size/read-length stats (from its own default run) + paper reference."""
+    """One row per dataset: size/read-length stats (from a default-scheme run; they do not depend on the
+    bins, threads or memory limit) + paper reference."""
     particular = particular_index(load_particular_rows(particular_csv_path(out_root)))
     paper_index: dict[tuple, dict] = {}
     for r in paper_rows:
@@ -1821,10 +1822,7 @@ def datasets_rows(main_rows: Sequence[dict], out_root: Path, paper_rows: Sequenc
     canon = [
         r
         for r in main_rows
-        if scheme_of(r) == BASELINE_SCHEME
-        and int(r.get("n_bins") or 0) == 512
-        and int(r.get("threads") or 0) == 12
-        and not r.get("strict_memory")
+        if scheme_of(r) == BASELINE_SCHEME and not r.get("strict_memory")
     ]
     by_dataset: dict[str, dict] = {}
     for r in canon:
