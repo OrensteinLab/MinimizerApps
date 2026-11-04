@@ -4,8 +4,9 @@
 #   data/strain-exclusion/   Mason / Zenodo accuracy FASTQs + truth.tsv
 #   data/fda-argos/          Table S5 SRR runs (benchmark/kraken2/tables/table_s5.csv)
 #
-# NCBI taxonomy/libraries: ./benchmark/kraken2/download_library.sh
-# Strain-exclusion FASTA:  ./benchmark/kraken2/prepare_strex_data.sh
+# Library + taxonomy (not fetched here):
+#   strain-exclusion (the paper's, -E): ./benchmark/kraken2/prepare_strex_data.sh
+#   NCBI standard + subsamples (-N/-m/-z): ./benchmark/kraken2/download_library.sh
 #
 # Usage: ./benchmark/kraken2/download_data.sh [-o BASE_DIR] [-p PAIRS] [-F] [-s] [-a]
 
@@ -32,8 +33,10 @@ Download classify reads for both datasets:
   data/strain-exclusion/   Zenodo Mason-style accuracy FASTQs
   data/fda-argos/          the 25 Table S5 FDA-ARGOS SRR accessions
 
-Library/taxonomy is not downloaded here (see download_library.sh /
-scripts/standard_installation.sh).
+Library/taxonomy is not downloaded here: the paper's strain-exclusion library
+and its taxonomy (db/strain_exclusion, run_benchmark.sh -E) come from
+prepare_strex_data.sh; the NCBI standard library and subsamples (-N/-m/-z)
+from download_library.sh.
 
 Options:
   -o BASE_DIR   Base directory (default: \$KRAKEN2_BENCH_ROOT or ./benchmark_data)
@@ -85,9 +88,7 @@ pick_taxonomy() {
     local cand
     for cand in \
         "${BASE_DIR}/db/standard/taxonomy" \
-        "${BASE_DIR}/db/strain_exclusion/taxonomy" \
-        "${BASE_DIR}/db/taxonomy" \
-        "${BASE_DIR}/db_strain_exclusion/taxonomy"
+        "${BASE_DIR}/db/strain_exclusion/taxonomy"
     do
         if [[ -s "${cand}/names.dmp" && -s "${cand}/nodes.dmp" ]]; then
             echo "${cand}"
@@ -178,10 +179,10 @@ if [[ "${SKIP_ARGOS}" -eq 0 ]]; then
             --out "${ARGOS_DIR}/truth.tsv"
     else
         echo "  Note: no names.dmp yet; skip ARGOS truth.tsv." >&2
-        echo "  Run ./benchmark/kraken2/download_library.sh then re-run:" >&2
+        echo "  Run ./benchmark/kraken2/prepare_strex_data.sh (db/strain_exclusion/taxonomy) then re-run:" >&2
         echo "    python3 ${EVAL_DIR}/make_strex_truth.py --fastq ${ARGOS_DIR}/R1.fastq \\" >&2
-        echo "      --table-s5 ${TABLES}/table_s5.csv --names-dmp ${BASE_DIR}/db/standard/taxonomy/names.dmp \\" >&2
-        echo "      --nodes-dmp ${BASE_DIR}/db/standard/taxonomy/nodes.dmp --out ${ARGOS_DIR}/truth.tsv" >&2
+        echo "      --table-s5 ${TABLES}/table_s5.csv --names-dmp ${BASE_DIR}/db/strain_exclusion/taxonomy/names.dmp \\" >&2
+        echo "      --nodes-dmp ${BASE_DIR}/db/strain_exclusion/taxonomy/nodes.dmp --out ${ARGOS_DIR}/truth.tsv" >&2
     fi
 else
     echo "[*] Skipping FDA-ARGOS (-a)"
@@ -191,4 +192,4 @@ echo ""
 echo "download_data complete."
 echo "  Strain-excl: ${SE_DIR}"
 echo "  FDA-ARGOS: ${ARGOS_DIR}"
-echo "Library: ./benchmark/kraken2/download_library.sh -o ${BASE_DIR}"
+echo "Library: ./benchmark/kraken2/prepare_strex_data.sh -o ${BASE_DIR}   (paper, -E; NCBI: download_library.sh)"

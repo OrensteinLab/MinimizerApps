@@ -2,7 +2,7 @@
 # benchmark_minimizers — time MinimizerScanner::NextMinimizer for selected
 # schemes (same -S / -m / -z / -g / -M interface as run_benchmark.sh).
 # Reports dens_theory/expected/particular as CSV.
-# Build via: make benchmark_minimizers (from repo root).
+# Build the binary first: make -C kraken2/src benchmark_minimizers (from the repo root).
 
 set -euo pipefail
 
@@ -18,8 +18,9 @@ BIN="${SRC_DIR}/benchmark_minimizers"
 bench_iface_init
 # shellcheck source=bench_seeds.sh
 source "${SCRIPT_DIR}/bench_seeds.sh"
-# Density microbench uses NCBI library FASTAs, not the paper exclusion DB.
-USE_FULL_NCBI=1
+# Library FASTAs for the particular density: SHARED_DB, else the library of -E / -m / -z / -N
+# (default db/standard). run_benchmark.sh -E passes SHARED_DB=db/strain_exclusion, so the
+# paper's density rows are on the strain-exclusion library.
 
 L="${L:-31}"
 K="${K:-}"
@@ -45,7 +46,7 @@ Time NextMinimizer for selected schemes and report density + density factor
 (= density × (w+1)) and super-mer mean/max lengths:
   theory, expected (random DNA), particular (DB library FASTAs).
 
-Prefer: make benchmark_minimizers   (compiles with bench macros, then runs)
+Build first: make -C kraken2/src benchmark_minimizers   (compiles with the bench macros)
 
 Per-seed mode (default): for seed i = 1..N (-n) the toggle mask is the same
 one run_benchmark.sh builds the seed-i databases with (bench_const.py
@@ -139,22 +140,22 @@ fi
 bench_require_gm_files
 
 if [[ ! -x "${BIN}" ]]; then
-    echo "Error: missing ${BIN}. Run: make benchmark_minimizers" >&2
+    echo "Error: missing ${BIN}. Run: make -C kraken2/src benchmark_minimizers" >&2
     exit 1
 fi
 if [[ ! -d "${DB_DIR}" ]]; then
     echo "Error: database directory not found: ${DB_DIR}" >&2
-    echo "  Set KRAKEN2_BENCH_ROOT and run download_library.sh (use -m/-z for sample DBs)." >&2
+    echo "  Set KRAKEN2_BENCH_ROOT; -E: prepare_strex_data.sh, -N/-m/-z: download_library.sh." >&2
     exit 1
 fi
 if [[ ! -d "${DB_DIR}/library" ]]; then
     echo "Error: missing ${DB_DIR}/library" >&2
-    echo "  Run ./benchmark/kraken2/download_library.sh -o \"\${KRAKEN2_BENCH_ROOT}\"." >&2
+    echo "  Run ./benchmark/kraken2/prepare_strex_data.sh (-E) or download_library.sh (-N/-m/-z) -o \"\${KRAKEN2_BENCH_ROOT}\"." >&2
     exit 1
 fi
 if [[ -z "$(find "${DB_DIR}/library" -type f \( -name '*.fna' -o -name '*.fa' -o -name '*.fasta' -o -name '*.faa' \) -print -quit)" ]]; then
     echo "Error: no library FASTA under ${DB_DIR}/library" >&2
-    echo "  Run ./benchmark/kraken2/download_library.sh -o \"\${KRAKEN2_BENCH_ROOT}\"." >&2
+    echo "  Run ./benchmark/kraken2/prepare_strex_data.sh (-E) or download_library.sh (-N/-m/-z) -o \"\${KRAKEN2_BENCH_ROOT}\"." >&2
     exit 1
 fi
 
