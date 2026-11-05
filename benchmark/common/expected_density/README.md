@@ -6,18 +6,18 @@ method's own selection code, and counts what the method counts for its
 particular density, so the two are on the same scale and the tie-breaking rule
 is the method's by construction:
 
-| Tool | Method code it runs | Selected k-mers | k-mers |
+| Tool | Method code it runs | Selected *k*-mers | *k*-mers |
 |---|---|---|---|
 | `kraken2_expected_density` | `MinimizerScanner` (`kraken2/src/mmscanner.cc`) | steps with a new minimizer (as `benchmark_minimizers`) | non-ambiguous steps |
-| `minimap2_expected_density` | `mm_sketch` / `mm_sketch_scheme` (`sketch.c`, `scheme.cpp`) | entries of the index | bases after homopolymer compression (`--hpc`), minus k-1 |
-| `kmc3_expected_density` | `CSplitter::ProcessReadsT` with KMC's `CMmer` and signature orders (`kmc_api`) | superwindows (`PutExtendedKmer` calls) | k-mers of the superwindows |
-| `sshash_expected_density` | `compute_minimizer_tuples` with SSHash's `kmer_iterator` and `scheme_minimizer_iterator` | super-k-mers (a new minimizer position) | k-mers |
+| `minimap2_expected_density` | `mm_sketch` / `mm_sketch_scheme` (`sketch.c`, `scheme.cpp`) | entries of the index | bases after homopolymer compression (`--hpc`), minus *k*-1 |
+| `kmc3_expected_density` | `CSplitter::ProcessReadsT` with KMC's `CMmer` and signature orders (`kmc_api`) | superwindows (`PutExtendedKmer` calls) | *k*-mers of the superwindows |
+| `sshash_expected_density` | `compute_minimizer_tuples` with SSHash's `kmer_iterator` and `scheme_minimizer_iterator` | super-k-mers (a new minimizer position) | *k*-mers |
 
 `driver.h` holds what the tools share, including the shared options:
 
-- `--w W` (required): the number of k-mers per window, L - k + 1; it is the
-  w + 1 of `density_factor = n_selected / n_kmers * (w + 1)`. For KMC3 it is
-  KMC's k - p + 1 (`--w 20` for k = 28, p = 9 below).
+- `--w W` (required): the number of *k*-mers per window, *L* - *k* + 1; it is the
+  *w* + 1 of `density_factor = n_selected / n_kmers * (w + 1)`. For KMC3 it is
+  KMC's *k* - p + 1 (`--w 20` for *k* = 28, *p* = 9 below).
 - `--n-bases N` (default 10^9) of random string, cut into independent sequences
   of `--chunk C` bases (default 10^7, which biases the density by less than
   10^-6 relative).
@@ -25,7 +25,7 @@ is the method's by construction:
   the order.
 - `--threads T`, and `--fasta FILE` to count the sequences of FILE instead.
 
-The method-specific options (k, scheme, GreedyMini table, ...) are listed at the
+The method-specific options (*k*, scheme, GreedyMini table, ...) are listed at the
 top of each `*_backend.c*` file. The output is one CSV line per seed:
 
 ```

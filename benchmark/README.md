@@ -1,8 +1,8 @@
 # Benchmarks: shared protocol and tools
 
 Four methods are benchmarked across minimizer schemes (random xor / xor-pcg-hash, GreedyMini, mod-minimizer
-variants, and each method's own baseline): Minimap2 (`minimap2/`, read mapping), SSHash (`sshash/`, k-mer
-dictionary), Kraken2 (`kraken2/`, taxonomic classification) and KMC3 (`kmc/`, k-mer counting). Each folder has its own README (data,
+variants, and each method's own baseline): Minimap2 (`minimap2/`, read mapping), SSHash (`sshash/`, *k*-mer
+dictionary), Kraken2 (`kraken2/`, taxonomic classification) and KMC3 (`kmc/`, *k*-mer counting). Each folder has its own README (data,
 `.env`, usage, outputs); this file describes what they share.
 
 ## Measurement protocol
