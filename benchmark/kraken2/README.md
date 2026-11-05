@@ -6,10 +6,10 @@ calls on simulated and real reads. The benchmark scripts live outside `kraken2/`
 upstream syncs of the fork never touch it. `run_benchmark.sh` is the driver;
 `experiments/full_run.sh` runs the paper's experiments.
 
-**Notation.** k = length of the selected k-mer, w = number of k-mers in a
-window, L = k + w − 1, t = t-mer length of the mod-minimizer. Kraken2's own
-names: its minimizer length ℓ (`-l`, 31) is k, its k-mer length (`-k`, 35) is
-L, so w = 5. Kraken2's flags and the columns written by the code keep their
+**Notation.** *k* = length of the selected *k*-mer, *w* = number of *k*-mers in a
+window, *L* = *k* + *w* − 1, *t* = *t*-mer length of the mod-minimizer. Kraken2's own
+names: its minimizer length ℓ (`-l`, 31) is *k*, its *k*-mer length (`-k`, 35) is
+*L*, so *w* = 5. Kraken2's flags and the columns written by the code keep their
 names (`distinct_minimizers`, `--minimum-hit-groups`, ...).
 
 ## Libraries
@@ -80,7 +80,7 @@ benchmark/kraken2/prepare_cami_data.sh -o "$KRAKEN2_BENCH_ROOT"   # ~6 GB downlo
   genomes with differential abundances, new strains / species / genera,
   plasmids and viruses; simulated with CAMISIM/ART (profile `mbarc`, 270 bp
   fragments).
-- **Subsampling:** systematic (every k-th pair, k = pairs in the run // 250 000,
+- **Subsampling:** systematic (every *k*-th pair, *k* = pairs in the run // 250 000,
   no RNG), so every machine gets the same reads.
 - **Files:** `R1.fastq R2.fastq` (IDs `S0R<i>/1`, `/2`), `truth.tsv`
   (`#seqid taxid domain`, one row per pair), `truth_extra.tsv` (+ genome id and
@@ -247,7 +247,7 @@ reference; in short:
 | `accuracy_strain_exclusion`, `accuracy_fda_argos`, `accuracy_cami` | accuracy per slice (`minimum_hit_groups` × group × rank, or SRA run): mean / std / ratio over seeds |
 | `paper_check` | `xor` at `minimum_hit_groups` 0 on `strain_exclusion` next to the published Table S1 / S5 Kraken 2 values (`tables/paper_kraken2_published.csv`), absolute tolerance 0.01 |
 | `density_effect`, `density_effect_points` | Pearson r between each metric's ratio to `xor` and the density factor's (`benchmark/common/density_effect.py`) |
-| `significance` | paired-by-seed tests against `xor`: t-test on log ratios, Bonferroni, TOST at ±5% (`benchmark/common/significance.py`) |
+| `significance` | paired-by-seed tests against `xor`: *t*-test on log ratios, Bonferroni, TOST at ±5% (`benchmark/common/significance.py`) |
 
 `build` and `summary` end with two rows, `correlation with density` and
 `correlation with distinct minimizers` (live `CORREL` formulas over the
@@ -275,7 +275,7 @@ and sheet columns `gm_k, projection, gm_table, mod_t`):
   comma list (default both). Each GreedyMini scheme runs once per polarity, so
   the default run has 7 variants. `--dry-run` lists the variants and which are
   done.
-- `mod_t` = t = r + ((k − r) mod w), r = 4: 6 for k = 31, w = 5.
+- `mod_t` = *t* = r + ((*k* − r) mod *w*), r = 4: 6 for *k* = 31, *w* = 5.
 - GreedyMini tables (`orders/GreedyMini/`): `-g` / env `GM_FILE`
   (`w5_k15_canonical.gm`, `greedymini`), `-M` / env `MOD_GM_FILE`
   (`w5_k6_canonical.gm`, `mod-minimizer-greedymini`).
@@ -283,9 +283,9 @@ and sheet columns `gm_k, projection, gm_table, mod_t`):
 `mod-minimizer` is the canonical mod-minimizer (`kraken2/src/mod_minimizer.h`):
 mod-sampling (Groot Koerkamp & Pibiri, 2024) with the center rule shared with
 Minimap2 and SSHash (`common/minimizer-schemes/mod_minimizer_rule.h`): a tie at
-the minimum takes the offset closest to the L-mer's center, two equally close
-ones by the L-mer ≤ its reverse complement, so a read and its reverse
-complement give the same selected k-mers.
+the minimum takes the offset closest to the *L*-mer's center, two equally close
+ones by the *L*-mer ≤ its reverse complement, so a read and its reverse
+complement give the same selected *k*-mers.
 
 ## Run output layout (`results/runs/<lib>/<scheme dir>/<seed>/results/`)
 
@@ -326,13 +326,13 @@ seed index, `gm_k`, `projection`, `gm_table`, `mod_t`.
 | `compare_benchmark.py` | text report + per-run numbers for `export_layout.py` |
 | `export_layout.py` | `results/kraken2_results.xlsx` + `results/csvs/kraken2_<sheet>.csv` |
 | `benchmark_minimizers.sh` | density microbench (CSV) |
-| `density_sweep.sh` / `density_summary.py` | density factor vs k over several random streams |
+| `density_sweep.sh` / `density_summary.py` | density factor vs *k* over several random streams |
 | `tests/` | `python3 -m unittest discover -s benchmark/kraken2/tests` (synthetic data, no DB) |
 
 ## Density microbench (`benchmark_minimizers.sh`)
 
-Measures the density of every scheme at the benchmark's configuration (k = 31,
-w = 5, L = 35, minimizer spaces s = 7, the same GreedyMini tables as the
+Measures the density of every scheme at the benchmark's configuration (*k* = 31,
+*w* = 5, *L* = 35, minimizer spaces *s* = 7, the same GreedyMini tables as the
 databases) and the `NextMinimizer` cost:
 
 - **expected** (`dens_expected`, `fac_expected`): random i.i.d. ACGT (`-N`
@@ -342,7 +342,7 @@ databases) and the `NextMinimizer` cost:
   the other methods.
 - **particular** (`dens_particular`, `fac_particular`): the library FASTAs of
   the shared DB, read in full (8.7 GB, ~9.3 Gbp for `strain_exclusion`).
-- `fac_* = dens_* × (w+1)` (random minimizer ≈ 2); `dens_theory` = 2/(w+1)
+- `fac_* = dens_* × (w+1)` (random minimizer ≈ 2); `dens_theory` = 2/(*w*+1)
   (minimizer) or 1/w (mod-minimizer); `ns_per_minimizer`; super-mer lengths
   `sm_mean_*` / `sm_max_*`.
 
@@ -371,7 +371,7 @@ benchmark/kraken2/benchmark_minimizers.sh -m -S xor mod-minimizer-xor -T 0xe37e2
 Here `-N` is the random-DNA length, not the full-NCBI flag; the default library
 is `db/standard`, `-m` / `-z` / `-E` pick the others (or set `SHARED_DB`).
 
-Density sweeps over k (`density_sweep.sh` + `density_summary.py`) and the
+Density sweeps over *k* (`density_sweep.sh` + `density_summary.py`) and the
 measured GreedyMini numbers are in
 [`kraken2/minimizers/README.md`](../../kraken2/minimizers/README.md#density);
 raw rows in `tables/gm_center_density_*.csv`.

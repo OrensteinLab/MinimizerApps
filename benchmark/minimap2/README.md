@@ -6,13 +6,13 @@ mod-minimizer-xor and mod-minimizer-greedymini) the way Jain et al. 2020
 Bioinformatics 36(Supp_1):i111-i118) compared Winnowmap's weighted minimizers
 with Minimap2's own: density, index build and mapping time and memory, and
 mapping accuracy, overall and on reads from inside a long near-identical repeat.
-The GreedyMini table (`gm_table`, whose k is `gm_k`) and the polarity of Φ
+The GreedyMini table (`gm_table`, whose *k* is `gm_k`) and the polarity of Φ
 (`--gm-projection at0-cg1|at1-cg0`) are parameters of the greedymini schemes,
 not part of the scheme name; each polarity is its own set of runs and rows (see
 [`orders/README.md`](../../orders/README.md)).
 
-Notation: k = selected k-mer length (`-k`), w = number of k-mers per window
-(`-w`), L = k + w - 1, t = the mod-minimizer's t-mer length.
+Notation: *k* = selected *k*-mer length (`-k`), *w* = number of *k*-mers per window
+(`-w`), *L* = *k* + *w* - 1, *t* = the mod-minimizer's *t*-mer length.
 
 ## What is measured
 
@@ -20,8 +20,8 @@ Per (dataset, scheme) run, from `minimap2 -d` (index build) and one mapping pass
 
 - **Density**: `density_factor = total_occurrences * (w+1) / n_sketch_kmers`.
   `total_occurrences` = distinct minimizers x average occurrences (both from
-  `-d`'s stderr); `n_sketch_kmers` counts the k-mers Minimap2 sketches
-  (`lib/sketch_kmers.py`: length - k + 1 per N-free segment, homopolymer-compressed
+  `-d`'s stderr); `n_sketch_kmers` counts the *k*-mers Minimap2 sketches
+  (`lib/sketch_kmers.py`: length - *k* + 1 per N-free segment, homopolymer-compressed
   under `map-pb`, raw under `map-ont`). Total occurrences, not distinct
   minimizers, are the numerator: distinct minimizers collapse a repeat's copies
   and undercount selected positions (`distinct_minimizers`/`avg_occurrences` are
@@ -50,20 +50,20 @@ too artificial for real accuracy conclusions.
 The three benchmark datasets are the Winnowmap paper's (Jain et al. 2020,
 Table 1), built and evaluated the way the paper describes:
 
-| Dataset | Genome | Reads | Preset (k) | Evaluation |
+| Dataset | Genome | Reads | Preset (*k*) | Evaluation |
 |---|---|---|---|---|
 | `chm13_chrX` (D1) | T2T CHM13 chrX v0.7, 154.3 Mbp | PBSIM 1.0.3 CLR, 10% error, 15 kb mean (100-25,000 bp), 5x: 51,459 reads, N50 15,170 (paper: 51,424, N50 15,184) | `map-pb` (19) | unmapped / incorrectly mapped (truth); centromere = DXZ1 array chrX:57,828,561-60,934,693 (the paper's Table 3), 1,090 reads |
 | `grch38_wg` (D2) | GRCh38 with ALT contigs (UCSC hg38.fa: 455 sequences, 3.21 Gbp, of which 261 ALT contigs / 109.5 Mb) | same simulation, 0.5x, reads containing "NN" dropped (paftools `pbsim2fq`'s rule): ~101.4k reads (paper: 101,571) | `map-pb` (19) | as D1; plus a chr9 segmental-duplication repeat set (our addition, not in the paper) |
 | `chm13_rel3_ont` (D3) | same GRCh38 with ALT contigs (symlink to D2's) | 1,000 real CHM13 rel3 ultra-long ONT reads, uniform random sample of reads >= 1 kbp with mean quality >= 7 (the ONT pass threshold; our addition: the paper states no quality filter, and 31% of rel3 reads >= 1 kbp are below Q7, almost all unmappable) | `map-ont` (15) | no truth: unmapped %, time, memory, density only (as in the paper) |
 
-k is each preset's own default, as the paper ran Minimap2 with `-cx map-pb` /
-`-cx map-ont` (`lib/constants.sh:preset_default_k`; `K=` overrides), and w = 10:
-k = 19, L = 28 on D1/D2 and k = 15, L = 24 on D3. Every scheme uses that k
-(greedymini's `w10_k15_canonical` table is center-extended to k = 19), and the
-mod-minimizer's t = 4 + (k-4) mod w (9 at k = 19, 5 at k = 15).
-mod-minimizer-greedymini ranks the t-mers by the shared
-`orders/GreedyMini/w20_k9_canonical` table (`MOD_GM_TABLE`; its k = t = 9, its
-w = w + k - t = 20), so it runs only on D1 and D2; at k = 15 (t = 5) `run`
+*k* is each preset's own default, as the paper ran Minimap2 with `-cx map-pb` /
+`-cx map-ont` (`lib/constants.sh:preset_default_k`; `K=` overrides), and *w* = 10:
+*k* = 19, *L* = 28 on D1/D2 and *k* = 15, *L* = 24 on D3. Every scheme uses that *k*
+(greedymini's `w10_k15_canonical` table is center-extended to *k* = 19), and the
+mod-minimizer's *t* = 4 + (*k*-4) mod *w* (9 at *k* = 19, 5 at *k* = 15).
+mod-minimizer-greedymini ranks the *t*-mers by the shared
+`orders/GreedyMini/w20_k9_canonical` table (`MOD_GM_TABLE`; its *k* = *t* = 9, its
+*w* = *w* + *k* - *t* = 20), so it runs only on D1 and D2; at *k* = 15 (*t* = 5) `run`
 skips it (`scheme_table_fits`). Each dataset's preset is a one-word
 `data/<dataset>/preset` file (absent = `map-pb`; `$PRESET` overrides it),
 recorded in every run's `meta.json`.
@@ -125,7 +125,7 @@ never clobbered by `.env`.
 |---|---|
 | `minimap2_bench.sh` | Entry point: `make-dataset`, `pbsim-reads [depth]`, `run <scheme> [seed] [seed_idx]`, `sweep [schemes...]`, `export [--datasets a,b]`, `list` |
 | `lib/env.sh` | Loads `.env`, requires `MINIMAP2_BENCH_ROOT` |
-| `lib/constants.sh` | Defaults: k = the preset's (`preset_default_k`), `W=10`, `MOD_T` = 4 + (k-4) mod w, `THREADS=16`, `DATASET=smoke`, optional `MID_OCC` (fixed map-time `-f` cap; results under `k<k>_w<w>_f<cap>/`), `$PYTHON`; the seeds (`$ALL_SEEDS`) from `config.yaml` |
+| `lib/constants.sh` | Defaults: *k* = the preset's (`preset_default_k`), `W=10`, `MOD_T` = 4 + (*k*-4) mod *w*, `THREADS=16`, `DATASET=smoke`, optional `MID_OCC` (fixed map-time `-f` cap; results under `k<k>_w<w>_f<cap>/`), `$PYTHON`; the seeds (`$ALL_SEEDS`) from `config.yaml` |
 | `lib/schemes.sh` | Scheme -> CLI flags (`--scheme`, `--order-seed`, ...); the default sweep is every scheme. Table parameters: `GM_TABLE` (greedymini, default `w10_k15_canonical`), `MOD_GM_TABLE` (mod-minimizer-greedymini, default `w20_k9_canonical`); polarity of Φ: `PROJECTION` for a single `run` (default `at0-cg1`), `PROJECTIONS` for `sweep` (default both). greedymini's seed toggles its Gamma tie-break |
 | `lib/make_dataset.py` | Synthetic genome + repeat + simulated reads generator |
 | `lib/run.sh` | One (scheme, seed, seed_idx) run: build, map, score, `meta.json`, under `runs/<dataset>/k<k>_w<w>[_f<cap>]/<scheme>[/<params>]/<seed_idx>/` (`scheme_names.scheme_dir_name`: e.g. `greedymini/k15_at1-cg0`, `mod-minimizer-xor/t9`, `mod-minimizer-greedymini/k9_at0-cg1_t9`) |
@@ -134,8 +134,8 @@ never clobbered by `.env`.
 | `lib/sample_reads.py` | Uniform reservoir sample of N reads of a minimum length (optionally mean quality) from a FASTQ stream (D3) |
 | `lib/write_meta.py` | Assembles one run's `meta.json` from `/usr/bin/time -v` logs + accuracy JSON |
 | `lib/export.py` | Aggregates `runs/**/meta.json` into `csvs/minimap2_{overview,datasets,summary,schemes,runs}.csv` and `minimap2_results.xlsx` (those sheets plus `density_effect`, `density_effect_points` and `significance`, from `benchmark/common/`). `summary` has `{metric}_ratio` vs. native; the `overview` sheet documents every column. `smoke` is excluded |
-| `lib/sketch_kmers.py` | Counts the k-mers Minimap2 sketches per genome, HPC or raw (density_factor's denominator), cached as `genome.fa.{hpc,raw}_k<k>.json` |
-| `lib/expected_density.py` | Expected `density_factor` per scheme variant for a dataset's k, w, t and HPC setting, counted on random DNA by Minimap2's own `mm_sketch` / `mm_sketch_scheme` ([`benchmark/common/expected_density/`](../common/expected_density/README.md)); feeds the `schemes` sheet, cached as `csvs/minimap2_density_expected_k<k>_w<w>_t<mod_t>_{hpc,nohpc}.csv` |
+| `lib/sketch_kmers.py` | Counts the *k*-mers Minimap2 sketches per genome, HPC or raw (density_factor's denominator), cached as `genome.fa.{hpc,raw}_k<k>.json` |
+| `lib/expected_density.py` | Expected `density_factor` per scheme variant for a dataset's *k*, *w*, *t* and HPC setting, counted on random DNA by Minimap2's own `mm_sketch` / `mm_sketch_scheme` ([`benchmark/common/expected_density/`](../common/expected_density/README.md)); feeds the `schemes` sheet, cached as `csvs/minimap2_density_expected_k<k>_w<w>_t<mod_t>_{hpc,nohpc}.csv` |
 | `experiments/full_run.sh` | The paper's runs (see Usage) |
 | `experiments/profile_run.sh` | Mapping-phase profile of a finished full run (adds `map_prof_*_pct` to the runs sheet) |
 | `experiments/sweep_schemes.yaml` | Documents the default sweep's shape (not read by `minimap2_bench.sh`) |
@@ -160,8 +160,8 @@ FORCE=1 ./minimap2_bench.sh sweep           # rerun complete runs
 python3 -m pytest tests/ -q                 # offline tests (Python >= 3.9)
 ```
 
-`MOD_T=...` overrides t; t is part of the run directory name (`.../t<t>/`), so
-runs with different t never collide.
+`MOD_T=...` overrides *t*; *t* is part of the run directory name (`.../t<t>/`), so
+runs with different *t* never collide.
 
 **The paper's runs** are `experiments/full_run.sh`:
 
@@ -199,13 +199,13 @@ run is kept (the scheme analysis reads it; the paper's runs keep 44, about
 
 ## Known limitations
 
-**The mod-minimizer helps only when w < k** (here k = 19 or 15, w = 10).
+**The mod-minimizer helps only when *w* < k** (here *k* = 19 or 15, *w* = 10).
 
-**mod-minimizer-xor is canonical**: plain mod-sampling (the k-mer at offset x
-mod w, x the minimal t-mer's position) is not reverse-complement symmetric, so
+**mod-minimizer-xor is canonical**: plain mod-sampling (the *k*-mer at offset x
+mod *w*, x the minimal *t*-mer's position) is not reverse-complement symmetric, so
 Minimap2, Kraken2 and SSHash share the canonical rule of
-`common/minimizer-schemes/mod_minimizer_rule.h`: with t ≡ k (mod w), a unique
-minimal t-mer selects offset x mod w; a tie at the minimum takes the offset
+`common/minimizer-schemes/mod_minimizer_rule.h`: with *t* ≡ *k* (mod *w*), a unique
+minimal *t*-mer selects offset x mod *w*; a tie at the minimum takes the offset
 closest to the window's center, and of two equally close ones the left if the
 window is <= its reverse complement, else the right (the center rule of
 Cologni & Pibiri, as in SSHash). A read and its reverse complement then select
@@ -214,8 +214,8 @@ the same loci, and the selection never moves backwards (the scheme is forward).
 mod-sampling, a G/T-strand canonical variant and simd-minimizers' canonical
 minimizer.
 
-`minimap2/scheme.cpp`'s `sketch_mod_minimizer` keeps the window's t-mer ranks
+`minimap2/scheme.cpp`'s `sketch_mod_minimizer` keeps the window's *t*-mer ranks
 in a ring buffer with the leftmost/rightmost minimum, rescanning only when the
 leftmost minimum leaves the window; `tests/test_mod_minimizer_sketch.py`
 (run by `make -C minimap2 test` from the repository root) checks the compiled
-sketch against a brute force, including N gaps and palindromic k-mers.
+sketch against a brute force, including N gaps and palindromic *k*-mers.

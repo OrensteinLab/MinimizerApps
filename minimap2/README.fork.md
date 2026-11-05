@@ -29,8 +29,8 @@ the CLI flags of every method): `xor`, `xor-pcg-hash`, `greedymini`
 a `gm_k` table is center-extended to `-k = gm_k + 2i`, as in Kraken2 and
 SSHash; either polarity of Φ, `--gm-projection`),
 `mod-minimizer-xor` and `mod-minimizer-greedymini` (canonical
-mod-sampling with `xor`, respectively a GreedyMini table of t-mers, as the
-t-mer order; see below).
+mod-sampling with `xor`, respectively a GreedyMini table of *t*-mers, as the
+*t*-mer order; see below).
 
 ```bash
 ./minimap2 -a ref.fa reads.fq                                                    # native, unchanged
@@ -59,7 +59,7 @@ re-supplied, and an index built by upstream minimap2 (or this fork with the
 default scheme) still loads -- the format is versioned by an explicit
 magic-byte bump (`MMI\3` vs. upstream's `MMI\2`), not inferred from a short
 read. See `scheme.cpp`'s top-of-file comment for the full design rationale,
-in particular why the order only ever decides *which* k-mer wins a window
+in particular why the order only ever decides *which* *k*-mer wins a window
 and never becomes the value actually stored in the index.
 
 An index whose stored scheme cannot be restored (an unknown scheme kind or
@@ -82,9 +82,9 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
 - `greedymini` uses the shared center extension
   (`common/minimizer-schemes/greedymini_center.h`, injective packing): with
   `-k = gm_k + 2i` the table ranks the middle `gm_k` bases' AT/CG projection,
-  then the k-mer's Sigma and Gamma planes break ties (min over both strands),
-  a strand-invariant total order on canonical k-mers; `--order-seed` XORs
-  its low k bits into Gamma (as kraken2's and sshash's greedymini seeds).
+  then the *k*-mer's Sigma and Gamma planes break ties (min over both strands),
+  a strand-invariant total order on canonical *k*-mers; `--order-seed` XORs
+  its low *k* bits into Gamma (as kraken2's and sshash's greedymini seeds).
   `-k - gm_k` must be
   even and `-k <= 23` (the packed value must stay below UINT64_MAX).
   `benchmark/minimap2/tests/test_greedymini_sketch.py` checks the compiled rank and sketch against two
@@ -92,26 +92,26 @@ different scheme. Custom schemes take `-k` up to 28, as native minimap2 does.
 - `mod-minimizer-xor` / `mod-minimizer-greedymini` are a canonical variant of mod-sampling (Groot
   Koerkamp & Pibiri, WABI 2024), with the rule shared with kraken2 and sshash
   in `common/minimizer-schemes/mod_minimizer_rule.h`: `--mod-t` must satisfy
-  t == k (mod w) (t = 9 at k = 19, t = 5 at k = 15, w = 10); a unique minimal
-  t-mer at `x` samples offset `x mod w`, and a tie takes the offset closest to
+  *t* == *k* (mod *w*) (*t* = 9 at *k* = 19, *t* = 5 at *k* = 15, *w* = 10); a unique minimal
+  *t*-mer at `x` samples offset `x mod w`, and a tie takes the offset closest to
   the window's center `(w-1)/2`, between two equally close ones the left if the
-  window of L = w+k-1 bases is lexicographically <= its reverse complement (the
+  window of *L* = *w*+*k*-1 bases is lexicographically <= its reverse complement (the
   center rule of Cologni & Pibiri, as in SSHash). A read and its reverse
   complement thus select the same loci, and the selection never moves back.
-  The order on t-mers is a template parameter of the one scan
-  (`sketch_mod_minimizer<Kind>`, `TmerRank`): xor ranks the canonical t-mer
+  The order on *t*-mers is a template parameter of the one scan
+  (`sketch_mod_minimizer<Kind>`, `TmerRank`): xor ranks the canonical *t*-mer
   XOR the seed; the GreedyMini order is `RankState<MM_SCHEME_GREEDYMINI>` at
-  length t (the shared center-extension order, built for t, with the same
+  length *t* (the shared center-extension order, built for *t*, with the same
   projection and `--order-seed` Gamma toggle as `greedymini`), stored in the
   `.mmi` with its table and length.
-  The scan keeps the window minimum and its leftmost/rightmost t-mers by
+  The scan keeps the window minimum and its leftmost/rightmost *t*-mers by
   conditional moves and rescans only when the minimum leaves the window (as
-  native `mm_sketch()` does), and emits a selected k-mer when it leaves the
+  native `mm_sketch()` does), and emits a selected *k*-mer when it leaves the
   window (output stays in position order); `benchmark/minimap2/tests/test_mod_minimizer_sketch.py`
-  checks it, with both orders on t-mers, against a brute force of the definition. A window whose sampled
-  k-mer is its own reverse complement (even `-k` only), or spans 256 or more
+  checks it, with both orders on *t*-mers, against a brute force of the definition. A window whose sampled
+  *k*-mer is its own reverse complement (even `-k` only), or spans 256 or more
   bases under `-H`, emits no minimizer; native minimap2 instead skips such a
-  k-mer and lets the window pick another.
+  *k*-mer and lets the window pick another.
 
 ## Build and test
 

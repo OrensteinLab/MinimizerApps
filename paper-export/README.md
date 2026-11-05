@@ -41,7 +41,7 @@ only; `make_figures.py` and the scripts of `method_figures/` also need `rsvg-con
 ## What the paper reports
 
 - The schemes: the default scheme of each method, `xor-pcg-hash` (and `xor` in the tables),
-  GreedyMini, and the mod-minimizer with a `xor` or a GreedyMini order on t-mers. Every
+  GreedyMini, and the mod-minimizer with a `xor` or a GreedyMini order on *t*-mers. Every
   GreedyMini-based scheme is reported with the polarity of Φ that maps A,T to 0 (`at0-cg1`),
   chosen arbitrarily; the table `polarity_comparison` compares it with the other polarity.
 - Kraken2 at minimum hit groups 2 (its default); Minimap2 with the occurrence threshold fixed to
@@ -55,7 +55,7 @@ Computed in the scripts with `benchmark/common`:
 - Significance tests (`significance.py`; the tables `significance_runtime` and `significance_space` and the stars of the figures): every run of a
   scheme is paired with the run of the default scheme of the same dataset, setting and seed. Per
   scheme, dataset and metric: the geometric mean of the five ratios to the default scheme and its
-  95% confidence interval, and a two-sided paired t-test on the logarithms of the ratios,
+  95% confidence interval, and a two-sided paired *t*-test on the logarithms of the ratios,
   Bonferroni-corrected over the schemes compared with the default scheme on the same dataset and
   metric. A change is significant if the corrected p-value is below 0.05; otherwise the
   performance is equivalent to that of the default scheme if the 90% confidence interval lies

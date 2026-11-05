@@ -22,12 +22,12 @@ The fork adds the order (`--order xor|xor-pcg-hash|greedymini`, with
 `--greedymini-file FILE` for `greedymini`) and the sketching
 (`--sketching minimizer|mod-minimizer`) to upstream Kraken 2, whose default is
 `--sketching minimizer --order xor`. The mod-minimizer is canonical: a read and
-its reverse complement give the same selected k-mers (`src/mod_minimizer.h`).
+its reverse complement give the same selected *k*-mers (`src/mod_minimizer.h`).
 Option and CLI reference for all four methods:
 [`../orders/README.md`](../orders/README.md).
 
-Kraken2's minimizer length ℓ (`-l`) is the paper's k (selected k-mer length)
-and its k-mer length (`-k`) is L = k + w − 1. A GreedyMini table with
+Kraken2's minimizer length ℓ (`-l`) is the paper's *k* (selected *k*-mer length)
+and its *k*-mer length (`-k`) is *L* = *k* + *w* − 1. A GreedyMini table with
 `gm_k < ℓ` is extended by its center (rank of the middle `gm_k` bases, then
 tie-breaks), which keeps the table's designed density (`w5_k15_canonical`:
 1.466 at every valid ℓ); `ℓ - gm_k` must be even (`w5_k15_canonical`:

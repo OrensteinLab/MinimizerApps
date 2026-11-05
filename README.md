@@ -1,22 +1,27 @@
 # MinimizerApps
 
 High-throughput sequencing analysis methods such as Kraken2 (taxonomic
-classification), Minimap2 (read mapping), KMC3 (k-mer counting) and SSHash
-(k-mer indexing) sample k-mers with minimizers or mod-minimizers, which depend
-on k-mer orders, to reduce their runtime and space usage (memory and storage).
-Recent tools such as GreedyMini produce k-mer orders that lead to smaller
-sketches, yet almost all of these methods rely on pseudo-random orders, which produce
-much larger sketches. Moreover, selection schemes and their orders are defined
-on single-stranded DNA sequences, while these methods are applied to
-double-stranded DNA and thus require canonical selection schemes and orders.
+classification), Minimap2 (read mapping), KMC3 (*k*-mer counting) and SSHash
+(*k*-mer indexing) sample *k*-mers from DNA sequences as an important step of input
+processing. All of them select the sampled *k*-mers with minimizer schemes, which
+provide a window guarantee: each window of a given length *L* contains a *k*-mer
+from the sample. Almost all of them use pseudo-random minimizers, although
+recent tools such as GreedyMini produce minimizers that create smaller samples
+with the same window guarantee, which may shorten runtimes and reduce space
+usage. Moreover, selection schemes are defined on single-stranded DNA, while
+these methods are applied to double-stranded DNA and thus require selection
+schemes that are canonical, i.e., make the same selection on both strands, up
+to reverse complements.
 
-This repository bridges both gaps. It provides canonical variants of GreedyMini
-and of the mod-minimizer, integrates them into the four methods, and evaluates
-the methods end to end. The canonical variants produce sketches up to 32%
-smaller than those of pseudo-random minimizers, which led to reductions of up to 36%
-in runtime and to reductions in space usage that follow the sketch size. In
-Kraken2 and Minimap2, whose outputs depend on the sampled k-mers, accuracy was
-preserved, and KMC3 and SSHash produced identical outputs.
+We bridge both gaps. We modified GreedyMini to produce canonical minimizers,
+designed a canonical version of another promising scheme, the mod-minimizer,
+integrated the new canonical schemes into the four methods, and evaluated the
+methods end to end; this repository holds the code and the benchmarks. The new
+schemes create samples up to 32% smaller than those of pseudo-random minimizers,
+which led to reductions of up to 36% in runtime on certain datasets and to
+reductions in space usage in proportion to the sample size. In Kraken2 and
+Minimap2, whose outputs depend on the sampled *k*-mers, performance accuracy was
+negligibly affected, and KMC3 and SSHash produced identical outputs.
 
 Each method is evaluated with the schemes below, under the names used in its
 CLI flags, run folders and result tables:
@@ -26,8 +31,8 @@ CLI flags, run folders and result tables:
 | The method's default | its own | `xor` | `native` | `default` | `native` |
 | Pseudo-random minimizers | `xor`, `xor-pcg-hash` | ✓ | ✓ | ✓ | ✓ |
 | Canonical GreedyMini minimizer | `greedymini` | ✓ | ✓ | ✓ | ✓ |
-| Canonical mod-minimizer, `xor` order on t-mers | `mod-minimizer-xor` | ✓ | ✓ | | ✓ |
-| Canonical mod-minimizer, GreedyMini order on t-mers | `mod-minimizer-greedymini` | ✓ | k = 19 | | ✓ |
+| Canonical mod-minimizer, `xor` order on *t*-mers | `mod-minimizer-xor` | ✓ | ✓ | | ✓ |
+| Canonical mod-minimizer, GreedyMini order on *t*-mers | `mod-minimizer-greedymini` | ✓ | *k* = 19 | | ✓ |
 
 ## Layout
 

@@ -1,8 +1,8 @@
 # KMC3 counting benchmark
 
-Runs KMC3 on the k-mer counting datasets of Kokot, Długosz & Deorowicz, *KMC 3: counting and manipulating k-mer statistics*, Bioinformatics 33(17):2759–2761 (2017), with each scheme as the signature order, and compares time, RAM and temp disk with the default scheme and with the published numbers. Competitors are not run. Dataset URLs, flags, and published KMC3 times/RAM/disk are from the paper supplement ([arXiv:1701.08022](https://arxiv.org/abs/1701.08022) `supp.pdf`).
+Runs KMC3 on the *k*-mer counting datasets of Kokot, Długosz & Deorowicz, *KMC 3: counting and manipulating *k*-mer statistics*, Bioinformatics 33(17):2759–2761 (2017), with each scheme as the signature order, and compares time, RAM and temp disk with the default scheme and with the published numbers. Competitors are not run. Dataset URLs, flags, and published KMC3 times/RAM/disk are from the paper supplement ([arXiv:1701.08022](https://arxiv.org/abs/1701.08022) `supp.pdf`).
 
-**The paper's runs** are `experiments/full_run.sh`: L = 28 (k = 9, w = 20), gzip input, 1024 bins, 24 threads, all five datasets, 5 repeats of each scheme. It reports `default`, `xor` and `xor-pcg-hash` (one `-S all -n 5` call) and GreedyMini with the binary table and polarity of Φ `at0-cg1` (run tag `gm_proj_n1024_t24`). The same script also runs GreedyMini with the DNA table (`at0-cg1`) and with the binary table and polarity `at1-cg0`: 4 schemes in 6 variants, 150 runs. The defaults of `kmc3_bench.sh` match these settings.
+**The paper's runs** are `experiments/full_run.sh`: *L* = 28 (*k* = 9, *w* = 20), gzip input, 1024 bins, 24 threads, all five datasets, 5 repeats of each scheme. It reports `default`, `xor` and `xor-pcg-hash` (one `-S all -n 5` call) and GreedyMini with the binary table and polarity of Φ `at0-cg1` (run tag `gm_proj_n1024_t24`). The same script also runs GreedyMini with the DNA table (`at0-cg1`) and with the binary table and polarity `at1-cg0`: 4 schemes in 6 variants, 150 runs. The defaults of `kmc3_bench.sh` match these settings.
 
 ## Notation
 
@@ -10,20 +10,20 @@ The paper's notation is used throughout, and the CSVs and xlsx use it as columns
 
 | paper | meaning | KMC3 name |
 |---|---|---|
-| `k` | selected k-mer length | signature length `p` (`-p`, default 9) |
-| `w` | number of k-mers per window, `w = L - k + 1` | — |
-| `L` | KMC3's k-mer (L-mer) length, `L = k + w - 1` | `-k` |
+| `k` | selected *k*-mer length | signature length `p` (`-p`, default 9) |
+| `w` | number of *k*-mers per window, `w = L - k + 1` | — |
+| `L` | KMC3's *k*-mer (*L*-mer) length, `L = k + w - 1` | `-k` |
 
-KMC3's flags, the run directories (`k28_p9`), `meta.json` and `data/paper_kmc3.csv` (whose `k` is L) keep KMC3's own names; the exporter renames on output. GreedyMini has a table only for L = 28, k = 9 (`w20_k9_canonical`), so other `-k` values work only with `-S default|lex|xor|xor-pcg-hash`.
+KMC3's flags, the run directories (`k28_p9`), `meta.json` and `data/paper_kmc3.csv` (whose `k` is *L*) keep KMC3's own names; the exporter renames on output. GreedyMini has a table only for *L* = 28, *k* = 9 (`w20_k9_canonical`), so other `-k` values work only with `-S default|lex|xor|xor-pcg-hash`.
 
 ## What is measured
 
-For each dataset and L:
+For each dataset and *L*:
 
 - wall time (KMC JSON `Total`, plus GNU `time`)
 - peak RAM (GNU `/usr/bin/time -v` max RSS)
 - temp disk (KMC JSON `Tmp_size`)
-- unique / counted k-mer stats
+- unique / counted *k*-mer stats
 
 Command in the KMC3 paper (KMC 3.0.0):
 
@@ -167,7 +167,7 @@ Defaults: all five datasets, `-k 28`, gzip input, 24 threads, 1024 bins, `-S all
 ./run_config_sweep.sh                                   # same as sweep_config
 ```
 
-`sweep_config` runs 700 KMC jobs (5 datasets × 7 configs × [4 schemes × 5 repeats]) at L = 28, gzip only, with the GreedyMini DNA table. Smoke-test with `run -d f_vesca -n 1`. A full sweep including `h_sapiens_3` (614 GB gzip) needs multi-TB disk and days of wall time.
+`sweep_config` runs 700 KMC jobs (5 datasets × 7 configs × [4 schemes × 5 repeats]) at *L* = 28, gzip only, with the GreedyMini DNA table. Smoke-test with `run -d f_vesca -n 1`. A full sweep including `h_sapiens_3` (614 GB gzip) needs multi-TB disk and days of wall time.
 
 The GreedyMini table experiments compare the DNA table (`_dna.gm`) with the binary rank table (`gm_lut: dna|binary` + `run_tag`); for a binary `.gm` KMC uses the binary table unless `-ode` asks for the DNA-expanded one:
 
@@ -275,7 +275,7 @@ runs/
 | file | rows | purpose | in `.xlsx` |
 |---|---|---|---|
 | `kmc3_runs.csv` | one per run | metrics + telemetry | `runs` |
-| `kmc3_summary.csv` | one per dataset / L / input / config / scheme variant | metrics aggregated over repeats (mean / std / ratio) | `summary` |
+| `kmc3_summary.csv` | one per dataset / *L* / input / config / scheme variant | metrics aggregated over repeats (mean / std / ratio) | `summary` |
 | `kmc3_schemes.csv` | one per scheme variant | expected and particular density | `schemes` |
 | `kmc3_gm_lut.csv` | one per GreedyMini table-sweep config | the `gm_lut_*` run tags, aggregated like `summary` (only when such runs exist) | `gm_lut` |
 | `kmc3_vs_paper.csv` | one per `default` config | vs `data/paper_kmc3.csv` (`count_wall_s_ratio` = ours ÷ paper) | `vs_paper` |
@@ -294,7 +294,7 @@ Re-export only, from `benchmark/kmc`: `./kmc3_bench.sh export` (or `python3 -m s
 
 **Shared keys** (all result CSVs): `dataset`, `k`, `w`, `L`, `input_format` (`gzip` \| `plain`), `config_tag` (e.g. `gzip_n1024_t24_m12`), `n_bins`, `threads`, `strict_memory`, `mem_limit_gb`.
 
-**Schemes:** `scheme` is one of `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini`. GreedyMini runs carry the separate columns `gm_k` (= selected k-mer length `k` of the table), `projection` (polarity of Φ: `at0-cg1` / `at1-cg0`; `-oat1` = `at1-cg0`), `gm_table` (e.g. `w20_k9_canonical`) and `gm_lut` (`dna` | `binary`), blank for the other schemes. A summary/schemes row is one full variant (scheme, gm_k, projection, gm_table, gm_lut), so the two polarities and the two table backends are never pooled. Seeded runs also have `signature_order_label` (e.g. `xor_s0xDEADBEEF`, `gm_w20_k9_canonical_s0xdeadbeef`). `meta.json` stores these fields; `kmc.json` reports `signature_order_mode` (`xor` / `xor-pcg-hash` / `greedymini`) and `signature_order_gm_lut`.
+**Schemes:** `scheme` is one of `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini`. GreedyMini runs carry the separate columns `gm_k` (= selected *k*-mer length `k` of the table), `projection` (polarity of Φ: `at0-cg1` / `at1-cg0`; `-oat1` = `at1-cg0`), `gm_table` (e.g. `w20_k9_canonical`) and `gm_lut` (`dna` | `binary`), blank for the other schemes. A summary/schemes row is one full variant (scheme, gm_k, projection, gm_table, gm_lut), so the two polarities and the two table backends are never pooled. Seeded runs also have `signature_order_label` (e.g. `xor_s0xDEADBEEF`, `gm_w20_k9_canonical_s0xdeadbeef`). `meta.json` stores these fields; `kmc.json` reports `signature_order_mode` (`xor` / `xor-pcg-hash` / `greedymini`) and `signature_order_gm_lut`.
 
 | file | additional columns |
 |---|---|
@@ -308,7 +308,7 @@ Re-export only, from `benchmark/kmc`: `./kmc3_bench.sh export` (or `python3 -m s
 
 **Headers:** the xlsx uses the CSV column names; every column has a row in the `overview` sheet. `runs` telemetry: `user`, `sys`, `cpu_pct`, `major_pagefaults`, `minor_pagefaults`, `fs_inputs` (512-byte blocks), `read_gb` (decimal GB), `fs_outputs`, `count_pinned_cpus` (CPU list from the run's `cpus.txt`, kept even when empty), `ctx_voluntary`, `ctx_involuntary`, `harness_wall_s`, `kmc_version`, `host`, `exit_code`.
 
-**Validation:** `export` fails if a seeded scheme's unique / counted / total k-mer counts differ from the matching `default` run (same dataset, L, input and config), or if that run is missing. Superwindow counts may differ. Gzip vs plain unique counted k-mers for the same L should match (export warns on mismatch).
+**Validation:** `export` fails if a seeded scheme's unique / counted / total *k*-mer counts differ from the matching `default` run (same dataset, *L*, input and config), or if that run is missing. Superwindow counts may differ. Gzip vs plain unique counted *k*-mers for the same *L* should match (export warns on mismatch).
 
 Times will not match 2017 hardware; use `count_wall_s_ratio` in `kmc3_vs_paper.csv`.
 
@@ -332,19 +332,19 @@ Times will not match 2017 hardware; use `count_wall_s_ratio` in `kmc3_vs_paper.c
 
 Header rows 1–2 (category band and column names, frozen); data from row 3. A medium border separates each setting (dataset + input format + bins + threads + memory). Under the table, a `correlation with density` row holds, for every `{metric}_ratio` column, a live `=CORREL(density_factor_ratio range, that column's range)` over all summary rows (ratios to the `default` scheme of the same setting, so settings are comparable; the value is also cached for viewers that do not recalculate).
 
-One row per dataset / L / input / config / scheme variant, sorted by dataset → bins → threads → memory → scheme, with metrics aggregated over the repeats. `{metric}_ratio` for wall time, RAM and disk use a green (better) → white (1.0) → red (worse) color scale, with 1.0 always inside the scale.
+One row per dataset / *L* / input / config / scheme variant, sorted by dataset → bins → threads → memory → scheme, with metrics aggregated over the repeats. `{metric}_ratio` for wall time, RAM and disk use a green (better) → white (1.0) → red (worse) color scale, with 1.0 always inside the scale.
 
 | column pattern | meaning |
 |---|---|
 | `n_repeats` | number of runs in the group |
 | `{metric}_mean`, `{metric}_std` | mean and sample std over the repeats (`count_wall_s`, `count_max_rss_gb`, `tmp_disk_gb`, stages, `n_super_kmers`, …) |
-| `{metric}_ratio` | Excel formula `=mean / default_mean` (`default` row = 1) for the same dataset / L / input / config |
+| `{metric}_ratio` | Excel formula `=mean / default_mean` (`default` row = 1) for the same dataset / *L* / input / config |
 
 **Charts** (below the summary table): one row per dataset, ratio to `default` per config: x = scheme (xor / xor-pcg-hash / greedymini), legend = config. Bar height = mean paired-seed ratio; error bars = std over seeds. One chart per metric (wall time, RAM, disk).
 
 ### `python -m scripts expected-density` (theoretical density, any scheme)
 
-Density factor on uniformly random DNA (no read boundaries) for every scheme — `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini` (both polarities) — counted by KMC3's own splitter loop and signature orders (`benchmark/common/expected_density/`, the `kmc3` tool: superwindows and k-mers as `kmc` counts them, 10^9 bases, a string of its own per seed). The seeded schemes report mean and std over the predefined seeds (`default`/`lex` are deterministic, std 0). Feeds the `schemes` sheet's `expected_density_factor_mean/std` columns. `scripts/expected_density.py` is a thin adapter over the shared driver `benchmark/common/expected_density_driver.py`.
+Density factor on uniformly random DNA (no read boundaries) for every scheme — `default`, `lex`, `xor`, `xor-pcg-hash`, `greedymini` (both polarities) — counted by KMC3's own splitter loop and signature orders (`benchmark/common/expected_density/`, the `kmc3` tool: superwindows and *k*-mers as `kmc` counts them, 10^9 bases, a string of its own per seed). The seeded schemes report mean and std over the predefined seeds (`default`/`lex` are deterministic, std 0). Feeds the `schemes` sheet's `expected_density_factor_mean/std` columns. `scripts/expected_density.py` is a thin adapter over the shared driver `benchmark/common/expected_density_driver.py`.
 
 From `benchmark/kmc`:
 
@@ -357,7 +357,7 @@ Writes `kmc3_density_expected_schemes.csv` to `results/csvs/` (`--results-dir` i
 
 ### `python -m scripts density particular-schemes` (particular density without a kmc run)
 
-Density-only scan (no kmc counting; first `--max-kmers` 12M k-mers) of one scheme variant on the FASTQs under `$KMC3_DATA_DIR`; upserts rows keyed `(scheme, projection, dataset, k, L)` into `kmc3_density_particular.csv`. Fills the `schemes` cells of variants with no kmc run on a dataset, e.g. `lex` and the GreedyMini binary/`at1-cg0` variants on the read-length-check datasets. From `benchmark/kmc`:
+Density-only scan (no kmc counting; first `--max-kmers` 12M *k*-mers) of one scheme variant on the FASTQs under `$KMC3_DATA_DIR`; upserts rows keyed `(scheme, projection, dataset, k, L)` into `kmc3_density_particular.csv`. Fills the `schemes` cells of variants with no kmc run on a dataset, e.g. `lex` and the GreedyMini binary/`at1-cg0` variants on the read-length-check datasets. From `benchmark/kmc`:
 
 ```bash
 python3 -m scripts density particular-schemes --scheme lex --datasets h_sapiens_2_longsub,h_sapiens_2_shortsub,h_sapiens_2_shortsub_mf11
@@ -368,9 +368,9 @@ The scan's superwindow count equals kmc's on the same reads (checked for `defaul
 
 ## Read-length confound check
 
-`f_vesca` is both the smallest dataset (~4.1B k-mers) and the one with by far the longest reads (avg ~350 bp vs ~64–101 bp for the other four; `avg_read_len` in `kmc3_summary.csv`), so across the five datasets size and read length are confounded. `kmc3_bench.sh readlen-dataset` / `readlen-check` separate them.
+`f_vesca` is both the smallest dataset (~4.1B *k*-mers) and the one with by far the longest reads (avg ~350 bp vs ~64–101 bp for the other four; `avg_read_len` in `kmc3_summary.csv`), so across the five datasets size and read length are confounded. `kmc3_bench.sh readlen-dataset` / `readlen-check` separate them.
 
-They build a derived dataset from an already-downloaded one by concatenating every `--rl-join` consecutive FASTQ records into one pseudo-read (quality strings are concatenated too; a mechanical transform to control read length, not simulated long reads — the sequence at each join point has no biological meaning). Both target a k-mer count: they sample the source's read length and compute how many pseudo-reads to emit. The output is registered as a new dataset id under `$KMC3_DATA_DIR/`, so the usual commands work on it (pass `--mem`: derived datasets are not in `data/datasets.csv`).
+They build a derived dataset from an already-downloaded one by concatenating every `--rl-join` consecutive FASTQ records into one pseudo-read (quality strings are concatenated too; a mechanical transform to control read length, not simulated long reads — the sequence at each join point has no biological meaning). Both target a *k*-mer count: they sample the source's read length and compute how many pseudo-reads to emit. The output is registered as a new dataset id under `$KMC3_DATA_DIR/`, so the usual commands work on it (pass `--mem`: derived datasets are not in `data/datasets.csv`).
 
 **One-shot:** `readlen-check` builds both size-matched variants from one source — `join=1` (native read length, isolates size) and `join=<N>` (isolates length) — then benchmarks both and exports. From `benchmark/kmc`:
 
@@ -395,7 +395,7 @@ This creates `h_sapiens_2_shortsub` (join=1) and `h_sapiens_2_longsub` (join=4),
 ./kmc3_bench.sh run -d h_sapiens_2_longsub  -k 28 -S all -n 5 --mem 12 --bins 512 -t 12 --force
 ```
 
-`--rl-target-kmers <N>` replaces the `--rl-against` lookup (f_vesca's `n_total_kmers` is ≈4,134,079,185 at L=28).
+`--rl-target-kmers <N>` replaces the `--rl-against` lookup (f_vesca's `n_total_kmers` is ≈4,134,079,185 at *L*=28).
 
 Compare each scheme's `count_wall_s_ratio` on the two datasets in the `readlen_check` sheet: an effect on `h_sapiens_2_longsub` only points to read length, one on `h_sapiens_2_shortsub` to size, and one on neither to something specific to `f_vesca`'s sequence.
 
@@ -408,7 +408,7 @@ Catalog and reference CSVs in `benchmark/kmc/data/`:
 | file | columns | role |
 |---|---|---|
 | `datasets.csv` | `dataset`, `label`, `mem_gb`, `filename`, `url` | FASTQ list for download; `mem_gb` → kmc `-m` unless `--mem` overrides; empty `url` → ENA path from `filename` |
-| `paper_kmc3.csv` | `dataset`, `k`, `platform`, `input_format`, `paper_ram_gb`, `paper_disk_gb`, `paper_time_s` | Published KMC3 numbers (`k` is L); `platform` is `xeon_hdd` (default) or `xeon_ssd`; joined in `kmc3_vs_paper.csv` |
+| `paper_kmc3.csv` | `dataset`, `k`, `platform`, `input_format`, `paper_ram_gb`, `paper_disk_gb`, `paper_time_s` | Published KMC3 numbers (`k` is *L*); `platform` is `xeon_hdd` (default) or `xeon_ssd`; joined in `kmc3_vs_paper.csv` |
 
 ## Measurement protocol
 
@@ -416,7 +416,7 @@ Every kmc call is timed under the protocol in [`../README.md`](../README.md): it
 
 ## Notes
 
-- KMC3's default signature length is `-p9`; KMC 3.0.0 used 7. Pass `--signature-len 7` for a closer match (there is no GreedyMini table for k = 7).
-- Signature order flags of the fork: `kmc -co<table.gm> -ol<label> [-os<seed>]` (binary `.gm`; the seed breaks rank ties at runtime), `kmc -co<table_dna.gm> -ol<label>` (`_dna.gm`; seed in the file header), `-or xor|xor-pcg-hash -ol<label> [-os<seed>]` (xor, or xor then PCG hash). `kmc.json` reports `signature_order_mode` = `xor` / `xor-pcg-hash` / `greedymini` and, for tables, `signature_order_gm_lut` = `dna` (4^k DNA table) | `binary` (2^k rank table; `-oat1` flips the polarity of Φ). Without these flags KMC3 uses its default order. Sidecars `{output}.kmc_co` / `.kmc_col` store mode, seed and table.
+- KMC3's default signature length is `-p9`; KMC 3.0.0 used 7. Pass `--signature-len 7` for a closer match (there is no GreedyMini table for *k* = 7).
+- Signature order flags of the fork: `kmc -co<table.gm> -ol<label> [-os<seed>]` (binary `.gm`; the seed breaks rank ties at runtime), `kmc -co<table_dna.gm> -ol<label>` (`_dna.gm`; seed in the file header), `-or xor|xor-pcg-hash -ol<label> [-os<seed>]` (xor, or xor then PCG hash). `kmc.json` reports `signature_order_mode` = `xor` / `xor-pcg-hash` / `greedymini` and, for tables, `signature_order_gm_lut` = `dna` (4^*k* DNA table) | `binary` (2^*k* rank table; `-oat1` flips the polarity of Φ). Without these flags KMC3 uses its default order. Sidecars `{output}.kmc_co` / `.kmc_col` store mode, seed and table.
 - **`-S lex`**: KMC3's `default` order is not pure canonical lexicographic: `CMmer::is_allowed()` (`kmc_api/mmer.h`) excludes poly-A/poly-T-type motifs from ever being selected (a denylist from the KMC2 paper, to bound the largest bin; §2.2 there). `-S lex` runs canonical lexicographic order with no denylist, to isolate that effect. It is run as `-or xor -os0` (order-equivalent to `MIN(kmer, revcomp(kmer))` with no exclusions) but reported as its own `lex` scheme. It is deterministic (seed 0; `-n` repeats it for noise statistics) and not part of `-S all`.
 - ENA publishes G. gallus / M. balbisiana as paired `_1`/`_2` FASTQ; `data/datasets.csv` lists those files.
